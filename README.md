@@ -2,7 +2,33 @@
 
 VST3 plugin: two stereo loops, region-based rules that decide which part of loop 2 plays when loop 1 enters a region.
 
-Status: scaffold (empty plugin, stereo out, no input).
+Status: edit view and audio engine implemented (stereo out, no input); not yet tested in a real host.
+
+## Usage
+
+- **Load loops:** "Load…" next to Loop 1 / Loop 2, or drag and drop an audio file (wav, mp3, flac, aif, aiff)
+  onto a lane. Replacing a loop that has regions or rules asks first (its regions and all rules are deleted).
+- **Bars ("Takte"):** length of each loop in bars; suggested from the file length and the host tempo on load.
+  The combined cycle ("Zyklus") is the least common multiple of both.
+- **Regions:** double-click in a lane adds a region boundary, double-click on a boundary removes it, drag a
+  boundary to move it. Rules move with their regions when a boundary is added or removed (merging two regions
+  keeps the left region's rule).
+- **"Vorschlag":** suggests boundaries at transients (meant for drum loops); replaces the lane's boundaries
+  after a confirmation.
+- **Rules:** select a Loop-1 region (click) to edit its rule rows, one per Loop-2 region: the slider is the
+  probability that this Loop-2 region plays when Loop 1 enters the selected region, the GATE/ONESHOT toggle
+  sets the play mode (GATE repeats until Loop 1 leaves the region, ONESHOT plays the region once). "Stille"
+  shows the remainder (probability that nothing new plays).
+- **Missing files:** when a saved project's loop file is gone, the plugin looks for a file with the same name
+  and content (hash) in the folder of the other loop and the folder of the last loaded file (this session);
+  regions, rules and bars are always kept. If it is not found, the lane says "Datei fehlt" and "Neu zuordnen…" (or dropping a file)
+  relinks it; relinking one loop also finds the other one if it was moved into the same folder.
+
+### Known limitations
+
+- Not tested in a real host yet on any platform; macOS and Linux are only built and unit-tested in CI.
+- No undo.
+- The effects slot and a performance view are not implemented.
 
 ## Build
 
