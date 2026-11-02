@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include "engine/LoopTiming.h"
+#include "engine/TransientDetector.h"
 
 namespace dc::ui {
 
@@ -105,6 +106,12 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
         load_[i].onClick = [this, i] { openChooser(i); };
         addAndMakeVisible(load_[i]);
 
+        suggest_[i].setButtonText("Vorschlag");
+        suggest_[i].setTooltip("Grenzen an Transienten vorschlagen (f" + utf8("\xc3\xbc") + "r Drum-Loops)");
+        suggest_[i].onClick = [this, i] { suggestRegions(i); };
+        suggest_[i].setEnabled(false);
+        addAndMakeVisible(suggest_[i]);
+
         lanes_[i].onRegionsChanged = [this, i](const RegionMap& m) { regionsEdited(i, m); };
         lanes_[i].onFileDropped = [this, i](const juce::File& f) { loadFile(i, f); };
         addAndMakeVisible(lanes_[i]);
@@ -145,6 +152,7 @@ void Editor::refresh()
         RegionMap regions;
         regions.boundaries = ref.boundaries;
         lanes_[i].setRegions(regions);
+        suggest_[i].setEnabled(lanes_[i].hasData());
         bars_[i].setValue(static_cast<double>(ref.bars), juce::dontSendNotification);
 
         juce::String text;
@@ -231,6 +239,73 @@ juce::String replaceConfirmTitle(int slot)
 juce::String replaceConfirmMessage()
 {
     return utf8("Dessen Regionen und alle Regeln (auch die zwischen Loop 1 und Loop 2) werden gel\xc3\xb6scht.");
+}
+
+juce::String suggestConfirmTitle(int slot)
+{
+    return "Regionen von Loop " + juce::String(slot == 0 ? 1 : 2) + " ersetzen?";
+}
+
+juce::String suggestConfirmMessage()
+{
+    return utf8("Die vorhandenen Grenzen werden durch den Vorschlag ersetzt. Regeln bleiben erhalten, "
+                "k\xc3\xb6nnen danach aber auf nicht mehr vorhandene Regionen zeigen.");
+}
+
+void Editor::suggestRegions(int slot)
+{
+    slot = slot == 0 ? 0 : 1;
+    if (pending_[slot].active)
+        return;
+    const auto model = proc_.getModel();
+    const auto data = model == nullptr ? nullptr : (slot == 0 ? model->loop1.data : model->loop2.data);
+    if (data == nullptr || data->frames() == 0)
+        return;
+    const std::vector<double> found = suggestBoundaries(*data, kSuggestMaxBoundaries);
+    if (found.empty())
+    {
+        showNotice(slot, "Keine Transienten gefunden");
+        return;
+    }
+    const PluginState st = proc_.getPluginState();
+    auto commit = [this, slot, found] {
+        PluginState now = proc_.getPluginState();
+        refOf(now, slot).boundaries = found;
+        proc_.applyEdit(now);
+        refresh();
+    };
+    if (refOf(st, slot).boundaries.empty())
+    {
+        commit();
+        return;
+    }
+
+    pending_[slot].active = true;
+    pending_[slot].state = serialize(st);
+    juce::Component::SafePointer<Editor> safe(this);
+    auto answer = [safe, slot, commit](bool ok) {
+        if (safe == nullptr || !safe->pending_[slot].active)
+            return;
+        const juce::MemoryBlock asked = safe->pending_[slot].state;
+        safe->pending_[slot] = {};
+        if (!ok)
+            return;
+        // The answer only covers the state the user was asked about; never ask twice.
+        if (serialize(safe->proc_.getPluginState()) == asked)
+            commit();
+        else
+            safe->showNotice(slot, "Nicht ersetzt: Loop " + juce::String(slot + 1) + " wurde inzwischen ge"
+                                       + utf8("\xc3\xa4") + "ndert");
+    };
+    if (confirmReplace)
+    {
+        confirmReplace(slot, std::move(answer));
+        return;
+    }
+    auto options = juce::MessageBoxOptions::makeOptionsOkCancel(juce::MessageBoxIconType::WarningIcon,
+                                                                suggestConfirmTitle(slot), suggestConfirmMessage(),
+                                                                "Ersetzen", "Abbrechen", this);
+    juce::AlertWindow::showAsync(options, [answer](int result) { answer(result == 1); });
 }
 
 void Editor::loadFile(int slot, const juce::File& file)
@@ -342,6 +417,8 @@ void Editor::resized()
         auto header = area.removeFromTop(kHeaderH);
         titles_[i].setBounds(header.removeFromLeft(80));
         load_[i].setBounds(header.removeFromRight(130).reduced(0, 2));
+        header.removeFromRight(4);
+        suggest_[i].setBounds(header.removeFromRight(90).reduced(0, 2));
         header.removeFromRight(kGap);
         bars_[i].setBounds(header.removeFromRight(110));
         barsLabel_[i].setBounds(header.removeFromRight(60));

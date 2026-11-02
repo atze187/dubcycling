@@ -1,4 +1,5 @@
 // Editor: relink vs replace, data-loss protection, bars validation.
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <functional>
@@ -335,4 +336,119 @@ TEST_CASE("Editor: OK after the slot became Missing relinks instead of wiping", 
     CHECK(after.loop1.boundaries == std::vector<double> { 0.5 });
     CHECK(after.rules.size() == 1);
     CHECK(f.asked == 1);
+}
+
+namespace {
+// 2 s stereo wav at 44.1 kHz with short noise clicks at 0, 25, 50 and 75 % (3 usable boundaries).
+juce::File clickWav(const juce::File& dir, const juce::String& name, int clicks = 4)
+{
+    const auto file = dir.getChildFile(name);
+    juce::WavAudioFormat format;
+    std::unique_ptr<juce::OutputStream> out = std::make_unique<juce::FileOutputStream>(file);
+    auto writer = format.createWriterFor(out, juce::AudioFormatWriterOptions {}
+                                                  .withSampleRate(44100)
+                                                  .withNumChannels(2)
+                                                  .withBitsPerSample(16));
+    REQUIRE(writer != nullptr);
+    const int frames = 88200;
+    juce::AudioBuffer<float> buf(2, frames);
+    buf.clear();
+    juce::Random rnd(7);
+    for (int click = 0; click < clicks; ++click)
+        for (int i = 0; i < 130; ++i)
+        {
+            const float v = 0.8f * (rnd.nextFloat() * 2.0f - 1.0f);
+            buf.setSample(0, click * frames / 4 + i, v);
+            buf.setSample(1, click * frames / 4 + i, v);
+        }
+    REQUIRE(writer->writeFromAudioSampleBuffer(buf, 0, frames));
+    return file;
+}
+} // namespace
+
+TEST_CASE("Editor: Vorschlag on a lane without boundaries sets them without asking", "[editor][suggest]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, clickWav(f.dir, "clicks.wav"), 2);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    REQUIRE(f.editor->suggestButton(0).isEnabled());
+
+    f.editor->suggestButton(0).onClick();
+    CHECK(f.asked == 0);
+    const auto st = f.proc.getPluginState();
+    REQUIRE(st.loop1.boundaries.size() == 3);
+    CHECK(st.loop1.boundaries[0] == Catch::Approx(0.25).margin(0.002));
+    CHECK(st.loop1.boundaries[1] == Catch::Approx(0.5).margin(0.002));
+    CHECK(st.loop1.boundaries[2] == Catch::Approx(0.75).margin(0.002));
+    CHECK(f.editor->lane(0).regions().regionCount() == 4);
+    CHECK(st.loop2.boundaries.empty());
+}
+
+TEST_CASE("Editor: Vorschlag on a lane with boundaries asks; cancel keeps, OK replaces, rules stay", "[editor][suggest]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(clickWav(f.dir, "clicks.wav")); // boundaries {0.25, 0.5}, one rule
+    f.editor->refresh();
+    const auto before = serialize(f.proc.getPluginState());
+
+    f.editor->suggestRegions(0);
+    REQUIRE(f.asked == 1);
+    CHECK(f.editor->isConfirmationPending(0));
+    CHECK(serialize(f.proc.getPluginState()) == before); // nothing until answered
+    f.pendingAnswer(false);
+    CHECK(serialize(f.proc.getPluginState()) == before);
+    CHECK_FALSE(f.editor->isConfirmationPending(0));
+
+    f.editor->suggestRegions(0);
+    REQUIRE(f.asked == 2);
+    f.pendingAnswer(true);
+    CHECK(f.asked == 2); // never asked twice
+    const auto after = f.proc.getPluginState();
+    REQUIRE(after.loop1.boundaries.size() == 3);
+    CHECK(after.loop1.boundaries[2] == Catch::Approx(0.75).margin(0.002));
+    REQUIRE(after.rules.size() == 1); // rules are kept
+    CHECK(after.rules[0].region1 == 1);
+    REQUIRE(after.rules[0].targets.size() == 1);
+    CHECK(after.rules[0].targets[0].region2 == 0);
+}
+
+TEST_CASE("Editor: Vorschlag without loaded data does nothing", "[editor][suggest]")
+{
+    EditorFixture f;
+    f.editor->refresh();
+    CHECK_FALSE(f.editor->suggestButton(0).isEnabled());
+    CHECK_FALSE(f.editor->suggestButton(1).isEnabled());
+    const auto before = serialize(f.proc.getPluginState());
+    f.editor->suggestRegions(0);
+    f.editor->suggestRegions(1);
+    CHECK(f.asked == 0);
+    CHECK(serialize(f.proc.getPluginState()) == before);
+}
+
+TEST_CASE("Editor: an answer after the slot changed meanwhile does not overwrite it", "[editor][suggest]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(clickWav(f.dir, "clicks.wav"));
+    f.editor->refresh();
+    f.editor->suggestRegions(0);
+    REQUIRE(f.asked == 1);
+    auto s = f.proc.getPluginState();
+    s.loop1.boundaries = { 0.1 };
+    f.proc.applyEdit(s);
+    f.pendingAnswer(true);
+    CHECK(f.proc.getPluginState().loop1.boundaries == std::vector<double> { 0.1 });
+}
+
+TEST_CASE("Editor: Vorschlag without any transient changes nothing and says so", "[editor][suggest]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, clickWav(f.dir, "silent.wav", 0), 2);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    const auto before = serialize(f.proc.getPluginState());
+    f.editor->suggestRegions(0);
+    CHECK(f.asked == 0);
+    CHECK(serialize(f.proc.getPluginState()) == before);
+    CHECK(f.editor->statusText(0) == "Keine Transienten gefunden");
 }

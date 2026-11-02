@@ -10,6 +10,7 @@
 namespace dc::ui {
 
 constexpr int kMaxBars = 256;
+constexpr int kSuggestMaxBoundaries = 15; // "Vorschlag": at most this many boundaries per lane
 
 // Bars suggestion for a new loop file: suggestBars(length, hostBpm or 120 when unknown, 4 beats).
 // 1 when the file cannot be read.
@@ -38,6 +39,10 @@ LoopFileAction decideLoopFileAction(DubcyclingProcessor::SlotStatus status, bool
 juce::String replaceConfirmTitle(int slot);
 juce::String replaceConfirmMessage();
 
+// Title and text of the "replace the boundaries with the suggestion?" confirmation.
+juce::String suggestConfirmTitle(int slot);
+juce::String suggestConfirmMessage();
+
 // Edit view: Loop 1 lane on top, Loop 2 below, each with bars field, "Load..." button and slot
 // status; the combined cycle length; the rule panel for the selected Loop-1 region. A 10 Hz timer
 // polls the processor and refreshes lanes and panel; edits go through processor.applyEdit.
@@ -65,8 +70,17 @@ public:
     void loadFile(int slot, const juce::File& file);
     bool isConfirmationPending(int slot) const { return pending_[slot == 0 ? 0 : 1].active; }
 
-    // Asks whether to replace a loop whose regions/rules would be lost and calls answer(true) to
-    // go ahead. Defaults to an async AlertWindow (replaceConfirmTitle/Message); tests replace it.
+    // "Vorschlag": replaces the slot's boundaries with suggestBoundaries(data, kSuggestMaxBoundaries),
+    // committed with one applyEdit. Rules are kept (entries for regions that no longer exist show
+    // up as stale in the rule panel). No-op without loaded data, with no transients found, or while
+    // a confirmation for the slot is open. When the slot already has boundaries the user is asked
+    // first (same hook as below); the answer only counts if the slot is unchanged since the question.
+    void suggestRegions(int slot);
+    juce::TextButton& suggestButton(int slot) { return suggest_[slot == 0 ? 0 : 1]; }
+
+    // Asks whether to replace a loop whose regions/rules would be lost (or, for "Vorschlag", whether
+    // to overwrite the boundaries) and calls answer(true) to go ahead. Defaults to an async
+    // AlertWindow (replaceConfirmTitle/Message or suggestConfirmTitle/Message); tests replace it.
     std::function<void(int slot, std::function<void(bool)> answer)> confirmReplace;
 
     void paint(juce::Graphics& g) override;
@@ -94,6 +108,7 @@ private:
     juce::Label barsLabel_[2];
     juce::Slider bars_[2];
     juce::TextButton load_[2];
+    juce::TextButton suggest_[2];
     juce::Label cycle_;
     RulePanel rules_;
     juce::TooltipWindow tooltips_ { this };
