@@ -1,6 +1,8 @@
 #pragma once
 
+#include <memory>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "engine/Engine.h"
 
 namespace dc {
 
@@ -31,7 +33,16 @@ public:
     void getStateInformation(juce::MemoryBlock&) override {}
     void setStateInformation(const void*, int) override {}
 
+    // Publishes a new model to the audio thread (lock-free handoff inside Engine::setModel).
+    // Call from the message thread (or any non-audio thread); nullptr = silence.
+    void setModel(std::shared_ptr<const Model> model);
+    // The last published model. Message thread only.
+    std::shared_ptr<const Model> getModel() const { return model_; }
+
 private:
+    Engine engine_;
+    std::shared_ptr<const Model> model_; // message-thread copy; the audio thread reads via engine_
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DubcyclingProcessor)
 };
 
