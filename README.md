@@ -34,7 +34,7 @@ Universal binary (arm64 + x86_64), deployment target 11.0. Plugin:
 
 Prerequisites: a C++20 compiler, Ninja and the JUCE system libraries. On Debian/Ubuntu:
 
-    sudo apt-get install ninja-build xvfb libasound2-dev libjack-jackd2-dev libfreetype-dev \
+    sudo apt-get install ninja-build xvfb libasound2-dev libjack-jackd2-dev libfreetype-dev libfontconfig1-dev \
       libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev \
       libxrender-dev libcurl4-openssl-dev mesa-common-dev libgl1-mesa-dev
 
