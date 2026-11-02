@@ -17,6 +17,7 @@ struct LoopLoadResult
     std::uint64_t ticket = 0;
     std::shared_ptr<const StereoData> data; // nullptr bei Fehler
     juce::String error;
+    juce::String hash; // SHA-256 (hashFile) of the decoded file; empty on error
 };
 
 // Dekodiert Audiodateien zu StereoData (Mono wird auf beide Kanaele dupliziert,
@@ -24,6 +25,8 @@ struct LoopLoadResult
 class LoopLoader
 {
 public:
+    static constexpr const char* kErrorFileNotFound = "file not found";
+
     LoopLoader() = default;
     ~LoopLoader();
 

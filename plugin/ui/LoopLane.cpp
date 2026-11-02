@@ -96,6 +96,7 @@ juce::String LoopLane::hintText() const
     {
         case Status::Loading: return juce::String(juce::CharPointer_UTF8("L\xc3\xa4" "dt\xe2\x80\xa6"));
         case Status::Missing: return "Datei fehlt";
+        case Status::Failed:  return "Nicht lesbar";
         case Status::Empty:
         case Status::Loaded:  break;
     }

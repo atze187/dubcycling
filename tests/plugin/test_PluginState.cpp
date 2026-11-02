@@ -108,3 +108,82 @@ TEST_CASE("PluginState hashFile is SHA-256 of the whole file")
     f.deleteFile();
     CHECK(hashFile(f).isEmpty());
 }
+
+// ---- Hand-written XML (hardening) ----
+
+namespace {
+std::optional<PluginState> fromXml(const juce::String& xml)
+{
+    return deserialize(xml.toRawUTF8(), xml.getNumBytesAsUTF8());
+}
+}
+
+TEST_CASE("PluginState deserialize fills missing attributes and elements with defaults", "[PluginState][hardening]")
+{
+    const auto r = fromXml("<DubcyclingState version=\"1\"><Loop1/>"
+                           "<Rules><Rule><Target region2=\"1\" weight=\"0.5\"/></Rule>"
+                           "<Rule region1=\"2\"><Target/></Rule></Rules></DubcyclingState>");
+    REQUIRE(r.has_value());
+    CHECK(r->loop1.path.isEmpty());
+    CHECK(r->loop1.fileName.isEmpty());
+    CHECK(r->loop1.hash.isEmpty());
+    CHECK(r->loop1.bars == 1);
+    CHECK(r->loop1.boundaries.empty());
+    CHECK(r->loop2.bars == 1); // no Loop2 element at all
+    CHECK(r->loop2.path.isEmpty());
+    REQUIRE(r->rules.size() == 1); // the rule without region1 is dropped
+    CHECK(r->rules[0].region1 == 2);
+    REQUIRE(r->rules[0].targets.size() == 1);
+    CHECK(r->rules[0].targets[0].region2 == 0);
+    CHECK(r->rules[0].targets[0].weight == 0.0f);
+    CHECK(r->rules[0].targets[0].mode == PlayMode::Gate);
+
+    const auto noLoops = fromXml("<DubcyclingState version=\"1\"/>");
+    REQUIRE(noLoops.has_value());
+    CHECK(noLoops->loop1.bars == 1);
+    CHECK(noLoops->rules.empty());
+
+    CHECK_FALSE(fromXml("<DubcyclingState><Loop1 bars=\"2\"/></DubcyclingState>").has_value()); // no version
+}
+
+TEST_CASE("PluginState deserialize treats non-numeric values as invalid", "[PluginState][hardening]")
+{
+    const auto r = fromXml("<DubcyclingState version=\"1\">"
+                           "<Loop1 bars=\"abc\" boundaries=\"x,0.5,,y\"/><Loop2 bars=\"1e99\"/>"
+                           "<Rules><Rule region1=\"0\"><Target region2=\"1\" weight=\"abc\"/>"
+                           "<Target region2=\"2\" weight=\"nan\"/><Target region2=\"3\" weight=\"0.25\" mode=\"zz\"/>"
+                           "</Rule></Rules></DubcyclingState>");
+    REQUIRE(r.has_value());
+    CHECK(r->loop1.bars == 1);
+    CHECK(r->loop1.boundaries == std::vector<double> { 0.5 });
+    CHECK(r->loop2.bars >= 1);
+    CHECK(r->loop2.bars <= 1024);
+    REQUIRE(r->rules.size() == 1);
+    REQUIRE(r->rules[0].targets.size() == 3);
+    CHECK(r->rules[0].targets[0].weight == 0.0f);
+    CHECK(r->rules[0].targets[1].weight == 0.0f);
+    CHECK(r->rules[0].targets[2].weight == 0.25f);
+    CHECK(r->rules[0].targets[2].mode == PlayMode::Gate);
+}
+
+TEST_CASE("PluginState deserialize caps rule and target counts and drops absurd region1", "[PluginState][hardening]")
+{
+    juce::String xml = "<DubcyclingState version=\"1\"><Rules>";
+    xml << "<Rule region1=\"999999999\"><Target region2=\"0\" weight=\"0.5\"/></Rule>";
+    xml << "<Rule region1=\"0\">";
+    for (int t = 0; t < 3000; ++t)
+        xml << "<Target region2=\"" << t << "\" weight=\"0.0001\"/>";
+    xml << "</Rule>";
+    for (int i = 1; i < 2000; ++i)
+        xml << "<Rule region1=\"" << i << "\"><Target region2=\"0\" weight=\"0.5\"/></Rule>";
+    xml << "</Rules></DubcyclingState>";
+
+    const auto r = fromXml(xml);
+    REQUIRE(r.has_value());
+    CHECK(r->rules.size() == 1024);
+    REQUIRE_FALSE(r->rules.empty());
+    CHECK(r->rules[0].region1 == 0);
+    CHECK(r->rules[0].targets.size() == 1024);
+    for (const auto& e : r->rules)
+        CHECK(e.region1 < 4096);
+}

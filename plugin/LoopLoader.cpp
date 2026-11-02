@@ -1,4 +1,5 @@
 #include "plugin/LoopLoader.h"
+#include "plugin/PluginState.h"
 #include <algorithm>
 #include <limits>
 #include <new>
@@ -19,7 +20,7 @@ std::unique_ptr<juce::AudioFormatReader> openChecked(const juce::File& file, juc
 {
     if (!file.existsAsFile())
     {
-        error = "file not found";
+        error = LoopLoader::kErrorFileNotFound;
         return nullptr;
     }
     juce::AudioFormatManager formats;
@@ -97,6 +98,8 @@ void LoopLoader::request(int slot, std::uint64_t ticket, const juce::File& file)
         r.slot = slot;
         r.ticket = ticket;
         r.data = decode(file, r.error);
+        if (r.data != nullptr)
+            r.hash = hashFile(file); // off the message thread (item A6: refresh the stored hash)
         const juce::ScopedLock sl(lock_);
         results_.push_back(std::move(r));
     });

@@ -27,16 +27,32 @@ bool DubcyclingProcessor::isBusesLayoutSupported(const BusesLayout& layouts) con
 }
 
 void DubcyclingProcessor::setModel(std::shared_ptr<const Model> model) {
-    model_ = model;
-    engine_.setModel(std::move(model));
+    {
+        const juce::ScopedLock sl(stateLock_);
+        model_ = model;
+    }
+    engine_.setModel(std::move(model)); // has its own lock; never called with stateLock_ held
 }
 
 
 DubcyclingProcessor::SlotStatus DubcyclingProcessor::getSlotStatus(int slot) const {
-    if (slot < 0 || slot > 1)
-        return SlotStatus::Empty;
     const juce::ScopedLock sl(stateLock_);
-    return status_[slot];
+    return slots_.status(slot);
+}
+
+juce::String DubcyclingProcessor::slotError(int slot) const {
+    const juce::ScopedLock sl(stateLock_);
+    return slots_.error(slot);
+}
+
+juce::String DubcyclingProcessor::pendingReplaceFileName(int slot) const {
+    const juce::ScopedLock sl(stateLock_);
+    return slots_.pendingFileName(slot);
+}
+
+SlotTracker::ReplaceFailure DubcyclingProcessor::replaceFailure(int slot) const {
+    const juce::ScopedLock sl(stateLock_);
+    return slots_.replaceFailure(slot);
 }
 
 void DubcyclingProcessor::publish() {
@@ -46,7 +62,7 @@ void DubcyclingProcessor::publish() {
         for (int i = 0; i < 2; ++i) {
             const LoopRef& ref = i == 0 ? state_.loop1 : state_.loop2;
             LoopSlot& slot = i == 0 ? m->loop1 : m->loop2;
-            slot.data = data_[i];
+            slot.data = slots_.data(i);
             slot.bars = ref.bars;
             slot.regions.boundaries = ref.boundaries;
         }
@@ -58,24 +74,19 @@ void DubcyclingProcessor::publish() {
 
 // Message thread. Caller holds no lock.
 void DubcyclingProcessor::startLoad(int slot, const juce::File& file) {
+    std::uint64_t ticket = 0;
     {
         const juce::ScopedLock sl(stateLock_);
-        data_[slot] = nullptr;
-        status_[slot] = SlotStatus::Loading;
-        ticket_[slot] = nextTicket_++;
+        ticket = slots_.beginLoad(slot);
     }
-    loader_.request(slot, ticket_[slot], file);
+    loader_.request(slot, ticket, file);
 }
 
 void DubcyclingProcessor::applyState(const PluginState& s) {
     {
         const juce::ScopedLock sl(stateLock_);
         state_ = s;
-        for (int i = 0; i < 2; ++i) {
-            data_[i] = nullptr;
-            ticket_[i] = nextTicket_++; // invalidates in-flight loads of the previous state
-            status_[i] = SlotStatus::Empty;
-        }
+        slots_.resetAll(); // invalidates in-flight loads and staged replacements of the previous state
     }
     for (int i = 0; i < 2; ++i) {
         LoopRef ref;
@@ -93,7 +104,7 @@ void DubcyclingProcessor::applyState(const PluginState& s) {
             startLoad(i, *f);
         } else {
             const juce::ScopedLock sl(stateLock_);
-            status_[i] = SlotStatus::Missing; // regions/rules/bars stay and are saved unchanged
+            slots_.setMissing(i); // regions/rules/bars stay and are saved unchanged
         }
     }
     publish();
@@ -130,48 +141,49 @@ void DubcyclingProcessor::applyEdit(const PluginState& edited) {
     publish();
 }
 
-void DubcyclingProcessor::loadLoop(int slot, const juce::File& file) {
+bool DubcyclingProcessor::loadLoop(int slot, const juce::File& file) {
     if (slot < 0 || slot > 1)
-        return;
+        return false;
+    const juce::String hash = hashFile(file); // file IO outside the lock
+    if (hash.isEmpty())
+        return false; // missing or unreadable: keep the reference (it could never relink otherwise)
     {
         const juce::ScopedLock sl(stateLock_);
         LoopRef& ref = refOf(slot);
         ref.path = file.getFullPathName();
         ref.fileName = file.getFileName();
-        ref.hash = hashFile(file);
+        ref.hash = hash;
     }
     startLoad(slot, file);
     publish();
+    return true;
 }
 
-void DubcyclingProcessor::replaceLoop(int slot, const juce::File& file, int bars) {
+bool DubcyclingProcessor::replaceLoop(int slot, const juce::File& file, int bars) {
     if (slot < 0 || slot > 1)
-        return;
+        return false;
+    const juce::String hash = hashFile(file); // file IO outside the lock
+    if (hash.isEmpty())
+        return false;
+    LoopRef next;
+    next.path = file.getFullPathName();
+    next.fileName = file.getFileName();
+    next.hash = hash;
+    next.bars = std::clamp(bars, 1, 1024);
+    std::uint64_t ticket = 0;
     {
         const juce::ScopedLock sl(stateLock_);
-        LoopRef& ref = refOf(slot);
-        ref.path = file.getFullPathName();
-        ref.fileName = file.getFileName();
-        ref.hash = hashFile(file);
-        ref.bars = std::clamp(bars, 1, 1024);
-        ref.boundaries.clear();
-        state_.rules.clear();
+        ticket = slots_.beginReplace(slot, std::move(next)); // applied in timerCallback once decoded
     }
-    startLoad(slot, file);
-    publish();
+    loader_.request(slot, ticket, file);
+    return true;
 }
 
 void DubcyclingProcessor::timerCallback() {
     bool changed = false;
     for (auto& r : loader_.takeResults()) {
-        if (r.slot < 0 || r.slot > 1)
-            continue;
         const juce::ScopedLock sl(stateLock_);
-        if (r.ticket != ticket_[r.slot])
-            continue; // stale
-        data_[r.slot] = r.data;
-        status_[r.slot] = r.data != nullptr ? SlotStatus::Loaded : SlotStatus::Missing;
-        changed = true;
+        changed = slots_.apply(r, state_) || changed;
     }
     if (changed)
         publish();

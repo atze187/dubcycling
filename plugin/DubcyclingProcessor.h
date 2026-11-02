@@ -6,6 +6,7 @@
 #include "engine/Engine.h"
 #include "plugin/LoopLoader.h"
 #include "plugin/PluginState.h"
+#include "plugin/SlotTracker.h"
 
 namespace dc {
 
@@ -37,9 +38,19 @@ public:
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
 
-    // ---- Loop slots and persisted state (message thread) ----
-    enum class SlotStatus { Empty, Loading, Loaded, Missing };
+    // ---- Loop slots and persisted state ----
+    // Threading: setStateInformation, the editor's edits/loads and the timer run on the message
+    // thread; getStateInformation may be called from another host thread. state_, the slot tracker
+    // and model_ are guarded by stateLock_; file IO (hashing) is done outside the lock.
+    using SlotStatus = dc::SlotStatus;
+    // Loading also while a replaceLoop is staged (the old loop still plays until it has decoded).
     SlotStatus getSlotStatus(int slot) const;
+    // Failed: the loader's error text (e.g. "unsupported or damaged file"); empty otherwise.
+    juce::String slotError(int slot) const;
+    // File name of a staged replaceLoop that is still decoding; empty if none.
+    juce::String pendingReplaceFileName(int slot) const;
+    // The slot's last replaceLoop that failed to decode (id 0 = none; ids increase).
+    SlotTracker::ReplaceFailure replaceFailure(int slot) const;
     // The persisted state (what getStateInformation writes). Message thread.
     PluginState getPluginState() const { const juce::ScopedLock sl(stateLock_); return state_; }
     // Replaces regions/rules/bars (e.g. from the editor) and republishes the model. Boundaries and
@@ -47,10 +58,13 @@ public:
     void applyEdit(const PluginState& edited);
     // Relink: assigns a file to the slot and KEEPS regions, rules and bars (use for the "file missing"
     // case or a re-exported version of the same loop). Recomputes path/name/hash, loads async.
-    void loadLoop(int slot, const juce::File& file);
-    // Loads a different loop: sets bars, DROPS that slot's regions and all rules (their region
-    // indices no longer mean anything), loads async.
-    void replaceLoop(int slot, const juce::File& file, int bars);
+    // A file that does not exist or cannot be read changes nothing and returns false.
+    bool loadLoop(int slot, const juce::File& file);
+    // Loads a different loop. Transactional: the replacement is staged and decoded first; only when
+    // it decodes, the slot gets the new reference and bars and DROPS its regions and all rules (their
+    // region indices no longer mean anything). If decoding fails nothing changes and the failure is
+    // reported via replaceFailure(). A file that does not exist or cannot be read returns false.
+    bool replaceLoop(int slot, const juce::File& file, int bars);
     // Optional folder to search for moved files (see relink()); empty = none.
     void setSessionDir(const juce::File& dir) { sessionDir_ = dir; }
     // Last tempo the host reported in processBlock; 0 = none yet. Any thread.
@@ -62,8 +76,8 @@ public:
     // Publishes a new model to the audio thread (lock-free handoff inside Engine::setModel).
     // Call from the message thread (or any non-audio thread); nullptr = silence.
     void setModel(std::shared_ptr<const Model> model);
-    // The last published model. Message thread only.
-    std::shared_ptr<const Model> getModel() const { return model_; }
+    // The last published model. Message thread.
+    std::shared_ptr<const Model> getModel() const { const juce::ScopedLock sl(stateLock_); return model_; }
 
 private:
     void timerCallback() override;
@@ -73,14 +87,11 @@ private:
     void applyState(const PluginState& s);
 
     Engine engine_;
-    std::shared_ptr<const Model> model_; // message-thread copy; the audio thread reads via engine_
-    PluginState state_;                  // message thread; source of truth for getStateInformation
-    std::shared_ptr<const StereoData> data_[2];
-    SlotStatus status_[2] { SlotStatus::Empty, SlotStatus::Empty };
-    std::uint64_t ticket_[2] { 0, 0 };
-    std::uint64_t nextTicket_ = 1;
+    std::shared_ptr<const Model> model_; // last published model; the audio thread reads via engine_
+    PluginState state_;                  // source of truth for getStateInformation
+    SlotTracker slots_;                  // status, data, tickets, staged replacements
     juce::File sessionDir_;
-    mutable juce::CriticalSection stateLock_; // guards state_ (hosts may call getStateInformation off the message thread)
+    mutable juce::CriticalSection stateLock_; // guards state_, slots_ and model_
     LoopLoader loader_;
     std::atomic<double> hostBpm_ { 0.0 };
 

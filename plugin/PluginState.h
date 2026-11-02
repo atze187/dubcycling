@@ -8,6 +8,10 @@
 namespace dc {
 
 constexpr int kStateVersion = 1;
+// Limits applied when loading a state (damaged or hand-edited data): further entries are dropped.
+constexpr int kMaxRuleEntries = 1024; // rule entries (Loop-1 regions with a rule)
+constexpr int kMaxRuleTargets = 1024; // targets per rule entry
+constexpr int kMaxRegion1 = 4096;     // region1 at or above this is dropped (RuleSet's limit)
 
 // Reference to a loop file (never the audio itself) plus its region boundaries.
 struct LoopRef
@@ -35,7 +39,9 @@ juce::MemoryBlock serialize(const PluginState&);
 // nullopt for empty, damaged or unknown-version data; never throws. The result is sanitized:
 // boundaries are re-added through RegionMap::addBoundary (invalid ones dropped, sorted, spaced),
 // rule weights go through RuleSet::setTargets, entries with negative region1 and targets with
-// negative region2 are dropped (region indices that do not exist are kept).
+// negative region2 are dropped (region indices that do not exist are kept). Entries with
+// region1 >= kMaxRegion1 are dropped; at most kMaxRuleEntries entries with kMaxRuleTargets targets
+// each are kept (the first ones in document order).
 std::optional<PluginState> deserialize(const void* data, std::size_t size);
 
 // SHA-256 (lowercase hex) of the whole file; empty string if it cannot be read.

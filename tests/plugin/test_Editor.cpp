@@ -84,7 +84,7 @@ struct EditorFixture
 TEST_CASE("decideLoopFileAction covers every combination", "[LoopLane][editor]")
 {
     using dc::ui::decideLoopFileAction;
-    for (auto status : { Status::Empty, Status::Loading, Status::Loaded, Status::Missing })
+    for (auto status : { Status::Empty, Status::Loading, Status::Loaded, Status::Missing, Status::Failed })
         for (bool exists : { false, true })
             for (bool readable : { false, true })
                 for (bool has : { false, true })
@@ -105,6 +105,7 @@ TEST_CASE("decideLoopFileAction covers every combination", "[LoopLane][editor]")
     CHECK(decideLoopFileAction(Status::Missing, true, true, true) == LoopFileAction::ReplaceAfterConfirm);
     CHECK(decideLoopFileAction(Status::Loaded, true, false, true) == LoopFileAction::Reject);
     CHECK(decideLoopFileAction(Status::Empty, false, true, false) == LoopFileAction::ReplaceDirect);
+    CHECK(decideLoopFileAction(Status::Failed, true, true, true) == LoopFileAction::ReplaceAfterConfirm);
 }
 
 TEST_CASE("Editor: a new file on a Missing slot relinks and keeps regions, rules and bars", "[LoopLane][editor]")
@@ -451,4 +452,67 @@ TEST_CASE("Editor: Vorschlag without any transient changes nothing and says so",
     CHECK(f.asked == 0);
     CHECK(serialize(f.proc.getPluginState()) == before);
     CHECK(f.editor->statusText(0) == "Keine Transienten gefunden");
+}
+
+// ---- Hardening: Failed vs Missing, replace failures ----
+
+TEST_CASE("Editor: a Failed slot shows the loader's error, a Missing slot says the file is gone", "[editor][hardening]")
+{
+    EditorFixture f;
+    PluginState s;
+    const auto bad = f.broken("damaged.wav");
+    s.loop1.path = bad.getFullPathName();
+    s.loop1.fileName = "damaged.wav";
+    s.loop2.path = f.dir.getChildFile("gone.wav").getFullPathName();
+    s.loop2.fileName = "gone.wav";
+    const auto block = serialize(s);
+    f.proc.setStateInformation(block.getData(), static_cast<int>(block.getSize()));
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    REQUIRE(f.proc.getSlotStatus(0) == Status::Failed);
+    REQUIRE(f.proc.getSlotStatus(1) == Status::Missing);
+    CHECK(f.editor->statusText(0) == "Nicht lesbar: unsupported or damaged file");
+    CHECK(f.editor->statusText(1) == "Datei fehlt: gone.wav");
+    CHECK(f.editor->lane(0).hintText() == "Nicht lesbar");
+    CHECK(f.editor->lane(1).hintText() == "Datei fehlt");
+}
+
+TEST_CASE("Editor: a new file on a Failed slot goes through the replace flow", "[editor][hardening]")
+{
+    EditorFixture f;
+    PluginState s;
+    const auto bad = f.broken("damaged.wav");
+    s.loop1.path = bad.getFullPathName();
+    s.loop1.fileName = "damaged.wav";
+    s.loop1.boundaries = { 0.5 };
+    const auto block = serialize(s);
+    f.proc.setStateInformation(block.getData(), static_cast<int>(block.getSize()));
+    f.proc.waitForLoads();
+    REQUIRE(f.proc.getSlotStatus(0) == Status::Failed);
+
+    f.editor->loadFile(0, f.wav("fixed.wav"));
+    CHECK(f.asked == 1); // regions would be dropped: ask, no relink
+    f.pendingAnswer(true);
+    f.proc.waitForLoads();
+    CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
+    CHECK(f.proc.getPluginState().loop1.fileName == "fixed.wav");
+    CHECK(f.proc.getPluginState().loop1.boundaries.empty());
+}
+
+TEST_CASE("Editor: a replace that fails to decode keeps the slot and shows a notice", "[editor][hardening]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(f.wav("good.wav"));
+    f.editor->refresh();
+    const auto before = serialize(f.proc.getPluginState());
+
+    REQUIRE(f.proc.replaceLoop(0, f.broken("broken.wav"), 2));
+    f.editor->refresh();
+    CHECK(f.editor->statusText(0).contains("broken.wav")); // loading the staged file
+    f.proc.waitForLoads();
+    f.editor->refresh();
+
+    CHECK(serialize(f.proc.getPluginState()) == before);
+    CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
+    CHECK(f.editor->statusText(0) == "Nicht geladen: broken.wav (unsupported or damaged file)");
 }

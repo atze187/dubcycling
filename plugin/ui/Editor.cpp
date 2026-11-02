@@ -27,6 +27,7 @@ LoopLane::Status laneStatus(DubcyclingProcessor::SlotStatus s)
         case DubcyclingProcessor::SlotStatus::Loading: return LoopLane::Status::Loading;
         case DubcyclingProcessor::SlotStatus::Loaded:  return LoopLane::Status::Loaded;
         case DubcyclingProcessor::SlotStatus::Missing: return LoopLane::Status::Missing;
+        case DubcyclingProcessor::SlotStatus::Failed:  return LoopLane::Status::Failed;
         case DubcyclingProcessor::SlotStatus::Empty:   break;
     }
     return LoopLane::Status::Empty;
@@ -35,7 +36,8 @@ LoopLane::Status laneStatus(DubcyclingProcessor::SlotStatus s)
 const LoopRef& refOf(const PluginState& s, int slot) { return slot == 0 ? s.loop1 : s.loop2; }
 LoopRef& refOf(PluginState& s, int slot) { return slot == 0 ? s.loop1 : s.loop2; }
 
-// The slot's file is gone (relink needed), as opposed to a file that exists but failed to decode.
+// The slot's file is gone (relink needed). A file that exists but failed to decode is Failed and
+// goes through the replace flow.
 bool fileIsMissing(DubcyclingProcessor::SlotStatus status, const LoopRef& ref)
 {
     return status == DubcyclingProcessor::SlotStatus::Missing && !juce::File(ref.path).existsAsFile();
@@ -130,6 +132,8 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
     setResizable(true, true);
     setResizeLimits(700, 620, 1800, 1400);
     setSize(900, 720);
+    for (int i = 0; i < 2; ++i)
+        seenFailure_[i] = proc_.replaceFailure(i).id; // only failures from now on are shown
     refresh();
     startTimerHz(10);
 }
@@ -155,15 +159,33 @@ void Editor::refresh()
         suggest_[i].setEnabled(lanes_[i].hasData());
         bars_[i].setValue(static_cast<double>(ref.bars), juce::dontSendNotification);
 
+        // A staged replace that failed to decode: the slot is unchanged, say so once.
+        const auto failure = proc_.replaceFailure(i);
+        if (failure.id > seenFailure_[i])
+        {
+            seenFailure_[i] = failure.id;
+            notice_[i] = "Nicht geladen: " + failure.fileName + " (" + failure.error + ")";
+            noticeUntil_[i] = juce::Time::getMillisecondCounter() + 5000;
+        }
+
         juce::String text;
         juce::Colour colour = kDim;
         switch (status)
         {
             case DubcyclingProcessor::SlotStatus::Empty:   text = "Leer"; break;
-            case DubcyclingProcessor::SlotStatus::Loading: text = utf8("L\xc3\xa4" "dt\xe2\x80\xa6 ") + ref.fileName; break;
+            case DubcyclingProcessor::SlotStatus::Loading:
+            {
+                const auto pending = proc_.pendingReplaceFileName(i);
+                text = utf8("L\xc3\xa4" "dt\xe2\x80\xa6 ") + (pending.isNotEmpty() ? pending : ref.fileName);
+                break;
+            }
             case DubcyclingProcessor::SlotStatus::Loaded:  text = ref.fileName; break;
             case DubcyclingProcessor::SlotStatus::Missing:
-                text = (fileIsMissing(status, ref) ? "Datei fehlt: " : "Nicht lesbar: ") + ref.fileName;
+                text = "Datei fehlt: " + ref.fileName;
+                colour = kWarn;
+                break;
+            case DubcyclingProcessor::SlotStatus::Failed:
+                text = "Nicht lesbar: " + proc_.slotError(i);
                 colour = kWarn;
                 break;
         }
@@ -329,7 +351,11 @@ void Editor::handleFile(int slot, const juce::File& file, const juce::MemoryBloc
             showNotice(slot, "Nicht geladen: " + file.getFileName() + " (" + error + ")");
             return;
         case LoopFileAction::Relink:
-            proc_.loadLoop(slot, file); // keeps regions, rules and bars
+            if (!proc_.loadLoop(slot, file)) // keeps regions, rules and bars
+            {
+                showNotice(slot, "Nicht geladen: " + file.getFileName());
+                return;
+            }
             noticeUntil_[slot] = 0;
             refresh();
             return;
@@ -378,7 +404,11 @@ void Editor::askReplace(int slot, const juce::File& file, const juce::MemoryBloc
 
 void Editor::replace(int slot, const juce::File& file)
 {
-    proc_.replaceLoop(slot, file, suggestedBarsFor(file, proc_.hostBpm()));
+    if (!proc_.replaceLoop(slot, file, suggestedBarsFor(file, proc_.hostBpm())))
+    {
+        showNotice(slot, "Nicht geladen: " + file.getFileName());
+        return;
+    }
     noticeUntil_[slot] = 0;
     refresh();
 }

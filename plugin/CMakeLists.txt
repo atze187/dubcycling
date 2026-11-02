@@ -3,7 +3,8 @@ add_library(dc_plugin_shared STATIC
     LoopLoader.h LoopLoader.cpp
     HostTransport.h HostTransport.cpp
     PluginState.h PluginState.cpp
-    FileRelink.h FileRelink.cpp)
+    FileRelink.h FileRelink.cpp
+    SlotTracker.h SlotTracker.cpp)
 target_include_directories(dc_plugin_shared PUBLIC ${PROJECT_SOURCE_DIR})
 target_link_libraries(dc_plugin_shared PUBLIC
     dc_engine

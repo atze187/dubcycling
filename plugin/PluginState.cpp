@@ -106,12 +106,16 @@ std::optional<PluginState> deserialize(const void* data, std::size_t size)
         s.loop2 = loopFromTree(root.getChildWithName("Loop2"));
         for (auto r : root.getChildWithName("Rules"))
         {
+            if (s.rules.size() >= static_cast<std::size_t>(kMaxRuleEntries))
+                break; // the rest is dropped
             const int region1 = r.getProperty("region1", -1);
-            if (region1 < 0)
-                continue;
+            if (region1 < 0 || region1 >= kMaxRegion1)
+                continue; // RuleSet ignores such an entry anyway
             std::vector<RuleTarget> targets;
             for (auto tt : r)
             {
+                if (targets.size() >= static_cast<std::size_t>(kMaxRuleTargets))
+                    break;
                 RuleTarget t;
                 t.region2 = tt.getProperty("region2", 0);
                 if (t.region2 < 0)

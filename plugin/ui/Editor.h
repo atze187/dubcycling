@@ -24,7 +24,8 @@ int parseBars(const juce::String& text, int fallback);
 enum class LoopFileAction
 {
     Reject,              // not loadable: nothing changes
-    Relink,              // the slot's file is gone: loadLoop, keeps regions, rules and bars
+    Relink,              // the slot's file is gone (Missing): loadLoop, keeps regions, rules and bars.
+                         // A Failed slot (file there but unreadable) is replaced, not relinked.
     ReplaceAfterConfirm, // replaceLoop would drop regions/rules: ask first
     ReplaceDirect        // replaceLoop, nothing to lose
 };
@@ -115,6 +116,7 @@ private:
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::String notice_[2];         // short message shown instead of the status (e.g. rejected file)
     juce::uint32 noticeUntil_[2] {}; // Time::getMillisecondCounter() when the notice expires
+    std::uint64_t seenFailure_[2] {}; // id of the last replace failure shown (proc.replaceFailure)
     struct PendingConfirm
     {
         bool active = false;

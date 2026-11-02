@@ -28,7 +28,7 @@ bool isAcceptedAudioFile(const juce::File& file);
 class LoopLane final : public juce::Component, public juce::FileDragAndDropTarget
 {
 public:
-    enum class Status { Empty, Loading, Loaded, Missing };
+    enum class Status { Empty, Loading, Loaded, Missing, Failed };
 
     LoopLane() = default;
 
