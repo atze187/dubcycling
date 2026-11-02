@@ -1,3 +1,18 @@
+# Plugin-Code ohne Processor/Editor, den auch die Tests linken koennen.
+add_library(dc_plugin_shared STATIC
+    LoopLoader.h LoopLoader.cpp)
+target_include_directories(dc_plugin_shared PUBLIC ${PROJECT_SOURCE_DIR})
+target_link_libraries(dc_plugin_shared PUBLIC
+    dc_engine
+    juce::juce_audio_formats
+    juce::juce_audio_basics
+    juce::juce_core
+    juce::juce_events
+    juce::juce_gui_basics
+    PRIVATE
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_warning_flags)
+
 juce_add_plugin(Dubcycling
     COMPANY_NAME "atze187"
     BUNDLE_ID "de.atze187.dubcycling"
@@ -23,6 +38,7 @@ target_compile_definitions(Dubcycling PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0)
 target_link_libraries(Dubcycling PRIVATE
     dc_engine
+    dc_plugin_shared
     juce::juce_audio_utils
     juce::juce_audio_processors
     juce::juce_gui_basics
