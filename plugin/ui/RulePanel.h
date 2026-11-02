@@ -51,6 +51,10 @@ public:
     PlayMode mode(int row) const;
     juce::String percentText(int row) const;
     juce::String silenceText() const { return silence_.getText(); }
+    // "davon X % auf entfernte Regionen" while stale targets exist, otherwise empty (and hidden).
+    juce::String staleText() const { return staleHint_.isVisible() ? staleHint_.getText() : juce::String(); }
+    // Drops exactly the stale targets (not shown, duplicates, negative) and publishes once.
+    void resetStale();
 
     void resized() override;
     void paint(juce::Graphics& g) override;
@@ -60,6 +64,7 @@ private:
     static constexpr int kRowH = 28;
 
     float otherPercent(int row) const; // everything except this row's own target
+    float stalePercent() const;        // stored targets no row shows
     void applyWeight(int row, float percent);
     void updateSilence();
     void publish();
@@ -74,6 +79,8 @@ private:
 
     juce::Label title_;
     juce::Label silence_;
+    juce::Label staleHint_;
+    juce::TextButton staleReset_;
     juce::Viewport viewport_;
     juce::Component holder_;
 

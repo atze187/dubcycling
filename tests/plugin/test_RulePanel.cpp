@@ -344,3 +344,111 @@ TEST_CASE("Editor: renders the rule panel with a loaded loop pair", "[RulePanel]
     ed.reset();
     dir.deleteRecursively();
 }
+
+TEST_CASE("RulePanel: the stale hint shows the exact percent and is hidden otherwise", "[RulePanel]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    p.setContext(0, 2, { RuleTarget { 0, 0.5f } });
+    CHECK(p.staleText().isEmpty());
+    p.setContext(0, 2, { RuleTarget { 0, 0.5f }, RuleTarget { 4, 0.2f }, RuleTarget { 5, 0.15f } });
+    CHECK(p.staleText() == "davon 35 % auf entfernte Regionen");
+    CHECK(p.silenceText() == "Stille: 15 %");
+    p.setContext(0, 6, { RuleTarget { 0, 0.5f }, RuleTarget { 4, 0.2f }, RuleTarget { 5, 0.15f } });
+    CHECK(p.staleText().isEmpty()); // the regions exist again
+}
+
+TEST_CASE("RulePanel: reset drops only the stale targets and publishes once", "[RulePanel]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setContext(3, 2, { RuleTarget { 4, 0.2f, PlayMode::OneShot }, RuleTarget { 1, 0.3f, PlayMode::OneShot },
+                         RuleTarget { 0, 0.5f } });
+    CHECK(p.silenceText() == "Stille: 0 %");
+    p.resetStale();
+    CHECK(out.calls == 1);
+    CHECK(out.region1 == 3);
+    REQUIRE(out.targets.size() == 2);
+    CHECK(out.targets[0].region2 == 1);
+    CHECK(out.targets[0].weight == 0.3f);
+    CHECK(out.targets[0].mode == PlayMode::OneShot);
+    CHECK(out.targets[1].region2 == 0);
+    CHECK(out.targets[1].weight == 0.5f);
+    CHECK(p.staleText().isEmpty());
+    CHECK(p.silenceText() == "Stille: 20 %");
+    p.resetStale(); // nothing stale left
+    CHECK(out.calls == 1);
+}
+
+TEST_CASE("RulePanel: reset during a drag does nothing, setContext leaves the drag alone", "[RulePanel]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setContext(0, 2, { RuleTarget { 4, 0.2f } });
+    p.beginDrag(0);
+    p.dragWeight(0, 30.0f);
+    p.setContext(0, 2, { RuleTarget { 4, 0.2f } });
+    p.resetStale();
+    CHECK(out.calls == 0);
+    CHECK(p.weightPercent(0) == 30.0f);
+    p.endDrag();
+    REQUIRE(out.targets.size() == 2);
+    CHECK(out.targets[0].region2 == 4); // still preserved
+}
+
+TEST_CASE("Editor: resetting stale targets leaves other region1 entries alone", "[RulePanel][editor]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    DubcyclingProcessor proc;
+    auto s = proc.getPluginState();
+    s.loop1.boundaries = { 0.5 };
+    s.loop2.boundaries = { 0.5 };
+    s.rules = { RuleEntry { 0, { RuleTarget { 5, 0.2f }, RuleTarget { 1, 0.4f } } },
+                RuleEntry { 1, { RuleTarget { 5, 0.1f } } } };
+    proc.applyEdit(s);
+    std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
+    auto* editor = dynamic_cast<dc::ui::Editor*>(ed.get());
+    REQUIRE(editor != nullptr);
+    editor->refresh();
+    CHECK(editor->rulePanel().staleText() == "davon 20 % auf entfernte Regionen");
+    editor->rulePanel().resetStale();
+    const auto after = proc.getPluginState();
+    REQUIRE(after.rules.size() == 2);
+    REQUIRE(after.rules[0].targets.size() == 1);
+    CHECK(after.rules[0].targets[0].region2 == 1);
+    CHECK(after.rules[0].targets[0].weight == 0.4f);
+    CHECK(after.rules[1].targets.size() == 1);
+    CHECK(after.rules[1].targets[0].region2 == 5);
+    editor->refresh();
+    CHECK(editor->rulePanel().staleText().isEmpty());
+    CHECK(editor->rulePanel().silenceText() == "Stille: 60 %");
+}
+
+TEST_CASE("Editor: renders the rule panel with a stale target", "[RulePanel][editor]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    DubcyclingProcessor proc;
+    auto s = proc.getPluginState();
+    s.loop1.boundaries = { 0.5 };
+    s.loop2.boundaries = { 0.5 };
+    s.rules = { RuleEntry { 0, { RuleTarget { 0, 0.5f }, RuleTarget { 4, 0.2f, PlayMode::OneShot } } } };
+    proc.applyEdit(s);
+    std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
+    auto* editor = dynamic_cast<dc::ui::Editor*>(ed.get());
+    REQUIRE(editor != nullptr);
+    editor->refresh();
+    auto img = ed->createComponentSnapshot(ed->getLocalBounds());
+    CHECK(img.isValid());
+    const auto snapDir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {});
+    if (snapDir.isNotEmpty())
+    {
+        auto png = juce::File(snapDir).getChildFile("editor_rules_stale.png");
+        png.deleteFile();
+        if (auto out = png.createOutputStream())
+            juce::PNGImageFormat().writeImageToStream(img, *out);
+    }
+}

@@ -129,6 +129,13 @@ RulePanel::RulePanel()
 
     silence_.setColour(juce::Label::textColourId, kDim);
     silence_.setJustificationType(juce::Justification::centredRight);
+    staleHint_.setColour(juce::Label::textColourId, kOneShot);
+    staleHint_.setJustificationType(juce::Justification::centredRight);
+    addChildComponent(staleHint_);
+    staleReset_.setButtonText(utf8("Zur\xc3\xbc" "cksetzen"));
+    staleReset_.setTooltip("Entfernt die Regeln auf Regionen, die es nicht mehr gibt");
+    staleReset_.onClick = [this] { resetStale(); };
+    addChildComponent(staleReset_);
     addAndMakeVisible(silence_);
 
     viewport_.setViewedComponent(&holder_, false);
@@ -216,11 +223,17 @@ void RulePanel::setContext(int region1, int region2Count, const std::vector<Rule
 
 float RulePanel::otherPercent(int row) const
 {
-    float sum = 0.0f;
+    float sum = stalePercent();
     for (int i = 0; i < rowCount(); ++i)
         if (i != row)
             sum += rows_[static_cast<std::size_t>(i)]->percent;
-    // Stored targets that no row shows: stale regions and duplicates of a shown region.
+    return sum;
+}
+
+// Stored targets that no row shows: stale regions and duplicates of a shown region.
+float RulePanel::stalePercent() const
+{
+    float sum = 0.0f;
     std::vector<bool> seen(static_cast<std::size_t>(rowCount()), false);
     for (const auto& t : stored_)
     {
@@ -233,10 +246,47 @@ float RulePanel::otherPercent(int row) const
     return sum;
 }
 
+void RulePanel::resetStale()
+{
+    if (dragRow_ >= 0)
+        return;
+    std::vector<RuleTarget> kept;
+    std::vector<bool> seen(static_cast<std::size_t>(rowCount()), false);
+    for (const auto& t : stored_)
+        if (t.region2 >= 0 && t.region2 < rowCount() && !seen[static_cast<std::size_t>(t.region2)])
+        {
+            seen[static_cast<std::size_t>(t.region2)] = true;
+            kept.push_back(t);
+        }
+    if (kept.size() == stored_.size())
+        return;
+    stored_ = std::move(kept);
+    publish();
+    updateSilence();
+}
+
 void RulePanel::updateSilence()
 {
     const float rest = std::max(0.0f, snap(100.0f - otherPercent(-1)));
     silence_.setText("Stille: " + juce::String(juce::roundToInt(rest)) + " %", juce::dontSendNotification);
+    bool stale = false;
+    std::vector<bool> seen(static_cast<std::size_t>(rowCount()), false);
+    for (const auto& t : stored_)
+    {
+        const bool shown = t.region2 >= 0 && t.region2 < rowCount() && !seen[static_cast<std::size_t>(t.region2)];
+        if (shown)
+            seen[static_cast<std::size_t>(t.region2)] = true;
+        else
+            stale = true;
+    }
+    staleHint_.setText("davon " + juce::String(juce::roundToInt(stalePercent())) + " % auf entfernte Regionen",
+                       juce::dontSendNotification);
+    if (stale != staleHint_.isVisible())
+    {
+        staleHint_.setVisible(stale);
+        staleReset_.setVisible(stale);
+        resized();
+    }
 }
 
 void RulePanel::applyWeight(int row, float percent)
@@ -346,6 +396,13 @@ void RulePanel::resized()
     auto top = r.removeFromTop(24);
     silence_.setBounds(top.removeFromRight(150));
     title_.setBounds(top);
+    if (staleHint_.isVisible())
+    {
+        auto line = r.removeFromTop(24);
+        staleReset_.setBounds(line.removeFromRight(110).reduced(0, 1));
+        line.removeFromRight(8);
+        staleHint_.setBounds(line);
+    }
     r.removeFromTop(2);
     viewport_.setBounds(r);
     const int w = viewport_.getMaximumVisibleWidth();
