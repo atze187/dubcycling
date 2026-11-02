@@ -1,6 +1,7 @@
 #include "engine/Engine.h"
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 #include "engine/LoopTiming.h"
 
 namespace dc {
@@ -32,7 +33,7 @@ void Engine::prepare(double sampleRate, int maxBlock)
     grainLen_ = std::max(16, static_cast<int>(std::lround(LoopReader::kGrainMs * 0.001 * outRate_)));
     fadeLen_ = std::max(1, static_cast<int>(std::lround(kCancelFadeMs * 0.001 * outRate_)));
     for (auto& rt : owned_)
-        rt->reader1.prepare(outRate_);
+        rt->reader1->prepare(outRate_); // a shared reader is prepared more than once: harmless
     resetPlayback();
 }
 
@@ -41,9 +42,18 @@ void Engine::setModel(std::shared_ptr<const Model> model)
     auto rt = std::make_unique<Runtime>();
     rt->model = std::move(model);
     std::lock_guard<std::mutex> lock(mutex_);
-    rt->reader1.prepare(sampleRate_);
-    if (rt->model)
-        rt->reader1.setData(rt->model->loop1.data);
+    // Same Loop-1 data as the latest published model: share its reader, so a seamless swap keeps
+    // the grain state. prev is owned_ and published, so its data is alive (no address reuse).
+    const Runtime* prev = next_.load();
+    if (prev != nullptr && prev->model && rt->model && prev->model->loop1.data == rt->model->loop1.data)
+        rt->reader1 = prev->reader1;
+    else
+    {
+        rt->reader1 = std::make_shared<LoopReader>();
+        rt->reader1->prepare(sampleRate_);
+        if (rt->model)
+            rt->reader1->setData(rt->model->loop1.data);
+    }
     next_.store(rt.get());
     owned_.push_back(std::move(rt));
     releaseRetiredLocked();
@@ -64,10 +74,26 @@ void Engine::releaseRetiredLocked()
     std::erase_if(owned_, [&](const std::unique_ptr<Runtime>& rt) { return rt.get() != next && rt.get() != used; });
 }
 
-void Engine::resetPlayback()
+Engine::SwapKey Engine::keyOf(const Runtime* rt)
+{
+    SwapKey k;
+    if (rt == nullptr || !rt->model)
+        return k;
+    const Model& m = *rt->model;
+    k.valid = true;
+    k.data1 = m.loop1.data.get();
+    k.data2 = m.loop2.data.get();
+    k.bars1 = m.loop1.bars;
+    k.bars2 = m.loop2.bars;
+    return k;
+}
+
+void Engine::resetPlayback(bool keepLoop1)
 {
     running_ = false;
+    swapPending_ = false;
     lastRegion1_ = -1;
+    lastLo1_ = lastHi1_ = 0.0;
     lastCycle1_ = 0;
     lastPpq_ = 0.0;
     sequencer_.reset();
@@ -80,8 +106,41 @@ void Engine::resetPlayback()
         v->gl.reset();
         v->gr.reset();
     }
-    if (current_ != nullptr)
-        current_->reader1.reset();
+    if (current_ != nullptr && !keepLoop1)
+        current_->reader1->reset();
+}
+
+void Engine::adoptSwap(const Model& m, double beats1)
+{
+    swapPending_ = false;
+    // Loop-1 region at the last rendered frame, in the new geometry. An index change caused by a
+    // boundary edit is not an entry (no draw): it just becomes the current region.
+    const double pos = lastPpq_ + kPpqEpsilon;
+    const double cycle = std::floor(pos / beats1);
+    const double ph = (pos - cycle * beats1) / beats1;
+    const int region = m.loop1.regions.regionAt(ph);
+    const auto [lo, hi] = m.loop1.regions.bounds(region);
+
+    // Gate: while it runs, its trigger is lastRegion1_ (shouldGateStop is checked on every frame).
+    // The trigger region still exists if the region now under the play position kept its start or
+    // its end edge; then the Gate follows that region, otherwise it ends via shouldGateStop.
+    if (sequencer_.gateTrigger() >= 0)
+    {
+        constexpr double kEdgeTol = 1e-9;
+        const bool kept = std::abs(lo - lastLo1_) <= kEdgeTol || std::abs(hi - lastHi1_) <= kEdgeTol;
+        sequencer_.retargetGate(kept ? region : -1);
+    }
+    lastRegion1_ = region;
+    lastLo1_ = lo;
+    lastHi1_ = hi;
+
+    // Loop 2: the voice keeps the bounds it started with; only if its region index no longer exists
+    // (the plugin's notion of a removed region, as for stale rule targets) it fades out like a Stop.
+    if (voice_.state == Voice::State::Playing && voice_.region2 >= m.loop2.regions.regionCount())
+    {
+        requestStop();
+        sequencer_.onVoiceEnded();
+    }
 }
 
 void Engine::startVoice(const Model& m, int region2, PlayMode mode)
@@ -101,6 +160,7 @@ void Engine::startVoice(const Model& m, int region2, PlayMode mode)
     v.lo = lo01 * len;
     v.hi = hi01 * len;
     v.mode = mode;
+    v.region2 = region2;
     v.elapsed = 0.0;
     v.state = Voice::State::Playing;
     v.gain = 0.0f;
@@ -192,6 +252,10 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     if (n <= 0 || l == nullptr || r == nullptr)
         return;
 
+    // Key of the Runtime in use, read while it is still protected (inUse_ == current_). The data it
+    // points to stays alive until inUse_ moves on, so a new model's data can never reuse its address.
+    const SwapKey was = keyOf(current_);
+
     // Take the latest Runtime (hazard pointer: announce, then confirm it is still published).
     Runtime* rt = next_.load();
     for (;;)
@@ -205,7 +269,13 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     if (rt != current_)
     {
         current_ = rt;
-        resetPlayback(); // model change: hard restart, the next valid frame is a fresh entry
+        const SwapKey now = keyOf(rt);
+        const bool loop1Same = was.valid && now.valid && was.data1 == now.data1 && was.bars1 == now.bars1;
+        const bool loop2Same = was.valid && now.valid && was.data2 == now.data2 && was.bars2 == now.bars2;
+        if (running_ && loop1Same && loop2Same)
+            swapPending_ = true; // seamless: adopted below once the block's timing is known
+        else
+            resetPlayback(running_ && loop1Same); // hard restart, the next valid frame is a fresh entry
     }
 
     const Model* m = current_ != nullptr ? current_->model.get() : nullptr;
@@ -222,12 +292,14 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     const double bpb = beatsPerBar(t.tsNum, t.tsDen);
     const double beats1 = std::max(1, m->loop1.bars) * bpb;
     const double beats2 = std::max(1, m->loop2.bars) * bpb;
+    if (swapPending_)
+        adoptSwap(*m, beats1);
 
     // Loop 1: phase-locked to the host for the whole block.
     const StereoData* d1 = m->loop1.data.get();
     const double phase1 = std::fmod(t.ppq, beats1) / beats1;
     const double step1 = sourceStep(framesOf(d1), beats1, t.bpm, outRate_);
-    current_->reader1.render(l, r, n, phase1, ppqStep / beats1, step1);
+    current_->reader1->render(l, r, n, phase1, ppqStep / beats1, step1);
 
     // Loop 2: one voice, region entries detected per sample (sample-accurate boundaries).
     const StereoData* d2 = m->loop2.data.get();
@@ -263,6 +335,7 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
             const bool jumpNow = jumped && i == 0;
             entry = false;
             lastRegion1_ = region;
+            std::tie(lastLo1_, lastHi1_) = m->loop1.regions.bounds(region);
             lastCycle1_ = cycle;
             c = sequencer_.onRegion1(region, m->rules); // None: region without rule, not a draw
             if (c.type == Sequencer::Command::Type::Start)

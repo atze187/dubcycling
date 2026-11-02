@@ -149,6 +149,37 @@ std::function<float()> counting(int& count)
     return [&count] { ++count; return 0.5f; };
 }
 
+// Model swaps happen at a block start. 31232 = 61 blocks of 512 (phase 0.3253 of a 4/4 bar), not
+// aligned with the 40 ms grain grid, so a restarted Loop-1 reader would differ from a continued one.
+constexpr int kSwapAt = 61 * 512;
+
+// Like run() from ppq 0 in 512-frame blocks; publishes `next` right before the block at `swapAt`.
+Out runSwap(dc::Engine& e, int frames, int swapAt, std::shared_ptr<const dc::Model> next)
+{
+    Out o;
+    o.l.assign(static_cast<size_t>(frames), 7.0f);
+    o.r.assign(static_cast<size_t>(frames), 7.0f);
+    double ppq = 0.0;
+    for (int pos = 0; pos < frames; pos += 512)
+    {
+        if (pos == swapAt)
+            e.setModel(next);
+        const int n = std::min(512, frames - pos);
+        dc::TransportInfo t { true, ppq, kBpm, 4, 4 };
+        e.process(t, o.l.data() + pos, o.r.data() + pos, n);
+        ppq += n * kBpm / (60.0 * kRate);
+    }
+    return o;
+}
+
+bool sameRange(const Out& a, const Out& b, size_t from, size_t to)
+{
+    for (size_t i = from; i < to; ++i)
+        if (a.l[i] != b.l[i] || a.r[i] != b.r[i])
+            return false;
+    return true;
+}
+
 } // namespace
 
 TEST_CASE("Engine silent when not playing", "[Engine]")
@@ -503,6 +534,170 @@ TEST_CASE("Engine setModel from another thread while processing", "[Engine]")
     REQUIRE(std::all_of(o.l.begin(), o.l.end(), [](float x) { return std::isfinite(x) && std::abs(x) <= 1.0f; }));
 }
 
+TEST_CASE("Engine swap with only new rules keeps loop 1 sample-identical", "[Engine][swap]")
+{
+    auto m = baseModel();
+    m->loop1.data = makeData(kBar, [](int i) { return sineAt(i, 220.0, 0.5f); });
+    m->loop1.regions = regions({ 0.5 });
+    auto m2 = std::make_shared<dc::Model>(*m);
+    m2->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    dc::Engine ref;
+    prepared(ref);
+    ref.setModel(m);
+    const Out a = run(ref, 0.0, kBar);
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    const Out b = runSwap(e, kBar, kSwapAt, m2);
+    REQUIRE(sameRange(a, b, 0, kBar)); // tolerance 0
+}
+
+TEST_CASE("Engine loop-2 voice running at a swap continues sample-continuously", "[Engine][swap]")
+{
+    for (dc::PlayMode mode : { dc::PlayMode::Gate, dc::PlayMode::OneShot })
+    {
+        auto m = baseModel();
+        m->loop2.data = makeData(kBar, [](int i) { return static_cast<float>(i) / kBar; }); // ramp
+        m->loop2.regions = regions({ 0.5 });
+        m->rules.setTargets(0, { { 1, 1.0f, mode } });
+        auto m2 = std::make_shared<dc::Model>(*m);
+        m2->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } }); // takes effect at the next entry
+        int refDraws = 0, draws = 0;
+        dc::Engine ref;
+        prepared(ref);
+        ref.setRandom(counting(refDraws));
+        ref.setModel(m);
+        const Out a = run(ref, 0.0, kBar + 4096);
+        dc::Engine e;
+        prepared(e);
+        e.setRandom(counting(draws));
+        e.setModel(m);
+        const Out b = runSwap(e, kBar + 4096, kSwapAt, m2);
+        REQUIRE(sameRange(a, b, 0, kBar));
+        REQUIRE(draws == 2); // entry at 0 and the wrap only; the swap is not a draw
+        // The new rule plays from the next entry (wrap): region 0 of the ramp, from its start.
+        REQUIRE(std::abs(b.l[kBar + 1000] - 1000.0f / kBar) < kTol);
+    }
+}
+
+TEST_CASE("Engine loop-2 voice keeps its bounds when its region is resized", "[Engine][swap]")
+{
+    auto m = baseModel();
+    m->loop2.data = makeData(kBar, [](int i) { return static_cast<float>(i) / kBar; });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::Gate } });
+    auto m2 = std::make_shared<dc::Model>(*m);
+    m2->loop2.regions = regions({ 0.4 }); // region 1 still exists, but moved
+    dc::Engine ref;
+    prepared(ref);
+    ref.setModel(m);
+    const Out a = run(ref, 0.0, kBar);
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    const Out b = runSwap(e, kBar, kSwapAt, m2);
+    REQUIRE(sameRange(a, b, 0, kBar));
+}
+
+TEST_CASE("Engine adding a loop-1 boundary during playback is not an entry", "[Engine][swap]")
+{
+    auto m = baseModel();
+    m->loop1.data = makeData(kBar, [](int i) { return sineAt(i, 220.0, 0.25f); });
+    m->loop1.regions = regions({ 0.5 });
+    m->loop2.data = makeData(kBar, [](int i) { return static_cast<float>(i) / kBar; });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::Gate } });
+    m->rules.setTargets(1, { { 0, 1.0f, dc::PlayMode::Gate } });
+    auto m2 = std::make_shared<dc::Model>(*m);
+    m2->loop1.regions = regions({ 0.25, 0.5 }); // the phase (0.325) is now in region index 1 (has a rule)
+    int refDraws = 0, draws = 0;
+    dc::Engine ref;
+    prepared(ref);
+    ref.setRandom(counting(refDraws));
+    ref.setModel(m);
+    const Out a = run(ref, 0.0, 48000);
+    dc::Engine e;
+    prepared(e);
+    e.setRandom(counting(draws));
+    e.setModel(m);
+    const Out b = runSwap(e, 48000, kSwapAt, m2);
+    REQUIRE(draws == 1); // no spurious draw
+    // No discontinuity: loop 1 and the Gate voice (re-mapped to [0.25, 0.5), which keeps the end
+    // edge of its trigger region [0, 0.5)) run on exactly as without the swap.
+    REQUIRE(sameRange(a, b, 0, 48000));
+}
+
+TEST_CASE("Engine gate ends when its trigger region is gone after a swap", "[Engine][swap]")
+{
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.25, 0.5 }); // gate triggered in region 1 = [0.25, 0.5) at frame 24000
+    m->loop2.data = regionData(kBar, { 0.2f, 0.6f });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(1, { { 1, 1.0f, dc::PlayMode::Gate } });
+    auto m2 = std::make_shared<dc::Model>(*m);
+    m2->loop1.regions = regions({ 0.125, 0.375 }); // phase region [0.125, 0.375) shares no edge with [0.25, 0.5)
+    int draws = 0;
+    dc::Engine e;
+    prepared(e);
+    e.setRandom(counting(draws));
+    e.setModel(m);
+    const Out b = runSwap(e, kBar, kSwapAt, m2);
+    REQUIRE(draws == 1);
+    REQUIRE(std::abs(b.l[kSwapAt] - 0.6f) < kTol); // fades out via shouldGateStop, no hard cut
+    REQUIRE(std::abs(b.l[kSwapAt + kFade / 2] - 0.3f) < kTol);
+    REQUIRE(allZero(b.l, kSwapAt + kFade, kBar));
+}
+
+TEST_CASE("Engine removing the loop-2 region of the running voice fades it out", "[Engine][swap]")
+{
+    auto m = baseModel();
+    m->loop2.data = regionData(kBar, { 0.2f, 0.6f });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::Gate } });
+    auto m2 = std::make_shared<dc::Model>(*m);
+    m2->loop2.regions = regions({}); // region 1 no longer exists
+    int draws = 0;
+    dc::Engine e;
+    prepared(e);
+    e.setRandom(counting(draws));
+    e.setModel(m);
+    const Out b = runSwap(e, kBar, kSwapAt, m2);
+    REQUIRE(draws == 1);
+    REQUIRE(maxDev(b.l, kFade, kSwapAt, 0.6f) < kTol);
+    REQUIRE(std::abs(b.l[kSwapAt] - 0.6f) < kTol);
+    REQUIRE(std::abs(b.l[kSwapAt + kFade / 2] - 0.3f) < kTol);
+    REQUIRE(allZero(b.l, kSwapAt + kFade, kBar));
+}
+
+TEST_CASE("Engine changing bars or a data pointer resets playback", "[Engine][swap]")
+{
+    for (int variant = 0; variant < 4; ++variant)
+    {
+        auto m = baseModel();
+        m->loop2.data = regionData(kBar, { 0.5f });
+        m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+        auto m2 = std::make_shared<dc::Model>(*m);
+        if (variant == 0)
+            m2->loop1.bars = 2;
+        else if (variant == 1)
+            m2->loop2.bars = 2;
+        else if (variant == 2)
+            m2->loop2.data = regionData(kBar, { 0.5f }); // same content, new pointer
+        else
+            m2->loop1.data = regionData(kBar, { 0.0f });
+        int draws = 0;
+        dc::Engine e;
+        prepared(e);
+        e.setRandom(counting(draws));
+        e.setModel(m);
+        const Out b = runSwap(e, kSwapAt + 4096, kSwapAt, m2);
+        REQUIRE(draws == 2);              // fresh entry draw after the reset
+        REQUIRE(b.l[kSwapAt - 1] > 0.4f);
+        REQUIRE(b.l[kSwapAt] == 0.0f);    // restart: hard cut, fade-in from 0
+        REQUIRE(b.l[kSwapAt + kFade + 100] > 0.4f);
+    }
+}
+
 TEST_CASE("Engine allocation counter hook is active", "[Engine]")
 {
     const long before = gAllocCount.load();
@@ -527,6 +722,15 @@ TEST_CASE("Engine process does not allocate", "[Engine]")
     m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::Gate } });
     m->rules.setTargets(1, { { 2, 0.5f, dc::PlayMode::OneShot }, { 0, 0.5f, dc::PlayMode::Gate } });
     m->rules.setTargets(3, { { 3, 1.0f, dc::PlayMode::OneShot } });
+    // Seamless swaps (same data and bars): a boundary edit with a rule edit, then a Loop-2 region
+    // removal; then a resetting swap (new Loop-1 data pointer).
+    auto edited = std::make_shared<dc::Model>(*m);
+    edited->loop1.regions = regions({ 0.25, 0.4, 0.5, 0.75 });
+    edited->rules.setTargets(2, { { 2, 1.0f, dc::PlayMode::Gate } });
+    auto shrunk = std::make_shared<dc::Model>(*edited);
+    shrunk->loop2.regions = regions({ 0.5 });
+    auto reloaded = std::make_shared<dc::Model>(*shrunk);
+    reloaded->loop1.data = makeData(kBar, [](int k) { return sineAt(k, 330.0, 0.5f); });
     int i = 0;
     e.setRandom([&i] { return (i++ % 4) * 0.25f; });
     e.setModel(m);
@@ -539,8 +743,12 @@ TEST_CASE("Engine process does not allocate", "[Engine]")
     double ppq = 0.0;
     for (int b = 0; b < 2000; ++b)
     {
+        if (b == 400)
+            e.setModel(edited); // swaps are taken over inside process()
+        if (b == 450)
+            e.setModel(shrunk);
         if (b == 500)
-            e.setModel(m); // swap is taken over inside process()
+            e.setModel(reloaded);
         if (b == 700)
             ppq = 1.3; // jump
         block({ b % 300 != 299, ppq, b < 1000 ? kBpm : 97.0, 4, 4 });

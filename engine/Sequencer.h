@@ -38,6 +38,16 @@ public:
     void reset(); // transport stop
     bool active() const { return isActive; }
 
+    // Model swap (boundary edit): the Loop-1 region that triggered the running Gate voice, or -1.
+    int gateTrigger() const { return isActive && activeMode == PlayMode::Gate ? triggerRegion1 : -1; }
+    // Model swap: re-maps the Gate trigger to region1 (its new index). -1 makes shouldGateStop true
+    // on the next check (the Gate ends through the normal path). No-op unless a Gate voice runs.
+    void retargetGate(int region1)
+    {
+        if (isActive && activeMode == PlayMode::Gate)
+            triggerRegion1 = region1;
+    }
+
 private:
     std::function<float()> random;
     std::mt19937 rng;

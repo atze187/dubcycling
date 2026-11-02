@@ -41,8 +41,15 @@ struct Model
 //
 // Threading: process() runs on the audio thread and never locks or allocates. setModel() may be
 // called from any non-audio thread; prepare() and setRandom() only while process() is not running
-// (JUCE guarantees this for prepareToPlay). A model change is a hard restart of both loops
-// (the next frame is a fresh entry draw).
+// (JUCE guarantees this for prepareToPlay).
+//
+// Model swaps: if both loops keep their data pointer and bars, a new model is adopted seamlessly
+// (edits while playing): Loop 1 and the running Loop-2 voice continue sample-continuously, the
+// swap is not a region entry, new rules apply from the next entry. A Gate voice keeps running if
+// the Loop-1 region at the play position still has its trigger region's start or end edge;
+// a voice whose Loop-2 region index no longer exists fades out like a Stop. Any other model change
+// is a hard restart of Loop 2 and the Sequencer (the next frame is a fresh entry draw); Loop 1
+// restarts too unless its data pointer and bars are unchanged.
 class Engine
 {
 public:
@@ -66,11 +73,25 @@ public:
 private:
     // A published model plus the Loop-1 reader bound to its data. Built off the audio thread
     // (LoopReader::setData is not called on the audio thread); the audio thread only swaps pointers.
+    // reader1 is never null. setModel shares the reader of the latest published Runtime when the
+    // Loop-1 data pointer is the same, so the audio thread keeps rendering the same reader object
+    // (grain state intact) across a swap. The shared_ptr's count only changes on the message thread
+    // (Runtimes are created and freed there); the audio thread uses the raw pointer.
     struct Runtime
     {
         std::shared_ptr<const Model> model;
-        LoopReader reader1;
+        std::shared_ptr<LoopReader> reader1;
     };
+
+    // What decides whether a swap can be seamless (raw pointers only compared, never dereferenced).
+    struct SwapKey
+    {
+        bool valid = false; // a model is present
+        const StereoData* data1 = nullptr;
+        const StereoData* data2 = nullptr;
+        int bars1 = 0, bars2 = 0;
+    };
+    static SwapKey keyOf(const Runtime* rt);
 
     // A Loop-2 region player: plays [lo, hi) of loop 2 with its own grain stretch, cycling inside
     // the region (Gate repeats seamlessly) and a linear gain ramp of kCancelFadeMs for start/stop.
@@ -80,6 +101,7 @@ private:
     {
         enum class State { Idle, Playing, FadingOut } state = State::Idle;
         PlayMode mode = PlayMode::Gate;
+        int region2 = -1;          // Loop-2 region index it was started with
         double lo = 0.0, hi = 0.0; // source frames
         double elapsed = 0.0;      // source frames since region start (Gate: wrapped)
         float gain = 0.0f;
@@ -89,7 +111,10 @@ private:
         GrainStretch gl, gr;
     };
 
-    void resetPlayback();
+    // keepLoop1: Loop 1 is unchanged by a swap, its reader keeps running.
+    void resetPlayback(bool keepLoop1 = false);
+    // Seamless swap to m (same data and bars), on the first valid block after the swap.
+    void adoptSwap(const Model& m, double beats1);
     void startVoice(const Model& m, int region2, PlayMode mode);
     void requestStart(const Model& m, int region2, PlayMode mode);
     void requestStop();
@@ -124,7 +149,9 @@ private:
     double expectedPpq_ = 0.0;
     double lastPpq_ = 0.0;
     int lastRegion1_ = -1;
+    double lastLo1_ = 0.0, lastHi1_ = 0.0; // phase bounds of lastRegion1_ (= Gate trigger while a Gate runs)
     long long lastCycle1_ = 0;
+    bool swapPending_ = false; // a seamless swap waits for adoptSwap (needs the block's time signature)
 };
 
 } // namespace dc
