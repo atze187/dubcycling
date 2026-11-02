@@ -16,6 +16,11 @@ target_sources(dc_plugin_tests PRIVATE
     plugin/test_LoopLoader.cpp
     plugin/test_HostTransport.cpp
     plugin/test_PluginState.cpp
-    plugin/test_FileRelink.cpp)
-target_link_libraries(dc_plugin_tests PRIVATE dc_plugin_shared Catch2::Catch2WithMain)
+    plugin/test_FileRelink.cpp
+    plugin/test_LoopLane.cpp)
+# dc_plugin_ui bringt Processor und Editor als Quellen mit (die Tests instanziieren den Editor).
+target_link_libraries(dc_plugin_tests PRIVATE dc_plugin_shared dc_plugin_ui Catch2::Catch2WithMain)
+target_compile_definitions(dc_plugin_tests PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0)
 catch_discover_tests(dc_plugin_tests)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "engine/Engine.h"
@@ -52,6 +53,10 @@ public:
     void replaceLoop(int slot, const juce::File& file, int bars);
     // Optional folder to search for moved files (see relink()); empty = none.
     void setSessionDir(const juce::File& dir) { sessionDir_ = dir; }
+    // Last tempo the host reported in processBlock; 0 = none yet. Any thread.
+    double hostBpm() const { return hostBpm_.load(std::memory_order_relaxed); }
+    // Test seam: blocks until pending loads are decoded and takes their results. Message thread.
+    void waitForLoads() { loader_.waitForAll(); timerCallback(); }
 
 
     // Publishes a new model to the audio thread (lock-free handoff inside Engine::setModel).
@@ -77,6 +82,7 @@ private:
     juce::File sessionDir_;
     mutable juce::CriticalSection stateLock_; // guards state_ (hosts may call getStateInformation off the message thread)
     LoopLoader loader_;
+    std::atomic<double> hostBpm_ { 0.0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DubcyclingProcessor)
 };

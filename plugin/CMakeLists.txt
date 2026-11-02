@@ -18,6 +18,24 @@ target_link_libraries(dc_plugin_shared PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 
+# Processor und Editor als Quellen, die jedes Ziel mit seinen eigenen Flags uebersetzt
+# (Plugin und dc_plugin_tests), damit die Tests den Editor instanziieren koennen.
+add_library(dc_plugin_ui INTERFACE)
+target_sources(dc_plugin_ui INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/DubcyclingProcessor.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/DubcyclingProcessor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/LoopLane.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/LoopLane.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/Editor.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/Editor.cpp)
+target_include_directories(dc_plugin_ui INTERFACE ${PROJECT_SOURCE_DIR})
+target_link_libraries(dc_plugin_ui INTERFACE
+    dc_engine
+    dc_plugin_shared
+    juce::juce_audio_utils
+    juce::juce_audio_processors
+    juce::juce_gui_basics)
+
 juce_add_plugin(Dubcycling
     COMPANY_NAME "atze187"
     BUNDLE_ID "de.atze187.dubcycling"
@@ -33,9 +51,6 @@ juce_add_plugin(Dubcycling
     COPY_PLUGIN_AFTER_BUILD FALSE
     VST3_CATEGORIES Fx)
 
-target_sources(Dubcycling PRIVATE
-    DubcyclingProcessor.h
-    DubcyclingProcessor.cpp)
 target_include_directories(Dubcycling PRIVATE ${PROJECT_SOURCE_DIR})
 target_compile_definitions(Dubcycling PUBLIC
     JUCE_WEB_BROWSER=0
@@ -44,6 +59,7 @@ target_compile_definitions(Dubcycling PUBLIC
 target_link_libraries(Dubcycling PRIVATE
     dc_engine
     dc_plugin_shared
+    dc_plugin_ui
     juce::juce_audio_utils
     juce::juce_audio_processors
     juce::juce_gui_basics

@@ -1,0 +1,213 @@
+#include "plugin/ui/Editor.h"
+#include <algorithm>
+#include <cmath>
+#include "engine/LoopTiming.h"
+
+namespace dc::ui {
+
+namespace {
+constexpr double kDefaultBpm = 120.0;
+constexpr int kHeaderH = 30;
+constexpr int kLaneH = 150;
+constexpr int kGap = 10;
+constexpr int kMargin = 16;
+
+const juce::Colour kWindow { 0xff16181c };
+const juce::Colour kText { 0xffd7dbe0 };
+const juce::Colour kDim { 0xff9aa1ab };
+const juce::Colour kWarn { 0xffe0816a };
+
+juce::String utf8(const char* s) { return juce::String(juce::CharPointer_UTF8(s)); }
+
+LoopLane::Status laneStatus(DubcyclingProcessor::SlotStatus s)
+{
+    switch (s)
+    {
+        case DubcyclingProcessor::SlotStatus::Loading: return LoopLane::Status::Loading;
+        case DubcyclingProcessor::SlotStatus::Loaded:  return LoopLane::Status::Loaded;
+        case DubcyclingProcessor::SlotStatus::Missing: return LoopLane::Status::Missing;
+        case DubcyclingProcessor::SlotStatus::Empty:   break;
+    }
+    return LoopLane::Status::Empty;
+}
+
+const LoopRef& refOf(const PluginState& s, int slot) { return slot == 0 ? s.loop1 : s.loop2; }
+LoopRef& refOf(PluginState& s, int slot) { return slot == 0 ? s.loop1 : s.loop2; }
+
+// The slot's file is gone (relink needed), as opposed to a file that exists but failed to decode.
+bool fileIsMissing(DubcyclingProcessor::SlotStatus status, const LoopRef& ref)
+{
+    return status == DubcyclingProcessor::SlotStatus::Missing && !juce::File(ref.path).existsAsFile();
+}
+} // namespace
+
+int suggestedBarsFor(const juce::File& file, double hostBpm)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+    if (reader == nullptr || reader->sampleRate <= 0.0 || reader->lengthInSamples <= 0)
+        return 1;
+    const double seconds = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
+    const double bpm = std::isfinite(hostBpm) && hostBpm > 0.0 ? hostBpm : kDefaultBpm;
+    return std::clamp(suggestBars(seconds, bpm, 4.0), 1, kMaxBars);
+}
+
+Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), proc_(proc)
+{
+    for (int i = 0; i < 2; ++i)
+    {
+        titles_[i].setText("Loop " + juce::String(i + 1), juce::dontSendNotification);
+        titles_[i].setFont(juce::FontOptions(16.0f, juce::Font::bold));
+        titles_[i].setColour(juce::Label::textColourId, kText);
+        addAndMakeVisible(titles_[i]);
+
+        status_[i].setColour(juce::Label::textColourId, kDim);
+        addAndMakeVisible(status_[i]);
+
+        barsLabel_[i].setText("Takte", juce::dontSendNotification);
+        barsLabel_[i].setColour(juce::Label::textColourId, kDim);
+        barsLabel_[i].setJustificationType(juce::Justification::centredRight);
+        addAndMakeVisible(barsLabel_[i]);
+
+        bars_[i].setSliderStyle(juce::Slider::IncDecButtons);
+        bars_[i].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, kHeaderH - 6);
+        bars_[i].setRange(1.0, static_cast<double>(kMaxBars), 1.0);
+        bars_[i].setValue(1.0, juce::dontSendNotification);
+        bars_[i].onValueChange = [this, i] { barsEdited(i); };
+        addAndMakeVisible(bars_[i]);
+
+        load_[i].setButtonText(utf8("Load\xe2\x80\xa6"));
+        load_[i].onClick = [this, i] { openChooser(i); };
+        addAndMakeVisible(load_[i]);
+
+        lanes_[i].onRegionsChanged = [this, i](const RegionMap& m) { regionsEdited(i, m); };
+        lanes_[i].onFileDropped = [this, i](const juce::File& f) { fileChosen(i, f); };
+        addAndMakeVisible(lanes_[i]);
+    }
+
+    cycle_.setColour(juce::Label::textColourId, kText);
+    cycle_.setFont(juce::FontOptions(15.0f));
+    addAndMakeVisible(cycle_);
+
+    rulesPlaceholder_.setText(utf8("Regeln \xe2\x80\x94 Task 11"), juce::dontSendNotification);
+    rulesPlaceholder_.setJustificationType(juce::Justification::centred);
+    rulesPlaceholder_.setColour(juce::Label::textColourId, kDim);
+    rulesPlaceholder_.setColour(juce::Label::outlineColourId, juce::Colour(0xff3a3f47));
+    addAndMakeVisible(rulesPlaceholder_);
+
+    setResizable(true, true);
+    setResizeLimits(700, 520, 1800, 1400);
+    setSize(900, 620);
+    refresh();
+    startTimerHz(10);
+}
+
+Editor::~Editor()
+{
+    stopTimer();
+}
+
+void Editor::refresh()
+{
+    const PluginState st = proc_.getPluginState();
+    const auto model = proc_.getModel();
+    for (int i = 0; i < 2; ++i)
+    {
+        const LoopRef& ref = refOf(st, i);
+        const auto status = proc_.getSlotStatus(i);
+        lanes_[i].setStatus(laneStatus(status));
+        lanes_[i].setData(model != nullptr ? (i == 0 ? model->loop1.data : model->loop2.data) : nullptr);
+        RegionMap regions;
+        regions.boundaries = ref.boundaries;
+        lanes_[i].setRegions(regions);
+        bars_[i].setValue(static_cast<double>(ref.bars), juce::dontSendNotification);
+
+        juce::String text;
+        juce::Colour colour = kDim;
+        switch (status)
+        {
+            case DubcyclingProcessor::SlotStatus::Empty:   text = "Leer"; break;
+            case DubcyclingProcessor::SlotStatus::Loading: text = utf8("L\xc3\xa4" "dt\xe2\x80\xa6 ") + ref.fileName; break;
+            case DubcyclingProcessor::SlotStatus::Loaded:  text = ref.fileName; break;
+            case DubcyclingProcessor::SlotStatus::Missing:
+                text = (fileIsMissing(status, ref) ? "Datei fehlt: " : "Nicht lesbar: ") + ref.fileName;
+                colour = kWarn;
+                break;
+        }
+        status_[i].setText(text, juce::dontSendNotification);
+        status_[i].setColour(juce::Label::textColourId, colour);
+        load_[i].setButtonText(fileIsMissing(status, ref) ? utf8("Neu zuordnen\xe2\x80\xa6") : utf8("Load\xe2\x80\xa6"));
+    }
+    cycle_.setText("Zyklus: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Takte",
+                   juce::dontSendNotification);
+}
+
+void Editor::regionsEdited(int slot, const RegionMap& regions)
+{
+    PluginState st = proc_.getPluginState();
+    refOf(st, slot).boundaries = regions.boundaries;
+    proc_.applyEdit(st);
+}
+
+void Editor::barsEdited(int slot)
+{
+    PluginState st = proc_.getPluginState();
+    refOf(st, slot).bars = static_cast<int>(bars_[slot].getValue());
+    proc_.applyEdit(st);
+    refresh();
+}
+
+void Editor::fileChosen(int slot, const juce::File& file)
+{
+    if (!file.existsAsFile())
+        return;
+    const PluginState st = proc_.getPluginState();
+    if (fileIsMissing(proc_.getSlotStatus(slot), refOf(st, slot)))
+        proc_.loadLoop(slot, file); // relink: keeps regions, rules and bars
+    else
+        proc_.replaceLoop(slot, file, suggestedBarsFor(file, proc_.hostBpm()));
+    refresh();
+}
+
+void Editor::openChooser(int slot)
+{
+    const auto ref = refOf(proc_.getPluginState(), slot);
+    const juce::File start = ref.path.isNotEmpty() ? juce::File(ref.path).getParentDirectory() : juce::File();
+    chooser_ = std::make_unique<juce::FileChooser>("Loop " + juce::String(slot + 1), start,
+                                                   "*.wav;*.mp3;*.flac;*.aif;*.aiff");
+    chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this, slot](const juce::FileChooser& fc) {
+                              const auto file = fc.getResult();
+                              if (isAcceptedAudioFile(file))
+                                  fileChosen(slot, file);
+                          });
+}
+
+void Editor::paint(juce::Graphics& g)
+{
+    g.fillAll(kWindow);
+}
+
+void Editor::resized()
+{
+    auto area = getLocalBounds().reduced(kMargin);
+    for (int i = 0; i < 2; ++i)
+    {
+        auto header = area.removeFromTop(kHeaderH);
+        titles_[i].setBounds(header.removeFromLeft(80));
+        load_[i].setBounds(header.removeFromRight(130).reduced(0, 2));
+        header.removeFromRight(kGap);
+        bars_[i].setBounds(header.removeFromRight(110));
+        barsLabel_[i].setBounds(header.removeFromRight(60));
+        status_[i].setBounds(header);
+        area.removeFromTop(4);
+        lanes_[i].setBounds(area.removeFromTop(kLaneH));
+        area.removeFromTop(kGap);
+    }
+    cycle_.setBounds(area.removeFromTop(kHeaderH));
+    area.removeFromTop(kGap);
+    rulesPlaceholder_.setBounds(area);
+}
+
+} // namespace dc::ui

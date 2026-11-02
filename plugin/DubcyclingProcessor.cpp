@@ -1,6 +1,7 @@
 #include "plugin/DubcyclingProcessor.h"
 #include "plugin/HostTransport.h"
 #include "plugin/FileRelink.h"
+#include "plugin/ui/Editor.h"
 #include <algorithm>
 
 namespace dc {
@@ -186,13 +187,15 @@ void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     auto* head = getPlayHead();
     const TransportInfo t = toTransportInfo(head != nullptr ? head->getPosition()
                                                             : juce::Optional<juce::AudioPlayHead::PositionInfo> {});
+    if (t.bpm > 0.0)
+        hostBpm_.store(t.bpm, std::memory_order_relaxed);
     engine_.process(t, buffer.getWritePointer(0), buffer.getWritePointer(1), n);
     for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
         buffer.clear(ch, 0, n);
 }
 
 juce::AudioProcessorEditor* DubcyclingProcessor::createEditor() {
-    return new juce::GenericAudioProcessorEditor(*this);
+    return new ui::Editor(*this);
 }
 
 }  // namespace dc
