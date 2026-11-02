@@ -4,6 +4,7 @@ add_library(dc_engine STATIC
     SampleInterp.h GrainStretch.h GrainStretch.cpp
     LoopReader.h LoopReader.cpp
     RegionMap.h RegionMap.cpp
+    TransientDetector.h TransientDetector.cpp
     RuleSet.h RuleSet.cpp
     Sequencer.h Sequencer.cpp
     FxSlot.h Engine.h Engine.cpp)
