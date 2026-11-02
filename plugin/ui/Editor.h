@@ -36,6 +36,18 @@ enum class LoopFileAction
 LoopFileAction decideLoopFileAction(DubcyclingProcessor::SlotStatus status, bool storedPathExists, bool fileReadable,
                                     bool hasRegionsOrRules);
 
+// Rules are keyed by region index, so adding or removing one boundary of a lane shifts them.
+// `slot` 0 = Loop 1 (RuleEntry::region1), 1 = Loop 2 (RuleTarget::region2); `before`/`after` are the
+// lane's boundaries before and after the edit. Insert of a boundary splitting old region k: indices
+// > k get +1 (k keeps its rule, the new region k+1 starts without one). Removal of the boundary
+// between old regions k and k+1: k keeps its rule (the merged region keeps the left rule), k+1 is
+// dropped, indices > k+1 get -1. Stale indices (beyond the old region count) shift the same way,
+// so they stay stale. A drag (same count), a count change other than one, or a diff that is not a
+// single insert/removal returns the rules unchanged.
+std::vector<RuleEntry> remapRulesForBoundaryEdit(std::vector<RuleEntry> rules, int slot,
+                                                 const std::vector<double>& before,
+                                                 const std::vector<double>& after);
+
 // Title and text of the "replace loop?" confirmation (slot 0 = Loop 1).
 juce::String replaceConfirmTitle(int slot);
 juce::String replaceConfirmMessage();
@@ -89,6 +101,7 @@ public:
 
 private:
     void timerCallback() override { refresh(); }
+    // New boundaries from a lane; the rules are remapped (remapRulesForBoundaryEdit) in the same applyEdit.
     void regionsEdited(int slot, const RegionMap& regions);
     // Shows the rule of the selected Loop-1 region for the current Loop-2 region count.
     void updateRules(const PluginState& st);

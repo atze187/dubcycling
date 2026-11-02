@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <functional>
+#include <map>
 #include <memory>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
@@ -557,4 +558,181 @@ TEST_CASE("Editor: Vorschlag is only enabled for a Loaded slot", "[editor][sugge
     f.editor->suggestRegions(1);
     CHECK(serialize(f.proc.getPluginState()) == before);
     CHECK(f.asked == 0);
+}
+
+// --- F1: rules follow their regions when a boundary is added or removed ---------------------------
+namespace {
+using Shape = std::map<int, std::vector<int>>; // region1 -> region2 of its targets, in order
+
+Shape shapeOf(const std::vector<RuleEntry>& rules)
+{
+    Shape s;
+    for (const auto& e : rules)
+    {
+        auto& v = s[e.region1];
+        for (const auto& t : e.targets)
+            v.push_back(t.region2);
+    }
+    return s;
+}
+
+// Loop-1 rules for regions 0..3 of {0.25, 0.5, 0.75} plus a stale entry for region 5; entry k
+// targets Loop-2 region 10 + k so it can be told apart after a shift.
+std::vector<RuleEntry> loop1Rules()
+{
+    std::vector<RuleEntry> r;
+    for (int k : { 0, 1, 2, 3, 5 })
+        r.push_back(RuleEntry { k, { RuleTarget { 10 + k, 0.1f } } });
+    return r;
+}
+
+// One Loop-1 entry with targets for Loop-2 regions 0..3 of {0.25, 0.5, 0.75} plus a stale 5.
+std::vector<RuleEntry> loop2Rules()
+{
+    std::vector<RuleEntry> r { RuleEntry { 7, {} } };
+    for (int k : { 0, 1, 2, 3, 5 })
+        r[0].targets.push_back(RuleTarget { k, 0.1f });
+    return r;
+}
+
+const std::vector<double> kFour { 0.25, 0.5, 0.75 };
+} // namespace
+
+TEST_CASE("remapRules: inserting a Loop-1 boundary shifts later entries, the new half has no rule", "[editor][remap]")
+{
+    using dc::ui::remapRulesForBoundaryEdit;
+    // first: 0.1 splits region 0
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.1, 0.25, 0.5, 0.75 }))
+          == Shape { { 0, { 10 } }, { 2, { 11 } }, { 3, { 12 } }, { 4, { 13 } }, { 6, { 15 } } });
+    // middle: 0.6 splits region 2
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.25, 0.5, 0.6, 0.75 }))
+          == Shape { { 0, { 10 } }, { 1, { 11 } }, { 2, { 12 } }, { 4, { 13 } }, { 6, { 15 } } });
+    // last: 0.9 splits region 3
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.25, 0.5, 0.75, 0.9 }))
+          == Shape { { 0, { 10 } }, { 1, { 11 } }, { 2, { 12 } }, { 3, { 13 } }, { 6, { 15 } } });
+}
+
+TEST_CASE("remapRules: removing a Loop-1 boundary keeps the left rule and shifts later entries", "[editor][remap]")
+{
+    using dc::ui::remapRulesForBoundaryEdit;
+    // first: regions 0 and 1 merge
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.5, 0.75 }))
+          == Shape { { 0, { 10 } }, { 1, { 12 } }, { 2, { 13 } }, { 4, { 15 } } });
+    // middle: regions 1 and 2 merge
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.25, 0.75 }))
+          == Shape { { 0, { 10 } }, { 1, { 11 } }, { 2, { 13 } }, { 4, { 15 } } });
+    // last: regions 2 and 3 merge
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.25, 0.5 }))
+          == Shape { { 0, { 10 } }, { 1, { 11 } }, { 2, { 12 } }, { 4, { 15 } } });
+}
+
+TEST_CASE("remapRules: Loop-2 boundary edits shift targets, a merge drops the right target", "[editor][remap]")
+{
+    using dc::ui::remapRulesForBoundaryEdit;
+    // inserts: first, middle, last
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop2Rules(), 1, kFour, { 0.1, 0.25, 0.5, 0.75 }))
+          == Shape { { 7, { 0, 2, 3, 4, 6 } } });
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop2Rules(), 1, kFour, { 0.25, 0.5, 0.6, 0.75 }))
+          == Shape { { 7, { 0, 1, 2, 4, 6 } } });
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop2Rules(), 1, kFour, { 0.25, 0.5, 0.75, 0.9 }))
+          == Shape { { 7, { 0, 1, 2, 3, 6 } } });
+    // removals: first, middle, last
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop2Rules(), 1, kFour, { 0.5, 0.75 })) == Shape { { 7, { 0, 1, 2, 4 } } });
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop2Rules(), 1, kFour, { 0.25, 0.75 })) == Shape { { 7, { 0, 1, 2, 4 } } });
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop2Rules(), 1, kFour, { 0.25, 0.5 })) == Shape { { 7, { 0, 1, 2, 4 } } });
+    // A Loop-2 edit never touches region1, a Loop-1 edit never touches region2.
+    CHECK(remapRulesForBoundaryEdit(loop2Rules(), 1, kFour, { 0.5, 0.75 })[0].region1 == 7);
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.5, 0.75 }))[0] == std::vector<int> { 10 });
+}
+
+TEST_CASE("remapRules: stale entries stay stale", "[editor][remap]")
+{
+    using dc::ui::remapRulesForBoundaryEdit;
+    // 4 regions; entry/target 5 is stale (>= 4). After an insert (5 regions) it is 6, after a
+    // removal (3 regions) it is 4: still beyond the region count, never revived.
+    for (const auto& after : { std::vector<double> { 0.1, 0.25, 0.5, 0.75 }, std::vector<double> { 0.25, 0.75 } })
+    {
+        const int count = static_cast<int>(after.size()) + 1;
+        bool seen1 = false;
+        for (const auto& e : remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, after))
+            if (e.targets[0].region2 == 15)
+            {
+                seen1 = true;
+                CHECK(e.region1 >= count);
+            }
+        CHECK(seen1);
+        const auto targets = remapRulesForBoundaryEdit(loop2Rules(), 1, kFour, after)[0].targets;
+        REQUIRE(!targets.empty());
+        CHECK(targets.back().region2 >= count); // the stale target is the last one
+    }
+}
+
+TEST_CASE("remapRules: a drag, a multi-boundary change or an ambiguous diff leaves rules untouched", "[editor][remap]")
+{
+    using dc::ui::remapRulesForBoundaryEdit;
+    const auto r1 = shapeOf(loop1Rules());
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.3, 0.5, 0.75 })) == r1);      // move
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.25 })) == r1);                // -2
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.1, 0.3, 0.5, 0.75 })) == r1); // +1 and a move
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop1Rules(), 0, kFour, { 0.3, 0.75 })) == r1);           // -1 and a move
+    const auto r2 = shapeOf(loop2Rules());
+    CHECK(shapeOf(remapRulesForBoundaryEdit(loop2Rules(), 1, kFour, { 0.3, 0.5, 0.75 })) == r2);
+}
+
+TEST_CASE("Editor: adding or removing a boundary in a lane moves the rules with their regions", "[editor][remap]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, f.wav("a.wav"), 1);
+    f.proc.replaceLoop(1, f.wav("b.wav"), 1);
+    f.proc.waitForLoads();
+    auto s = f.proc.getPluginState();
+    s.loop1.boundaries = kFour;
+    s.loop2.boundaries = kFour;
+    s.rules = { RuleEntry { 1, { RuleTarget { 2, 0.5f } } }, RuleEntry { 3, { RuleTarget { 3, 0.5f } } } };
+    f.proc.applyEdit(s);
+    f.editor->refresh();
+    const float w0 = static_cast<float>(f.editor->lane(0).getWidth());
+    const float w1 = static_cast<float>(f.editor->lane(1).getWidth());
+    REQUIRE(w0 > 100.0f);
+    REQUIRE(f.editor->lane(0).hasData());
+    REQUIRE(f.editor->lane(1).hasData());
+
+    // Loop 1: a boundary at 0.1 splits region 0 -> the entries move to 2 and 4.
+    f.editor->lane(0).doubleClickAt(w0 * 0.1f);
+    auto st = f.proc.getPluginState();
+    REQUIRE(st.loop1.boundaries.size() == 4);
+    CHECK(shapeOf(st.rules) == Shape { { 2, { 2 } }, { 4, { 3 } } });
+
+    // Loop 2: a boundary at 0.6 splits region 2 -> target 3 becomes 4, target 2 stays.
+    f.editor->refresh();
+    f.editor->lane(1).doubleClickAt(w1 * 0.6f);
+    st = f.proc.getPluginState();
+    REQUIRE(st.loop2.boundaries.size() == 4);
+    CHECK(shapeOf(st.rules) == Shape { { 2, { 2 } }, { 4, { 4 } } });
+
+    // Loop 1: removing the boundary at 0.1 again -> back to 1 and 3.
+    f.editor->refresh();
+    f.editor->lane(0).doubleClickAt(w0 * 0.1f);
+    st = f.proc.getPluginState();
+    REQUIRE(st.loop1.boundaries.size() == 3);
+    CHECK(shapeOf(st.rules) == Shape { { 1, { 2 } }, { 3, { 4 } } });
+
+    // Loop 2: removing 0.5 merges regions 1 and 2 -> target 2 is dropped, 4 becomes 3. Entry 1 is
+    // left without targets, which the state sanitizer drops (same as "no rule").
+    f.editor->refresh();
+    f.editor->lane(1).doubleClickAt(w1 * 0.5f);
+    st = f.proc.getPluginState();
+    REQUIRE(st.loop2.boundaries.size() == 3);
+    CHECK(shapeOf(st.rules) == Shape { { 3, { 3 } } });
+
+    // A drag moves a boundary without touching the rules.
+    f.editor->refresh();
+    const auto rulesBefore = shapeOf(f.proc.getPluginState().rules);
+    f.editor->lane(0).pressAt(w0 * 0.25f);
+    REQUIRE(f.editor->lane(0).isDragging());
+    f.editor->lane(0).dragTo(w0 * 0.3f);
+    f.editor->lane(0).release();
+    st = f.proc.getPluginState();
+    CHECK(st.loop1.boundaries[0] != 0.25);
+    CHECK(shapeOf(st.rules) == rulesBefore);
 }

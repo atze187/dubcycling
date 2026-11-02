@@ -77,6 +77,62 @@ LoopFileAction decideLoopFileAction(DubcyclingProcessor::SlotStatus status, bool
     return hasRegionsOrRules ? LoopFileAction::ReplaceAfterConfirm : LoopFileAction::ReplaceDirect;
 }
 
+namespace {
+// Index j such that `longer` with element j removed equals `shorter`; -1 if there is none.
+int singleInsertIndex(const std::vector<double>& shorter, const std::vector<double>& longer)
+{
+    if (longer.size() != shorter.size() + 1)
+        return -1;
+    std::size_t j = 0;
+    while (j < shorter.size() && shorter[j] == longer[j])
+        ++j;
+    for (std::size_t i = j; i < shorter.size(); ++i)
+        if (shorter[i] != longer[i + 1])
+            return -1;
+    return static_cast<int>(j);
+}
+} // namespace
+
+std::vector<RuleEntry> remapRulesForBoundaryEdit(std::vector<RuleEntry> rules, int slot,
+                                                 const std::vector<double>& before,
+                                                 const std::vector<double>& after)
+{
+    // shift(index) -> new index, or -1 to drop.
+    std::function<int(int)> shift;
+    if (const int k = singleInsertIndex(before, after); k >= 0)
+        shift = [k](int i) { return i > k ? i + 1 : i; }; // boundary k splits old region k
+    else if (const int k2 = singleInsertIndex(after, before); k2 >= 0)
+        shift = [k2](int i) { return i == k2 + 1 ? -1 : (i > k2 + 1 ? i - 1 : i); }; // k2, k2+1 merge
+    else
+        return rules;
+
+    if (slot == 0)
+    {
+        std::vector<RuleEntry> out;
+        out.reserve(rules.size());
+        for (auto& e : rules)
+            if (const int r = shift(e.region1); r >= 0)
+            {
+                e.region1 = r;
+                out.push_back(std::move(e));
+            }
+        return out;
+    }
+    for (auto& e : rules)
+    {
+        std::vector<RuleTarget> kept;
+        kept.reserve(e.targets.size());
+        for (auto t : e.targets)
+            if (const int r = shift(t.region2); r >= 0)
+            {
+                t.region2 = r;
+                kept.push_back(t);
+            }
+        e.targets = std::move(kept);
+    }
+    return rules;
+}
+
 Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), proc_(proc)
 {
     for (int i = 0; i < 2; ++i)
@@ -210,6 +266,8 @@ void Editor::refresh()
 void Editor::regionsEdited(int slot, const RegionMap& regions)
 {
     PluginState st = proc_.getPluginState();
+    // Rules move with their regions; boundaries and rules go out in one applyEdit (one model swap).
+    st.rules = remapRulesForBoundaryEdit(std::move(st.rules), slot, refOf(st, slot).boundaries, regions.boundaries);
     refOf(st, slot).boundaries = regions.boundaries;
     proc_.applyEdit(st);
 }
