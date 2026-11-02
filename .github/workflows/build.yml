@@ -1,0 +1,62 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            bundle: build/plugin/Dubcycling_artefacts/Release/VST3/Dubcycling.vst3
+          - name: macos
+            os: macos-latest
+            bundle: build-macos/plugin/Dubcycling_artefacts/Release/VST3/Dubcycling.vst3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- Windows ----
+      - name: Build and test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 all -Config Release
+
+      # ---- macOS ----
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: command -v ninja >/dev/null || brew install ninja
+
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: cmake --preset macos-universal
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: cmake --build --preset macos-release --parallel
+
+      - name: Test (macOS)
+        if: runner.os == 'macOS'
+        run: ctest --preset macos-release
+
+      - name: Check architectures (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          archs=$(lipo -archs "${{ matrix.bundle }}/Contents/MacOS/Dubcycling")
+          echo "archs: $archs"
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
+
+      # ---- Artifact ----
+      - name: Upload VST3 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dubcycling-${{ matrix.name }}-vst3
+          path: ${{ matrix.bundle }}
+          if-no-files-found: error

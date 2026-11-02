@@ -8,11 +8,24 @@
       "binaryDir": "${sourceDir}/build",
       "architecture": { "value": "x64", "strategy": "set" },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "macos-universal",
+      "displayName": "macOS universal (arm64 + x86_64)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-macos",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
     }
   ],
   "buildPresets": [
     { "name": "windows-release", "configurePreset": "windows-x64", "configuration": "Release" },
-    { "name": "windows-debug", "configurePreset": "windows-x64", "configuration": "Debug" }
+    { "name": "windows-debug", "configurePreset": "windows-x64", "configuration": "Debug" },
+    { "name": "macos-release", "configurePreset": "macos-universal" }
   ],
   "testPresets": [
     {
@@ -25,6 +38,11 @@
       "name": "windows-debug",
       "configurePreset": "windows-x64",
       "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-universal",
       "output": { "outputOnFailure": true }
     }
   ]
