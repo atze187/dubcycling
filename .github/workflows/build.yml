@@ -19,6 +19,9 @@ jobs:
           - name: macos
             os: macos-latest
             bundle: build-macos/plugin/Dubcycling_artefacts/Release/VST3/Dubcycling.vst3
+          - name: linux
+            os: ubuntu-latest
+            bundle: build-linux/plugin/Dubcycling_artefacts/Release/VST3/Dubcycling.vst3
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,6 +55,28 @@ jobs:
           archs=$(lipo -archs "${{ matrix.bundle }}/Contents/MacOS/Dubcycling")
           echo "archs: $archs"
           [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
+
+      # ---- Linux ----
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build xvfb libasound2-dev libjack-jackd2-dev \
+            libfreetype-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libcurl4-openssl-dev \
+            mesa-common-dev libgl1-mesa-dev
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --preset linux-x64
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build --preset linux-release --parallel
+
+      - name: Test (Linux, headless)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a ctest --preset linux-release
 
       # ---- Artifact ----
       - name: Upload VST3 bundle

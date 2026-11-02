@@ -117,6 +117,34 @@ TEST_CASE("LoopLoader mp3 decode is registered", "[loopLoader]")
     CHECK(formats.findFormatForFileExtension(".mp3") != nullptr);
 }
 
+// Real MP3 frames: MPEG-1 Layer III, 128 kbit/s, 44.1 kHz, mono, 417 bytes per frame, zero payload
+// (= silence). Each frame decodes to 1152 samples.
+TEST_CASE("LoopLoader decodes an mp3 file", "[loopLoader]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    if (formats.findFormatForFileExtension(".mp3") == nullptr)
+        SKIP("MP3 decoding is not registered by registerBasicFormats on this platform");
+    TempDir tmp;
+    const auto file = tmp.dir.getChildFile("silence.mp3");
+    juce::MemoryBlock data;
+    for (int f = 0; f < 20; ++f)
+    {
+        const unsigned char header[4] = { 0xFF, 0xFB, 0x90, 0xC0 };
+        data.append(header, 4);
+        const juce::MemoryBlock payload(413, true);
+        data.append(payload.getData(), payload.getSize());
+    }
+    REQUIRE(file.replaceWithData(data.getData(), data.getSize()));
+    juce::String error;
+    const auto d = LoopLoader::decode(file, error);
+    INFO("error: " << error);
+    REQUIRE(d != nullptr);
+    CHECK(d->frames() >= 1000);
+    CHECK(d->right.size() == d->left.size());
+}
+
 TEST_CASE("LoopLoader missing file reports error", "[loopLoader]")
 {
     juce::ScopedJuceInitialiser_GUI gui;

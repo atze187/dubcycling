@@ -20,12 +20,21 @@
         "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0"
       },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "linux-x64",
+      "displayName": "Linux x64",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-linux",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
     }
   ],
   "buildPresets": [
     { "name": "windows-release", "configurePreset": "windows-x64", "configuration": "Release" },
     { "name": "windows-debug", "configurePreset": "windows-x64", "configuration": "Debug" },
-    { "name": "macos-release", "configurePreset": "macos-universal" }
+    { "name": "macos-release", "configurePreset": "macos-universal" },
+    { "name": "linux-release", "configurePreset": "linux-x64" }
   ],
   "testPresets": [
     {
@@ -43,6 +52,11 @@
     {
       "name": "macos-release",
       "configurePreset": "macos-universal",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-x64",
       "output": { "outputOnFailure": true }
     }
   ]

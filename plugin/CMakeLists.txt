@@ -6,6 +6,11 @@ add_library(dc_plugin_shared STATIC
     FileRelink.h FileRelink.cpp
     SlotTracker.h SlotTracker.cpp)
 target_include_directories(dc_plugin_shared PUBLIC ${PROJECT_SOURCE_DIR})
+# JUCE's own MP3 decoder where the OS provides none (Windows: Windows Media, macOS: CoreAudio).
+# The spec requires WAV, MP3, FLAC, AIFF on every platform.
+if(NOT WIN32 AND NOT APPLE)
+    target_compile_definitions(dc_plugin_shared PUBLIC JUCE_USE_MP3AUDIOFORMAT=1)
+endif()
 target_link_libraries(dc_plugin_shared PUBLIC
     dc_engine
     juce::juce_audio_formats
