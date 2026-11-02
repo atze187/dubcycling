@@ -71,13 +71,15 @@ void Engine::resetPlayback()
     lastCycle1_ = 0;
     lastPpq_ = 0.0;
     sequencer_.reset();
-    voice_.state = Voice::State::Idle;
-    voice_.gain = 0.0f;
-    voice_.fadeLeft = 0;
-    voice_.hasPending = false;
-    voice_.endedByItself = false;
-    voice_.gl.reset();
-    voice_.gr.reset();
+    for (Voice* v : { &voice_, &tail_ })
+    {
+        v->state = Voice::State::Idle;
+        v->gain = 0.0f;
+        v->fadeLeft = 0;
+        v->endedByItself = false;
+        v->gl.reset();
+        v->gr.reset();
+    }
     if (current_ != nullptr)
         current_->reader1.reset();
 }
@@ -87,7 +89,6 @@ void Engine::startVoice(const Model& m, int region2, PlayMode mode)
     Voice& v = voice_;
     const double len = static_cast<double>(framesOf(m.loop2.data.get()));
     const auto [lo01, hi01] = m.loop2.regions.bounds(region2);
-    v.hasPending = false;
     v.endedByItself = false;
     if (!(len > 0.0) || !(hi01 > lo01))
     {
@@ -108,9 +109,8 @@ void Engine::startVoice(const Model& m, int region2, PlayMode mode)
     v.gr.start(v.lo, 1.0, grainLen_);
 }
 
-void Engine::beginFadeOut()
+void Engine::beginFadeOut(Voice& v) const
 {
-    Voice& v = voice_;
     v.state = Voice::State::FadingOut;
     v.fadeLeft = std::max(1, static_cast<int>(std::ceil(v.gain * static_cast<float>(fadeLen_))));
     v.fadeDelta = v.gain / static_cast<float>(v.fadeLeft);
@@ -118,42 +118,73 @@ void Engine::beginFadeOut()
 
 void Engine::requestStart(const Model& m, int region2, PlayMode mode)
 {
-    Voice& v = voice_;
-    if (v.state == Voice::State::Idle)
+    if (voice_.state != Voice::State::Idle)
     {
-        startVoice(m, region2, mode);
-        return;
+        // Cancel: the running voice fades out as the tail while the new region starts on this frame.
+        // A tail still fading from an earlier cancel (draws < kCancelFadeMs apart) is replaced.
+        tail_ = voice_; // plain copy of fixed-size state, no allocation
+        tail_.endedByItself = false;
+        if (tail_.state == Voice::State::Playing)
+            beginFadeOut(tail_);
     }
-    // Cancel the running voice with a fade, then start the new region at its beginning.
-    v.hasPending = true;
-    v.pendingRegion = region2;
-    v.pendingMode = mode;
-    v.endedByItself = false;
-    if (v.state == Voice::State::Playing)
-        beginFadeOut();
+    startVoice(m, region2, mode);
 }
 
 void Engine::requestStop()
 {
-    Voice& v = voice_;
-    v.hasPending = false;
-    v.endedByItself = false;
-    if (v.state == Voice::State::Playing)
-        beginFadeOut();
+    voice_.endedByItself = false;
+    if (voice_.state == Voice::State::Playing)
+        beginFadeOut(voice_);
 }
 
-void Engine::finishFade(const Model& m)
+bool Engine::stepVoice(Voice& v, const StereoData& d, GrainFrame gf, double adv, float& outL, float& outR) const
 {
-    Voice& v = voice_;
-    v.gain = 0.0f;
-    v.state = Voice::State::Idle;
-    if (v.hasPending)
-        startVoice(m, v.pendingRegion, v.pendingMode);
-    else if (v.endedByItself)
+    gf.lo = v.lo;
+    gf.hi = v.hi;
+    const double src = v.lo + v.elapsed;
+    const float yl = v.gl.process(d.left, src, grainLen_, gf);
+    const float yr = v.gr.process(d.right, src, grainLen_, gf);
+    outL += v.gain * yl;
+    outR += v.gain * yr;
+
+    // Gain ramp (integer counters, so fades end exactly).
+    if (v.state == Voice::State::Playing)
     {
-        v.endedByItself = false;
-        sequencer_.onVoiceEnded();
+        if (v.fadeLeft > 0)
+            v.gain = --v.fadeLeft > 0 ? std::min(1.0f, v.gain + 1.0f / static_cast<float>(fadeLen_)) : 1.0f;
     }
+    else if (--v.fadeLeft > 0)
+        v.gain = std::max(0.0f, v.gain - v.fadeDelta);
+    else
+    {
+        v.state = Voice::State::Idle;
+        v.gain = 0.0f;
+        return v.endedByItself;
+    }
+
+    // Position in the region.
+    const double regionLen = v.hi - v.lo;
+    v.elapsed += adv;
+    if (v.mode == PlayMode::Gate)
+    {
+        if (v.elapsed >= regionLen)
+            v.elapsed = std::fmod(v.elapsed, regionLen);
+    }
+    else if (v.elapsed >= regionLen)
+    {
+        // One-shot reached its region end (normally its end fade has run out by now). Not "by itself"
+        // when a Stop was already fading it out: the Sequencer has been reset then.
+        const bool byItself = v.endedByItself || v.state == Voice::State::Playing;
+        v.state = Voice::State::Idle;
+        v.gain = 0.0f;
+        return byItself;
+    }
+    else if (v.state == Voice::State::Playing && (regionLen - v.elapsed) / adv <= fadeLen_)
+    {
+        beginFadeOut(v); // end fade of the one-shot, finishing at the region end
+        v.endedByItself = true;
+    }
+    return false;
 }
 
 void Engine::process(const TransportInfo& t, float* l, float* r, int n)
@@ -214,9 +245,8 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     bool entry = !running_ || std::abs(t.ppq - expectedPpq_) > kJumpToleranceBeats;
     if (entry)
         lastPpq_ = t.ppq;
+    const bool jumped = running_ && entry;
     running_ = true;
-    Voice& v = voice_;
-    const float fadeInStep = 1.0f / static_cast<float>(fadeLen_);
 
     for (int i = 0; i < n; ++i)
     {
@@ -227,76 +257,45 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
         const long long cycle = static_cast<long long>(std::floor(pos / beats1));
         const double ph = (pos - static_cast<double>(cycle) * beats1) / beats1;
         const int region = m->loop1.regions.regionAt(ph);
+        Sequencer::Command c;
         if (entry || region != lastRegion1_ || cycle != lastCycle1_)
         {
+            const bool jumpNow = jumped && i == 0;
             entry = false;
             lastRegion1_ = region;
             lastCycle1_ = cycle;
-            const Sequencer::Command c = sequencer_.onRegion1(region, m->rules);
+            c = sequencer_.onRegion1(region, m->rules); // None: region without rule, not a draw
             if (c.type == Sequencer::Command::Type::Start)
                 requestStart(*m, c.region2, c.mode);
             else if (c.type == Sequencer::Command::Type::Stop)
                 requestStop();
+            else if (jumpNow)
+            {
+                // Spec: a transport jump ends Loop 2, also when the new region has no rule.
+                requestStop();
+                sequencer_.reset();
+            }
         }
-        else if (sequencer_.shouldGateStop(region))
+        // Gate ends when Loop 1 leaves its region and no new draw took over (same frame as the entry).
+        if (c.type == Sequencer::Command::Type::None && sequencer_.shouldGateStop(region))
         {
             requestStop();
             sequencer_.onVoiceEnded();
         }
 
-        if (v.state == Voice::State::Idle)
-            continue;
         if (adv2 <= 0.0)
         {
-            // Loop-2 timing invalid (cannot happen with valid transport and data): stop silently.
-            v.hasPending = false;
-            v.endedByItself = true;
-            finishFade(*m);
+            // Loop-2 timing invalid (cannot happen with valid transport and data): stay silent.
+            if (voice_.state != Voice::State::Idle)
+                sequencer_.onVoiceEnded();
+            voice_.state = Voice::State::Idle;
+            tail_.state = Voice::State::Idle;
             continue;
         }
-
-        gf.lo = v.lo;
-        gf.hi = v.hi;
-        const double src = v.lo + v.elapsed;
-        const float yl = v.gl.process(d2->left, src, grainLen_, gf);
-        const float yr = v.gr.process(d2->right, src, grainLen_, gf);
-        l[i] += v.gain * yl;
-        r[i] += v.gain * yr;
-
-        // Gain ramp.
-        if (v.state == Voice::State::Playing)
-        {
-            if (v.fadeLeft > 0)
-            {
-                v.gain = --v.fadeLeft > 0 ? std::min(1.0f, v.gain + fadeInStep) : 1.0f;
-            }
-        }
-        else if (--v.fadeLeft > 0)
-            v.gain = std::max(0.0f, v.gain - v.fadeDelta);
-        else
-        {
-            finishFade(*m);
-            continue;
-        }
-
-        // Position in the region.
-        const double regionLen = v.hi - v.lo;
-        v.elapsed += adv2;
-        if (v.mode == PlayMode::Gate)
-        {
-            if (v.elapsed >= regionLen)
-                v.elapsed = std::fmod(v.elapsed, regionLen);
-        }
-        else if (v.elapsed >= regionLen)
-        {
-            v.endedByItself = !v.hasPending;
-            finishFade(*m); // one-shot done (its end fade has run out by now); a queued start begins
-        }
-        else if (v.state == Voice::State::Playing && (regionLen - v.elapsed) / adv2 <= fadeLen_)
-        {
-            beginFadeOut(); // end fade of the one-shot, finishing at the region end
-            v.endedByItself = true;
-        }
+        if (tail_.state != Voice::State::Idle)
+            stepVoice(tail_, *d2, gf, adv2, l[i], r[i]);
+        if (voice_.state != Voice::State::Idle && stepVoice(voice_, *d2, gf, adv2, l[i], r[i]))
+            sequencer_.onVoiceEnded(); // one-shot finished by itself
     }
 
     expectedPpq_ = t.ppq + n * ppqStep;

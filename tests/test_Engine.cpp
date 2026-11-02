@@ -306,6 +306,98 @@ TEST_CASE("Engine one-shot plays once and then is silent", "[Engine]")
     REQUIRE(allZero(o.r, 24000, kBar));
 }
 
+TEST_CASE("Engine back-to-back draws crossfade on the Loop-1 grid", "[Engine]")
+{
+    dc::Engine e;
+    prepared(e);
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.5 }); // entry into region 1 at frame 48000
+    m->loop2.data = makeData(kBar, [](int i) { return static_cast<float>(i) / kBar; }); // ramp
+    m->loop2.regions = regions({ 0.25, 0.5, 0.75 });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    m->rules.setTargets(1, { { 2, 1.0f, dc::PlayMode::Gate } });
+    e.setModel(m);
+    auto o = run(e, 0.0, kBar, 700); // 48000 is not a block boundary
+    const auto oldAt = [](int k) { return static_cast<float>(k % 24000) / kBar; };        // region 0, gate
+    const auto newAt = [](int k) { return static_cast<float>(48000 + k % 24000) / kBar; }; // region 2 from its start
+    for (int j = 0; j <= kFade; ++j)
+    {
+        const float g = static_cast<float>(std::min(j, kFade)) / kFade;
+        const float expected = (1.0f - g) * oldAt(48000 + j) + g * newAt(j);
+        REQUIRE(std::abs(o.l[48000 + static_cast<size_t>(j)] - expected) < kTol);
+    }
+    // After the crossfade the new region runs on the grid, including its Gate repeat at frame 72000.
+    float dev = 0.0f;
+    for (int k = kFade; k < 48000; ++k)
+        dev = std::max(dev, std::abs(o.l[48000 + static_cast<size_t>(k)] - newAt(k)));
+    REQUIRE(dev < kTol);
+}
+
+TEST_CASE("Engine one-shot plays past a rule-less Loop-1 region entry", "[Engine]")
+{
+    dc::Engine e;
+    prepared(e);
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.25 }); // region 1 (no rule) from frame 24000
+    m->loop2.data = regionData(kBar, { 0.2f, 0.6f });
+    m->loop2.regions = regions({ 0.5 }); // region 1 = 48000 frames
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::OneShot } });
+    e.setModel(m);
+    auto o = run(e, 0.0, kBar);
+    REQUIRE(maxDev(o.l, kFade, 48000 - kFade, 0.6f) < kTol);
+    REQUIRE(allZero(o.l, 48000, kBar));
+}
+
+TEST_CASE("Engine silence draw cancels a running one-shot", "[Engine]")
+{
+    dc::Engine e;
+    prepared(e);
+    e.setRandom([] { return 0.9f; });
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.25 });
+    m->loop2.data = regionData(kBar, { 0.2f, 0.6f });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::OneShot } });
+    m->rules.setTargets(1, { { 0, 0.5f, dc::PlayMode::OneShot } }); // 0.9 lands in the silence remainder
+    e.setModel(m);
+    auto o = run(e, 0.0, kBar);
+    REQUIRE(maxDev(o.l, kFade, 24000, 0.6f) < kTol);
+    REQUIRE(std::abs(o.l[24000] - 0.6f) < kTol);
+    REQUIRE(std::abs(o.l[24000 + kFade / 2] - 0.3f) < kTol);
+    REQUIRE(allZero(o.l, 24000 + kFade, kBar));
+}
+
+TEST_CASE("Engine gate voice ends at the entry of a rule-less region", "[Engine]")
+{
+    dc::Engine e;
+    prepared(e);
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.25 });
+    m->loop2.data = regionData(kBar, { 0.2f, 0.6f });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::Gate } });
+    e.setModel(m);
+    auto o = run(e, 0.0, kBar, 700);
+    REQUIRE(std::abs(o.l[24000] - 0.6f) < kTol);
+    REQUIRE(std::abs(o.l[24000 + kFade / 2] - 0.3f) < kTol);
+    REQUIRE(allZero(o.l, 24000 + kFade, kBar));
+}
+
+TEST_CASE("Engine transport jump into a rule-less region ends loop 2", "[Engine]")
+{
+    dc::Engine e;
+    prepared(e);
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.25 });
+    m->loop2.data = regionData(kBar, { 0.2f, 0.6f });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::OneShot } });
+    e.setModel(m);
+    run(e, 0.0, 4096);
+    auto o = run(e, 3.0, 4096); // region 1 (no rule): the one-shot is ended (spec: a jump ends loop 2)
+    REQUIRE(allZero(o.l, kFade, 4096));
+}
+
 TEST_CASE("Engine transport jump restarts the draw", "[Engine]")
 {
     dc::Engine e;

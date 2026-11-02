@@ -72,8 +72,10 @@ private:
         LoopReader reader1;
     };
 
-    // The single Loop-2 voice: plays [lo, hi) of loop 2 with its own grain stretch, cycling inside
+    // A Loop-2 region player: plays [lo, hi) of loop 2 with its own grain stretch, cycling inside
     // the region (Gate repeats seamlessly) and a linear gain ramp of kCancelFadeMs for start/stop.
+    // voice_ is the one logical Loop-2 voice; tail_ only carries the fade-out of the voice a new
+    // draw cancelled, so the new region starts on the exact entry frame (crossfade, no allocation).
     struct Voice
     {
         enum class State { Idle, Playing, FadingOut } state = State::Idle;
@@ -84,9 +86,6 @@ private:
         int fadeLeft = 0;        // frames left in the current fade (in or out); integer so fades end exactly
         float fadeDelta = 0.0f;  // fade-out gain decrement per frame
         bool endedByItself = false; // one-shot end fade (report onVoiceEnded when it completes)
-        bool hasPending = false;    // start queued until the fade-out completes
-        int pendingRegion = 0;
-        PlayMode pendingMode = PlayMode::Gate;
         GrainStretch gl, gr;
     };
 
@@ -94,8 +93,9 @@ private:
     void startVoice(const Model& m, int region2, PlayMode mode);
     void requestStart(const Model& m, int region2, PlayMode mode);
     void requestStop();
-    void beginFadeOut();
-    void finishFade(const Model& m);
+    void beginFadeOut(Voice& v) const;
+    // Renders one frame of v (added to outL/outR) and advances it. True if it ended by itself.
+    bool stepVoice(Voice& v, const StereoData& d, GrainFrame gf, double adv, float& outL, float& outR) const;
 
     void releaseRetiredLocked();
 
@@ -116,6 +116,7 @@ private:
     Runtime* current_ = nullptr;
     Sequencer sequencer_;
     Voice voice_;
+    Voice tail_;
     double outRate_ = 44100.0;
     int grainLen_ = 1764;
     int fadeLen_ = 220;

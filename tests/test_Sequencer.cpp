@@ -28,15 +28,29 @@ TEST_CASE("Sequencer entry with rule starts target", "[Sequencer]")
     REQUIRE(s.active());
 }
 
-TEST_CASE("Sequencer entry without rule stops voice", "[Sequencer]")
+TEST_CASE("Sequencer entry without rule is not a draw", "[Sequencer]")
 {
     dc::RuleSet rs;
-    rs.setTargets(1, { T(2, 1.0f) });
+    rs.setTargets(1, { T(2, 1.0f, PlayMode::OneShot) });
+    dc::Sequencer s;
+    int calls = 0;
+    s.setRandom([&calls] { ++calls; return 0.1f; });
+    s.onRegion1(1, rs);
+    auto c = s.onRegion1(4, rs);
+    REQUIRE(c.type == Type::None);
+    REQUIRE(s.active()); // a running one-shot keeps playing
+    REQUIRE(calls == 1); // no random draw for a rule-less region
+}
+
+TEST_CASE("Sequencer rule with zero total weight is a silence draw", "[Sequencer]")
+{
+    dc::RuleSet rs;
+    rs.setTargets(1, { T(2, 1.0f, PlayMode::OneShot) });
+    rs.setTargets(2, { T(0, 0.0f) });
     dc::Sequencer s;
     s.setRandom(seq({ 0.1f }));
     s.onRegion1(1, rs);
-    auto c = s.onRegion1(4, rs);
-    REQUIRE(c.type == Type::Stop);
+    REQUIRE(s.onRegion1(2, rs).type == Type::Stop);
     REQUIRE_FALSE(s.active());
 }
 

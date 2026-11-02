@@ -17,8 +17,10 @@ void Sequencer::setRandom(std::function<float()> uniform01)
 
 Sequencer::Command Sequencer::onRegion1(int region1, const RuleSet& rules)
 {
-    const auto target = rules.draw(region1, random());
     Command c;
+    if (rules.targets(region1).empty())
+        return c; // no rule: not a draw (a running one-shot plays on; Gate ends via shouldGateStop)
+    const auto target = rules.draw(region1, random());
     if (!target)
     {
         reset();

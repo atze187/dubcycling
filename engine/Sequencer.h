@@ -25,8 +25,9 @@ public:
     void setRandom(std::function<float()> uniform01);
 
     // Call on every Loop-1 region entry (also wrap / transport jump); draws anew.
-    // Start = (re)start target, cancelling any running voice. Stop = silence or no rule
-    // (a no-op for the Engine if the voice is idle).
+    // Start = (re)start target, cancelling any running voice. Stop = silence draw (a rule exists,
+    // the draw lands in the remainder; a no-op for the Engine if the voice is idle).
+    // None = the region has no rule: not a draw, state unchanged (check shouldGateStop).
     Command onRegion1(int region1, const RuleSet& rules);
 
     // Gate mode only: true when the voice runs in Gate mode and Loop 1 left the triggering region.
