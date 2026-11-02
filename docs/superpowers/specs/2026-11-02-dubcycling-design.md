@@ -28,7 +28,7 @@ Der Reiz liegt darin, dass ein Loop-Paar bei jedem Durchlauf ein bisschen anders
 - Keine Audio-Einbettung in die Session (kann später als Option pro Loop kommen).
 - Keine externen VST-Plugins als Effekte, nur eingebaute.
 - Regionsvorschläge für Nicht-Drum-Loops bleiben offen.
-- **[Annahme]** Zunächst nur Windows/VST3; macOS und andere Formate nicht ausgeschlossen, aber nicht Teil der ersten Version.
+- Plattformen in dieser Reihenfolge: zuerst Windows, danach macOS, danach Linux, jeweils als VST3. Andere Plugin-Formate sind nicht geplant.
 
 ## Anti-Ziele
 
@@ -92,7 +92,7 @@ Der ursprüngliche Wunsch nannte außerdem Effekt-Slots auf einzelnen Regionen o
 
 Alles in diesem Abschnitt ist eine **[Annahme]**:
 - C++20, JUCE 8, CMake, VST3, Catch2-Tests.
-- Windows zuerst.
+- Plattformen: Windows, dann macOS, dann Linux (Entscheidung von atze187). Der Code bleibt von Anfang an plattformneutral (kein Windows-spezifischer Code in `engine/` und `plugin/`), die Build-Presets für macOS und Linux kommen mit den jeweiligen Phasen.
 - Aufbau wie dubgefahren: `engine/` (reines DSP, ohne JUCE-GUI) und `plugin/` (Prozessor, UI), mit `build.ps1` und CMake-Presets.
 
 ### Was aus dubgefahren übernommen werden kann
