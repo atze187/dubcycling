@@ -5,7 +5,8 @@ add_library(dc_engine STATIC
     LoopReader.h LoopReader.cpp
     RegionMap.h RegionMap.cpp
     RuleSet.h RuleSet.cpp
-    Sequencer.h Sequencer.cpp)
+    Sequencer.h Sequencer.cpp
+    FxSlot.h Engine.h Engine.cpp)
 target_include_directories(dc_engine PUBLIC ${PROJECT_SOURCE_DIR})
 target_compile_features(dc_engine PUBLIC cxx_std_20)
 if(MSVC)
