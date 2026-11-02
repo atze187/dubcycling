@@ -31,6 +31,8 @@ public:
     float process(const std::vector<float>& x, double srcPos, int grainLen, const GrainFrame& f);
     // Anzahl der gerade hörbaren Stücke (für Tests der Invariante „höchstens zwei“).
     int activeGrains() const;
+    // Starts, bei denen beide Plätze belegt waren (Verletzung der Invariante; muss 0 bleiben).
+    int slotCollisions() const { return collisions_; }
 
 private:
     struct Grain
@@ -43,12 +45,14 @@ private:
         float delta = 0.0f; // Gewichtsänderung pro Ausgabesample
         int remaining = 0;  // Samples bis zum Beginn der Ausblendung
         int fade = 1;       // Länge der Ausblendung in Samples
+        int fadeLeft = 0;   // verbleibende Ausblend-Samples; bei 0 endet das Stück (ganzzahlig, exakt)
     };
 
     void launch(double srcPos, double dir, int grainLen, bool fadeIn);
 
     std::array<Grain, 2> grains_ {};
     int untilNext_ = 0;
+    int collisions_ = 0;
 };
 
 } // namespace dc

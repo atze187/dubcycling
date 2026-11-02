@@ -46,6 +46,7 @@ void GrainStretch::launch(double srcPos, double dir, int grainLen, bool fadeIn)
             continue;
         g.delta = -g.gain / static_cast<float>(fade);
         g.fadingOut = true;
+        g.fadeLeft = fade;
     }
     Grain* slot = nullptr;
     for (auto& g : grains_)
@@ -57,7 +58,11 @@ void GrainStretch::launch(double srcPos, double dir, int grainLen, bool fadeIn)
     // Siehe Klassenkommentar: Es leben höchstens zwei Stücke, ein freier Platz ist also garantiert.
     assert(slot != nullptr && "GrainStretch: both slots busy on launch");
     if (slot == nullptr)
-        slot = &grains_[0];
+    {
+        // Notfall (darf nicht eintreten): das leisere Stück ersetzen.
+        ++collisions_;
+        slot = grains_[0].gain <= grains_[1].gain ? &grains_[0] : &grains_[1];
+    }
     slot->active = true;
     slot->fadingOut = false;
     slot->pos = srcPos;
@@ -79,8 +84,8 @@ void GrainStretch::retrigger()
 {
     int wait = 0;
     for (const auto& g : grains_)
-        if (g.active && g.fadingOut && g.delta < 0.0f)
-            wait = std::max(wait, static_cast<int>(std::ceil(g.gain / -g.delta)));
+        if (g.active && g.fadingOut)
+            wait = std::max(wait, g.fadeLeft);
     untilNext_ = std::min(untilNext_, wait);
 }
 
@@ -100,7 +105,8 @@ float GrainStretch::process(const std::vector<float>& x, double srcPos, int grai
         if (g.fadingOut)
         {
             g.gain += g.delta;
-            if (g.gain <= 0.0f)
+            // Ganzzahliges Ende: Float-Rest im Gewicht kann das Stück nicht über fadeLeft hinaus halten.
+            if (--g.fadeLeft <= 0 || g.gain <= 0.0f)
                 g.active = false;
         }
         else
@@ -112,6 +118,7 @@ float GrainStretch::process(const std::vector<float>& x, double srcPos, int grai
                 // Ausblenden über ein Viertel der Stückdauer, ab dem aktuellen Gewicht.
                 g.fadingOut = true;
                 g.delta = -g.gain / static_cast<float>(g.fade);
+                g.fadeLeft = g.fade;
             }
         }
     }

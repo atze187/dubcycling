@@ -5,6 +5,7 @@
 #include <memory>
 #include <numbers>
 #include <vector>
+#include "engine/GrainStretch.h"
 #include "engine/LoopReader.h"
 #include "engine/LoopTiming.h"
 #include "engine/StereoData.h"
@@ -207,5 +208,48 @@ TEST_CASE("LoopReader no NaN with step 0 or phase outside 0..1", "[LoopReader]")
         r.render(big.data(), bigR.data(), 4096, 0.99, ps, 1.0);
         REQUIRE(allFinite(big));
         REQUIRE(allFinite(bigR));
+    }
+}
+
+TEST_CASE("LoopReader retrigger during a fade keeps at most two grains", "[LoopReader]")
+{
+    // Sprünge alle 64 Samples über 1 s: Jeder Sprung trifft eine laufende Überblendung.
+    const size_t frames = 96000;
+    std::vector<float> x(frames);
+    for (size_t i = 0; i < frames; ++i)
+        x[i] = sine440(i, frames);
+    dc::GrainFrame f;
+    f.cycle = true;
+    f.hi = static_cast<double>(frames);
+
+    for (int grainLen : {441, 1000, 1323, 1764, 1920, 2000, 3840, 3841})
+    {
+        INFO("grainLen " << grainLen);
+        dc::GrainStretch g;
+        g.start(0.0, 1.0, grainLen);
+        bool ok = true;
+        for (int i = 0; i < static_cast<int>(kRate); ++i)
+        {
+            if (i > 0 && i % 64 == 0)
+                g.retrigger();
+            const double base = ((i / 64) % 2 == 0 ? 0.1 : 0.6) * static_cast<double>(frames);
+            const float y = g.process(x, base + i, grainLen, f);
+            if (!std::isfinite(y) || g.activeGrains() > 2)
+                ok = false;
+        }
+        REQUIRE(ok);
+        REQUIRE(g.slotCollisions() == 0);
+    }
+
+    // Dasselbe über den LoopReader (64er-Blöcke, Phase springt jeden Block): endliche Ausgabe.
+    dc::LoopReader r;
+    r.prepare(kRate);
+    r.setData(makeData(frames, kRate, sine440));
+    std::vector<float> l(64), rr(64);
+    for (int b = 0; b < 750; ++b)
+    {
+        r.render(l.data(), rr.data(), 64, (b % 2 == 0) ? 0.1 : 0.6, 1.0 / static_cast<double>(frames), 1.0);
+        REQUIRE(allFinite(l));
+        REQUIRE(allFinite(rr));
     }
 }
