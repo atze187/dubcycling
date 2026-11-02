@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <memory>
+#include <vector>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "engine/Engine.h"
 #include "plugin/LoopLoader.h"
@@ -65,7 +66,11 @@ public:
     // region indices no longer mean anything). If decoding fails nothing changes and the failure is
     // reported via replaceFailure(). A file that does not exist or cannot be read returns false.
     bool replaceLoop(int slot, const juce::File& file, int bars);
-    // Optional folder to search for moved files (see relink()); empty = none.
+    // Optional folder to search for moved files (see relink()); empty = none. Message thread.
+    // Moved files (name AND hash match) are searched in: the folder of the other slot's file (if it
+    // exists), the folder of the last file loaded or relinked in this session (memory only, not
+    // persisted), and this folder. After a slot is (re)linked or loaded, a Missing other slot is
+    // searched again (both loops moved together are found once one of them is relinked).
     void setSessionDir(const juce::File& dir) { sessionDir_ = dir; }
     // Last tempo the host reported in processBlock; 0 = none yet. Any thread.
     double hostBpm() const { return hostBpm_.load(std::memory_order_relaxed); }
@@ -88,12 +93,20 @@ private:
     void publish();
     LoopRef& refOf(int slot) { return slot == 0 ? state_.loop1 : state_.loop2; }
     void applyState(const PluginState& s);
+    // Folders relink() searches for the slot's moved file (see setSessionDir). Message thread.
+    std::vector<juce::File> relinkCandidates(int slot) const;
+    // Finds the slot's file (relink); found: new path, starts the load, remembers its folder and
+    // retries a Missing other slot. Not found: Missing (regions/rules/bars kept). Caller publishes.
+    bool tryRelink(int slot);
+    // tryRelink of the other slot if it is Missing; true if it was found.
+    bool relinkOtherIfMissing(int slot);
 
     Engine engine_;
     std::shared_ptr<const Model> model_; // last published model; the audio thread reads via engine_
     PluginState state_;                  // source of truth for getStateInformation
     SlotTracker slots_;                  // status, data, tickets, staged replacements
     juce::File sessionDir_;
+    juce::File lastGoodDir_; // folder of the last file loaded or relinked (message thread, memory only)
     mutable juce::CriticalSection stateLock_; // guards state_, slots_ and model_
     LoopLoader loader_;
     std::atomic<double> hostBpm_ { 0.0 };

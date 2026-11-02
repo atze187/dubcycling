@@ -89,25 +89,65 @@ void DubcyclingProcessor::applyState(const PluginState& s) {
         slots_.resetAll(); // invalidates in-flight loads and staged replacements of the previous state
     }
     for (int i = 0; i < 2; ++i) {
-        LoopRef ref;
+        bool empty = false;
         {
             const juce::ScopedLock sl(stateLock_);
-            ref = refOf(i);
+            empty = refOf(i).path.isEmpty() && refOf(i).fileName.isEmpty();
         }
-        if (ref.path.isEmpty() && ref.fileName.isEmpty())
-            continue;
-        if (auto f = relink(ref, sessionDir_)) {
-            {
-                const juce::ScopedLock sl(stateLock_);
-                refOf(i).path = f->getFullPathName(); // remember the new location
-            }
-            startLoad(i, *f);
-        } else {
-            const juce::ScopedLock sl(stateLock_);
-            slots_.setMissing(i); // regions/rules/bars stay and are saved unchanged
-        }
+        if (!empty)
+            tryRelink(i); // a success also retries the other slot if it is Missing
     }
     publish();
+}
+
+std::vector<juce::File> DubcyclingProcessor::relinkCandidates(int slot) const {
+    std::vector<juce::File> dirs;
+    auto add = [&dirs](const juce::File& d) {
+        if (d != juce::File() && std::find(dirs.begin(), dirs.end(), d) == dirs.end())
+            dirs.push_back(d);
+    };
+    juce::String otherPath;
+    {
+        const juce::ScopedLock sl(stateLock_);
+        otherPath = (slot == 0 ? state_.loop2 : state_.loop1).path;
+    }
+    if (otherPath.isNotEmpty() && juce::File(otherPath).existsAsFile())
+        add(juce::File(otherPath).getParentDirectory()); // project loops usually live together
+    add(lastGoodDir_);
+    add(sessionDir_);
+    return dirs;
+}
+
+bool DubcyclingProcessor::tryRelink(int slot) {
+    LoopRef ref;
+    {
+        const juce::ScopedLock sl(stateLock_);
+        ref = refOf(slot);
+    }
+    const auto f = relink(ref, relinkCandidates(slot)); // file IO outside the lock
+    if (!f) {
+        const juce::ScopedLock sl(stateLock_);
+        slots_.setMissing(slot); // regions/rules/bars stay and are saved unchanged
+        return false;
+    }
+    {
+        const juce::ScopedLock sl(stateLock_);
+        refOf(slot).path = f->getFullPathName(); // remember the new location
+    }
+    lastGoodDir_ = f->getParentDirectory();
+    startLoad(slot, *f);
+    relinkOtherIfMissing(slot);
+    return true;
+}
+
+bool DubcyclingProcessor::relinkOtherIfMissing(int slot) {
+    const int other = slot == 0 ? 1 : 0;
+    {
+        const juce::ScopedLock sl(stateLock_);
+        if (slots_.status(other) != SlotStatus::Missing)
+            return false;
+    }
+    return tryRelink(other);
 }
 
 void DubcyclingProcessor::getStateInformation(juce::MemoryBlock& dest) {
@@ -154,7 +194,9 @@ bool DubcyclingProcessor::loadLoop(int slot, const juce::File& file) {
         ref.fileName = file.getFileName();
         ref.hash = hash;
     }
+    lastGoodDir_ = file.getParentDirectory();
     startLoad(slot, file);
+    relinkOtherIfMissing(slot); // e.g. both loops moved together: their new folder is known now
     publish();
     return true;
 }
@@ -176,6 +218,9 @@ bool DubcyclingProcessor::replaceLoop(int slot, const juce::File& file, int bars
         ticket = slots_.beginReplace(slot, std::move(next)); // applied in timerCallback once decoded
     }
     loader_.request(slot, ticket, file);
+    lastGoodDir_ = file.getParentDirectory();
+    if (relinkOtherIfMissing(slot))
+        publish();
     return true;
 }
 

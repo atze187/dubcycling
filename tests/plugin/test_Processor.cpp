@@ -190,3 +190,112 @@ TEST_CASE("Processor: a second setStateInformation drops the first one's in-flig
     CHECK(f.proc.getPluginState().loop1.fileName == "b.wav");
     CHECK(f.frames1() == 24000);
 }
+
+// --- F2: automatic relink of moved files ----------------------------------------------------------
+namespace {
+LoopRef refOfFile(const juce::File& f)
+{
+    LoopRef r;
+    r.path = f.getFullPathName();
+    r.fileName = f.getFileName();
+    r.hash = hashFile(f);
+    r.boundaries = { 0.5 };
+    return r;
+}
+
+// Moves `f` into `folder` (created if needed) and returns the new file.
+juce::File moveInto(const juce::File& f, const juce::File& folder)
+{
+    folder.createDirectory();
+    const auto moved = folder.getChildFile(f.getFileName());
+    REQUIRE(f.moveFileTo(moved));
+    return moved;
+}
+} // namespace
+
+TEST_CASE("Processor: relinking loop 1 manually also finds loop 2 moved into the same folder", "[processor][relink]")
+{
+    ProcFixture f;
+    f.dir.getChildFile("old").createDirectory();
+    const auto a = f.wav("old/a.wav", 16000);
+    const auto b = f.wav("old/b.wav", 24000);
+    PluginState s;
+    s.loop1 = refOfFile(a);
+    s.loop2 = refOfFile(b);
+    const auto newDir = f.dir.getChildFile("new");
+    const auto a2 = moveInto(a, newDir);
+    const auto b2 = moveInto(b, newDir);
+    f.setState(s);
+    f.proc.waitForLoads();
+    REQUIRE(f.proc.getSlotStatus(0) == Status::Missing);
+    REQUIRE(f.proc.getSlotStatus(1) == Status::Missing);
+
+    REQUIRE(f.proc.loadLoop(0, a2));
+    f.proc.waitForLoads();
+    CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
+    CHECK(f.proc.getSlotStatus(1) == Status::Loaded);
+    const auto st = f.proc.getPluginState();
+    CHECK(juce::File(st.loop2.path) == b2);
+    CHECK(st.loop2.boundaries == std::vector<double> { 0.5 }); // relink keeps regions
+}
+
+TEST_CASE("Processor: a moved loop is found in the folder of the other slot's file", "[processor][relink]")
+{
+    for (int movedSlot : { 0, 1 })
+    {
+        ProcFixture f;
+        f.dir.getChildFile("old").createDirectory();
+        f.dir.getChildFile("project").createDirectory();
+        // The moved loop now sits next to the other slot's (unmoved) file.
+        const auto moved = f.wav("old/moved.wav", 16000);
+        const auto stays = f.wav("project/stays.wav", 24000);
+        PluginState s;
+        (movedSlot == 0 ? s.loop1 : s.loop2) = refOfFile(moved);
+        (movedSlot == 0 ? s.loop2 : s.loop1) = refOfFile(stays);
+        const auto now = moveInto(moved, f.dir.getChildFile("project"));
+        f.setState(s);
+        f.proc.waitForLoads();
+        CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
+        CHECK(f.proc.getSlotStatus(1) == Status::Loaded);
+        const auto st = f.proc.getPluginState();
+        CHECK(juce::File((movedSlot == 0 ? st.loop1 : st.loop2).path) == now);
+    }
+}
+
+TEST_CASE("Processor: a same-named file with another hash in a candidate folder is not accepted", "[processor][relink]")
+{
+    ProcFixture f;
+    f.dir.getChildFile("old").createDirectory();
+    f.dir.getChildFile("project").createDirectory();
+    const auto moved = f.wav("old/moved.wav", 16000);
+    const auto stays = f.wav("project/stays.wav", 24000);
+    PluginState s;
+    s.loop1 = refOfFile(moved);
+    s.loop2 = refOfFile(stays);
+    moved.deleteFile();
+    f.wav("project/moved.wav", 20000); // same name, different content
+    f.setState(s);
+    f.proc.waitForLoads();
+    CHECK(f.proc.getSlotStatus(0) == Status::Missing);
+    CHECK(f.proc.getSlotStatus(1) == Status::Loaded);
+    CHECK(f.proc.getPluginState().loop1.path == moved.getFullPathName()); // reference unchanged
+}
+
+TEST_CASE("Processor: the folder of the last loaded file is searched for a moved loop", "[processor][relink]")
+{
+    ProcFixture f;
+    f.dir.getChildFile("old").createDirectory();
+    f.dir.getChildFile("library").createDirectory();
+    const auto loop = f.wav("old/loop.wav", 16000);
+    PluginState s;
+    s.loop2 = refOfFile(loop); // slot 0 empty: no other-slot folder to search
+    moveInto(loop, f.dir.getChildFile("library"));
+
+    // Something was loaded from the library before (this session).
+    REQUIRE(f.proc.replaceLoop(0, f.wav("library/other.wav", 24000), 1));
+    f.proc.waitForLoads();
+    f.setState(s);
+    f.proc.waitForLoads();
+    CHECK(f.proc.getSlotStatus(1) == Status::Loaded);
+    CHECK(juce::File(f.proc.getPluginState().loop2.path) == f.dir.getChildFile("library").getChildFile("loop.wav"));
+}

@@ -14,7 +14,7 @@ std::optional<juce::File> matchIn(const juce::File& dir, const LoopRef& ref)
 }
 } // namespace
 
-std::optional<juce::File> relink(const LoopRef& ref, const juce::File& sessionDir)
+std::optional<juce::File> relink(const LoopRef& ref, const std::vector<juce::File>& candidateDirs)
 {
     if (ref.path.isNotEmpty())
     {
@@ -22,10 +22,8 @@ std::optional<juce::File> relink(const LoopRef& ref, const juce::File& sessionDi
         if (stored.existsAsFile())
             return stored;
     }
-    if (auto f = matchIn(sessionDir, ref))
-        return f;
-    if (ref.path.isNotEmpty())
-        if (auto f = matchIn(juce::File(ref.path).getParentDirectory(), ref))
+    for (const auto& dir : candidateDirs)
+        if (auto f = matchIn(dir, ref))
             return f;
     return std::nullopt;
 }
