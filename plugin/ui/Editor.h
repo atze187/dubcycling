@@ -5,6 +5,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
 #include "plugin/ui/LoopLane.h"
+#include "plugin/ui/RulePanel.h"
 
 namespace dc::ui {
 
@@ -38,8 +39,8 @@ juce::String replaceConfirmTitle(int slot);
 juce::String replaceConfirmMessage();
 
 // Edit view: Loop 1 lane on top, Loop 2 below, each with bars field, "Load..." button and slot
-// status; the combined cycle length; a placeholder for the rule panel (Task 11). A 10 Hz timer
-// polls the processor and refreshes the lanes; edits go through processor.applyEdit.
+// status; the combined cycle length; the rule panel for the selected Loop-1 region. A 10 Hz timer
+// polls the processor and refreshes lanes and panel; edits go through processor.applyEdit.
 class Editor final : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -51,6 +52,8 @@ public:
     juce::String cycleText() const { return cycle_.getText(); }
     juce::String statusText(int slot) const { return status_[slot == 0 ? 0 : 1].getText(); }
     const LoopLane& lane(int slot) const { return lanes_[slot == 0 ? 0 : 1]; }
+    LoopLane& lane(int slot) { return lanes_[slot == 0 ? 0 : 1]; }
+    RulePanel& rulePanel() { return rules_; }
     juce::Slider& barsField(int slot) { return bars_[slot == 0 ? 0 : 1]; }
     // Pulls state, slot status and loop data from the processor (the timer calls it).
     void refresh();
@@ -72,6 +75,10 @@ public:
 private:
     void timerCallback() override { refresh(); }
     void regionsEdited(int slot, const RegionMap& regions);
+    // Shows the rule of the selected Loop-1 region for the current Loop-2 region count.
+    void updateRules(const PluginState& st);
+    // Replaces the entry for region1 (other entries, stale ones included, stay), then applyEdit.
+    void rulesEdited(int region1, std::vector<RuleTarget> targets);
     void barsEdited(int slot);
     // confirmedState: serialized state the user confirmed a replace for, or nullptr (not asked yet).
     void handleFile(int slot, const juce::File& file, const juce::MemoryBlock* confirmedState);
@@ -88,7 +95,8 @@ private:
     juce::Slider bars_[2];
     juce::TextButton load_[2];
     juce::Label cycle_;
-    juce::Label rulesPlaceholder_;
+    RulePanel rules_;
+    juce::TooltipWindow tooltips_ { this };
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::String notice_[2];         // short message shown instead of the status (e.g. rejected file)
     juce::uint32 noticeUntil_[2] {}; // Time::getMillisecondCounter() when the notice expires

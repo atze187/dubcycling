@@ -114,15 +114,15 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
     cycle_.setFont(juce::FontOptions(15.0f));
     addAndMakeVisible(cycle_);
 
-    rulesPlaceholder_.setText(utf8("Regeln \xe2\x80\x94 Task 11"), juce::dontSendNotification);
-    rulesPlaceholder_.setJustificationType(juce::Justification::centred);
-    rulesPlaceholder_.setColour(juce::Label::textColourId, kDim);
-    rulesPlaceholder_.setColour(juce::Label::outlineColourId, juce::Colour(0xff3a3f47));
-    addAndMakeVisible(rulesPlaceholder_);
+    lanes_[0].onRegionSelected = [this](int) { updateRules(proc_.getPluginState()); };
+    rules_.onChanged = [this](int region1, std::vector<RuleTarget> targets) {
+        rulesEdited(region1, std::move(targets));
+    };
+    addAndMakeVisible(rules_);
 
     setResizable(true, true);
-    setResizeLimits(700, 520, 1800, 1400);
-    setSize(900, 620);
+    setResizeLimits(700, 620, 1800, 1400);
+    setSize(900, 720);
     refresh();
     startTimerHz(10);
 }
@@ -172,6 +172,7 @@ void Editor::refresh()
         status_[i].setColour(juce::Label::textColourId, colour);
         load_[i].setButtonText(fileIsMissing(status, ref) ? utf8("Neu zuordnen\xe2\x80\xa6") : utf8("Load\xe2\x80\xa6"));
     }
+    updateRules(st);
     cycle_.setText("Zyklus: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Takte",
                    juce::dontSendNotification);
 }
@@ -180,6 +181,37 @@ void Editor::regionsEdited(int slot, const RegionMap& regions)
 {
     PluginState st = proc_.getPluginState();
     refOf(st, slot).boundaries = regions.boundaries;
+    proc_.applyEdit(st);
+}
+
+void Editor::updateRules(const PluginState& st)
+{
+    // The lane clamps its selection into the current region count, so a Loop-1 region that was
+    // removed has already fallen back to the last valid one here.
+    const int region1 = lanes_[0].selectedRegion();
+    std::vector<RuleTarget> targets;
+    for (const auto& e : st.rules)
+        if (e.region1 == region1)
+        {
+            targets = e.targets;
+            break;
+        }
+    rules_.setContext(region1, lanes_[1].regions().regionCount(), targets);
+}
+
+void Editor::rulesEdited(int region1, std::vector<RuleTarget> targets)
+{
+    PluginState st = proc_.getPluginState();
+    bool found = false;
+    for (auto& e : st.rules)
+        if (e.region1 == region1)
+        {
+            e.targets = std::move(targets);
+            found = true;
+            break;
+        }
+    if (!found)
+        st.rules.push_back(RuleEntry { region1, std::move(targets) });
     proc_.applyEdit(st);
 }
 
@@ -320,7 +352,7 @@ void Editor::resized()
     }
     cycle_.setBounds(area.removeFromTop(kHeaderH));
     area.removeFromTop(kGap);
-    rulesPlaceholder_.setBounds(area);
+    rules_.setBounds(area);
 }
 
 } // namespace dc::ui
