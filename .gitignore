@@ -1,0 +1,6 @@
+build/
+.superpowers/
+.vs/
+.vscode/
+.idea/
+*.user
