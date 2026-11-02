@@ -11,7 +11,11 @@ LoopLoader::~LoopLoader()
     pool_.removeAllJobs(true, -1);
 }
 
-std::shared_ptr<const StereoData> LoopLoader::decode(const juce::File& file, juce::String& error)
+namespace {
+
+// Opens the file and checks the header against the loader's limits. Sets error and returns
+// nullptr when the file would be rejected by decode().
+std::unique_ptr<juce::AudioFormatReader> openChecked(const juce::File& file, juce::String& error)
 {
     if (!file.existsAsFile())
     {
@@ -40,6 +44,23 @@ std::shared_ptr<const StereoData> LoopLoader::decode(const juce::File& file, juc
         error = "file too long (over 10 minutes at 48 kHz)";
         return nullptr;
     }
+    return reader;
+}
+
+} // namespace
+
+juce::String LoopLoader::probe(const juce::File& file)
+{
+    juce::String error;
+    openChecked(file, error);
+    return error;
+}
+
+std::shared_ptr<const StereoData> LoopLoader::decode(const juce::File& file, juce::String& error)
+{
+    auto reader = openChecked(file, error);
+    if (reader == nullptr)
+        return nullptr;
 
     std::shared_ptr<StereoData> data;
     try

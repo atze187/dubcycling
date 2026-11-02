@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <memory>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -13,6 +14,25 @@ constexpr int kMaxBars = 256;
 // 1 when the file cannot be read.
 int suggestedBarsFor(const juce::File& file, double hostBpm);
 
+// Bars typed into the field: a number is rounded and clamped to 1..kMaxBars; anything that is
+// not a number gives `fallback` (the current value).
+int parseBars(const juce::String& text, int fallback);
+
+// What a file dropped on / chosen for a slot does.
+enum class LoopFileAction
+{
+    Reject,              // not loadable: nothing changes
+    Relink,              // the slot's file is gone: loadLoop, keeps regions, rules and bars
+    ReplaceAfterConfirm, // replaceLoop would drop regions/rules: ask first
+    ReplaceDirect        // replaceLoop, nothing to lose
+};
+
+// storedPathExists: the slot's stored file is still there. fileReadable: the new file passes
+// LoopLoader::probe. hasRegionsOrRules: the slot has boundaries or there are any rules
+// (replaceLoop drops all rules).
+LoopFileAction decideLoopFileAction(DubcyclingProcessor::SlotStatus status, bool storedPathExists, bool fileReadable,
+                                    bool hasRegionsOrRules);
+
 // Edit view: Loop 1 lane on top, Loop 2 below, each with bars field, "Load..." button and slot
 // status; the combined cycle length; a placeholder for the rule panel (Task 11). A 10 Hz timer
 // polls the processor and refreshes the lanes; edits go through processor.applyEdit.
@@ -25,9 +45,19 @@ public:
     // Selected region of Loop 1 (for the rule panel).
     int selectedRegion1() const { return lanes_[0].selectedRegion(); }
     juce::String cycleText() const { return cycle_.getText(); }
+    juce::String statusText(int slot) const { return status_[slot == 0 ? 0 : 1].getText(); }
     const LoopLane& lane(int slot) const { return lanes_[slot == 0 ? 0 : 1]; }
+    juce::Slider& barsField(int slot) { return bars_[slot == 0 ? 0 : 1]; }
     // Pulls state, slot status and loop data from the processor (the timer calls it).
     void refresh();
+
+    // A file dropped on a lane or picked with "Load...": rejects, relinks or replaces per
+    // decideLoopFileAction.
+    void loadFile(int slot, const juce::File& file);
+
+    // Asks whether to replace a loop whose regions/rules would be lost and calls answer(true) to
+    // go ahead. Defaults to an async AlertWindow; tests replace it.
+    std::function<void(int slot, std::function<void(bool)> answer)> confirmReplace;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -36,8 +66,9 @@ private:
     void timerCallback() override { refresh(); }
     void regionsEdited(int slot, const RegionMap& regions);
     void barsEdited(int slot);
-    void fileChosen(int slot, const juce::File& file);
+    void replace(int slot, const juce::File& file);
     void openChooser(int slot);
+    void showNotice(int slot, const juce::String& text);
 
     DubcyclingProcessor& proc_;
     LoopLane lanes_[2];
@@ -49,6 +80,8 @@ private:
     juce::Label cycle_;
     juce::Label rulesPlaceholder_;
     std::unique_ptr<juce::FileChooser> chooser_;
+    juce::String notice_[2];         // short message shown instead of the status (e.g. rejected file)
+    juce::uint32 noticeUntil_[2] {}; // Time::getMillisecondCounter() when the notice expires
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Editor)
 };

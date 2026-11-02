@@ -67,30 +67,83 @@ TEST_CASE("LoopLane: drag moves the boundary and is clamped by kMinRegion", "[Lo
 {
     LaneFixture f;
     f.lane.setRegions(regions({ 0.3, 0.6 }));
-    f.lane.pressAt(303.0f); // within the hit tolerance of the boundary at 300 px
-    f.lane.dragTo(400.0f);
-    REQUIRE(f.changes >= 1);
-    CHECK_THAT(f.last.boundaries[0], WithinAbs(0.4, 1e-9));
+    f.lane.pressAt(303.0f); // within the hit tolerance of the boundary at 300 px (grab offset -3 px)
+    f.lane.dragTo(403.0f);
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(0.4, 1e-9));
     f.lane.dragTo(900.0f); // past the neighbour
-    CHECK_THAT(f.last.boundaries[0], WithinAbs(0.6 - kMinRegion, 1e-9));
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(0.6 - kMinRegion, 1e-9));
     f.lane.dragTo(-50.0f); // past the left edge
-    CHECK_THAT(f.last.boundaries[0], WithinAbs(kMinRegion, 1e-9));
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(kMinRegion, 1e-9));
     f.lane.release();
+    REQUIRE(f.changes == 1);
+    CHECK_THAT(f.last.boundaries[0], WithinAbs(kMinRegion, 1e-9));
     CHECK_THAT(f.last.boundaries[1], WithinAbs(0.6, 1e-9));
 
     // after release, dragging does nothing
-    const int n = f.changes;
     f.lane.dragTo(500.0f);
-    CHECK(f.changes == n);
+    f.lane.release();
+    CHECK(f.changes == 1);
+}
+
+TEST_CASE("LoopLane: a drag publishes nothing until release, then once with the final value", "[LoopLane]")
+{
+    LaneFixture f;
+    f.lane.setRegions(regions({ 0.3, 0.6 }));
+    f.lane.pressAt(300.0f);
+    for (float x : { 320.0f, 350.0f, 410.0f, 450.0f })
+        f.lane.dragTo(x);
+    CHECK(f.changes == 0);
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(0.45, 1e-9)); // local preview
+    f.lane.release();
+    REQUIRE(f.changes == 1);
+    CHECK_THAT(f.last.boundaries[0], WithinAbs(0.45, 1e-9));
+}
+
+TEST_CASE("LoopLane: grabbing a boundary off-centre does not make it jump to the cursor", "[LoopLane]")
+{
+    LaneFixture f;
+    f.lane.setRegions(regions({ 0.3 }));
+    f.lane.pressAt(304.0f);
+    f.lane.dragTo(305.0f); // 1 px of movement moves the boundary by 1 px, not by 5
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(0.301, 1e-9));
+}
+
+TEST_CASE("LoopLane: a click on a boundary without movement publishes nothing", "[LoopLane]")
+{
+    LaneFixture f;
+    f.lane.setRegions(regions({ 0.3 }));
+    f.lane.pressAt(302.0f);
+    f.lane.release();
+    f.lane.pressAt(302.0f);
+    f.lane.dragTo(302.0f); // jitter that does not move the boundary
+    f.lane.release();
+    f.lane.pressAt(302.0f);
+    f.lane.dragTo(340.0f);
+    f.lane.dragTo(302.0f); // moved and back to the start
+    f.lane.release();
+    CHECK(f.changes == 0);
+}
+
+TEST_CASE("LoopLane: new data during a drag cancels it without publishing", "[LoopLane]")
+{
+    LaneFixture f;
+    f.lane.setRegions(regions({ 0.3 }));
+    f.lane.pressAt(300.0f);
+    f.lane.dragTo(500.0f);
+    f.lane.setData(someData(9600));
+    f.lane.release();
+    CHECK(f.changes == 0);
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(0.3, 1e-9));
 }
 
 TEST_CASE("LoopLane: the nearest boundary wins the drag", "[LoopLane]")
 {
     LaneFixture f;
     f.lane.setRegions(regions({ 0.300, 0.306 }));
-    f.lane.pressAt(305.0f); // 5 px from the first, 1 px from the second
-    f.lane.dragTo(500.0f);
-    REQUIRE(f.changes >= 1);
+    f.lane.pressAt(305.0f); // 5 px from the first, 1 px from the second (grab offset +1 px)
+    f.lane.dragTo(499.0f);
+    f.lane.release();
+    REQUIRE(f.changes == 1);
     CHECK_THAT(f.last.boundaries[0], WithinAbs(0.3, 1e-9));
     CHECK_THAT(f.last.boundaries[1], WithinAbs(0.5, 1e-9));
 }

@@ -52,8 +52,10 @@ public:
 
     // Click: grabs the nearest boundary within the hit tolerance, otherwise selects the region under x.
     void pressAt(float x);
-    // Moves a grabbed boundary (clamped by RegionMap::moveBoundary).
+    // Moves a grabbed boundary (clamped by RegionMap::moveBoundary), keeping the offset between
+    // cursor and boundary from the press. Only a local preview: nothing is published while dragging.
     void dragTo(float x);
+    // Ends a drag; fires onRegionsChanged once if the boundary actually moved.
     void release();
     // On a boundary: removes it; elsewhere: adds a boundary at x.
     void doubleClickAt(float x);
@@ -76,6 +78,7 @@ private:
     float xFor(double phase) const { return static_cast<float>(phase * getWidth()); }
     int boundaryAt(float x) const; // nearest boundary within the hit tolerance, or -1
     void changed();
+    void cancelDrag(); // ends a drag without publishing and restores the regions from the press
     void setDropHighlight(bool on);
 
     std::shared_ptr<const StereoData> data_;
@@ -83,6 +86,8 @@ private:
     RegionMap regions_;
     int selected_ = 0;
     int dragging_ = -1;
+    float grabOffset_ = 0.0f; // boundary x minus cursor x at the press
+    RegionMap dragStart_;     // regions at the press, to detect a real move and to cancel
     bool dropHighlight_ = false;
     std::vector<PeakColumn> peaks_;
     const StereoData* peaksData_ = nullptr;

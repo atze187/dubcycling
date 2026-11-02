@@ -53,6 +53,27 @@ int suggestedBarsFor(const juce::File& file, double hostBpm)
     return std::clamp(suggestBars(seconds, bpm, 4.0), 1, kMaxBars);
 }
 
+int parseBars(const juce::String& text, int fallback)
+{
+    const auto t = text.trim();
+    if (t.isEmpty() || !t.containsOnly("+-0123456789.,"))
+        return fallback;
+    const double v = t.replaceCharacter(',', '.').getDoubleValue();
+    if (!std::isfinite(v))
+        return fallback;
+    return static_cast<int>(std::clamp(std::round(v), 1.0, static_cast<double>(kMaxBars)));
+}
+
+LoopFileAction decideLoopFileAction(DubcyclingProcessor::SlotStatus status, bool storedPathExists, bool fileReadable,
+                                    bool hasRegionsOrRules)
+{
+    if (!fileReadable)
+        return LoopFileAction::Reject;
+    if (status == DubcyclingProcessor::SlotStatus::Missing && !storedPathExists)
+        return LoopFileAction::Relink;
+    return hasRegionsOrRules ? LoopFileAction::ReplaceAfterConfirm : LoopFileAction::ReplaceDirect;
+}
+
 Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), proc_(proc)
 {
     for (int i = 0; i < 2; ++i)
@@ -74,6 +95,9 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
         bars_[i].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, kHeaderH - 6);
         bars_[i].setRange(1.0, static_cast<double>(kMaxBars), 1.0);
         bars_[i].setValue(1.0, juce::dontSendNotification);
+        bars_[i].valueFromTextFunction = [this, i](const juce::String& text) {
+            return static_cast<double>(parseBars(text, static_cast<int>(bars_[i].getValue())));
+        };
         bars_[i].onValueChange = [this, i] { barsEdited(i); };
         addAndMakeVisible(bars_[i]);
 
@@ -82,7 +106,7 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
         addAndMakeVisible(load_[i]);
 
         lanes_[i].onRegionsChanged = [this, i](const RegionMap& m) { regionsEdited(i, m); };
-        lanes_[i].onFileDropped = [this, i](const juce::File& f) { fileChosen(i, f); };
+        lanes_[i].onFileDropped = [this, i](const juce::File& f) { loadFile(i, f); };
         addAndMakeVisible(lanes_[i]);
     }
 
@@ -135,6 +159,15 @@ void Editor::refresh()
                 colour = kWarn;
                 break;
         }
+        if (noticeUntil_[i] != 0 && juce::Time::getMillisecondCounter() < noticeUntil_[i])
+        {
+            text = notice_[i];
+            colour = kWarn;
+        }
+        else
+        {
+            noticeUntil_[i] = 0;
+        }
         status_[i].setText(text, juce::dontSendNotification);
         status_[i].setColour(juce::Label::textColourId, colour);
         load_[i].setButtonText(fileIsMissing(status, ref) ? utf8("Neu zuordnen\xe2\x80\xa6") : utf8("Load\xe2\x80\xa6"));
@@ -158,15 +191,61 @@ void Editor::barsEdited(int slot)
     refresh();
 }
 
-void Editor::fileChosen(int slot, const juce::File& file)
+void Editor::loadFile(int slot, const juce::File& file)
 {
-    if (!file.existsAsFile())
-        return;
+    slot = slot == 0 ? 0 : 1;
     const PluginState st = proc_.getPluginState();
-    if (fileIsMissing(proc_.getSlotStatus(slot), refOf(st, slot)))
-        proc_.loadLoop(slot, file); // relink: keeps regions, rules and bars
-    else
-        proc_.replaceLoop(slot, file, suggestedBarsFor(file, proc_.hostBpm()));
+    const LoopRef& ref = refOf(st, slot);
+    const juce::String error = LoopLoader::probe(file);
+    const auto action = decideLoopFileAction(proc_.getSlotStatus(slot), juce::File(ref.path).existsAsFile(),
+                                             error.isEmpty(), !ref.boundaries.empty() || !st.rules.empty());
+    switch (action)
+    {
+        case LoopFileAction::Reject:
+            showNotice(slot, "Nicht geladen: " + file.getFileName() + " (" + error + ")");
+            return;
+        case LoopFileAction::Relink:
+            proc_.loadLoop(slot, file); // keeps regions, rules and bars
+            noticeUntil_[slot] = 0;
+            break;
+        case LoopFileAction::ReplaceDirect:
+            replace(slot, file);
+            return;
+        case LoopFileAction::ReplaceAfterConfirm:
+        {
+            juce::Component::SafePointer<Editor> safe(this);
+            auto answer = [safe, slot, file](bool ok) {
+                if (ok && safe != nullptr)
+                    safe->replace(slot, file);
+            };
+            if (confirmReplace)
+            {
+                confirmReplace(slot, std::move(answer));
+            }
+            else
+            {
+                auto options = juce::MessageBoxOptions::makeOptionsOkCancel(
+                    juce::MessageBoxIconType::WarningIcon, "Loop ersetzen?",
+                    "Regionen und Regeln dieses Loops gehen verloren.", "Ersetzen", "Abbrechen", this);
+                juce::AlertWindow::showAsync(options, [answer](int result) { answer(result == 1); });
+            }
+            return;
+        }
+    }
+    refresh();
+}
+
+void Editor::replace(int slot, const juce::File& file)
+{
+    proc_.replaceLoop(slot, file, suggestedBarsFor(file, proc_.hostBpm()));
+    noticeUntil_[slot] = 0;
+    refresh();
+}
+
+void Editor::showNotice(int slot, const juce::String& text)
+{
+    notice_[slot] = text;
+    noticeUntil_[slot] = juce::Time::getMillisecondCounter() + 5000;
     refresh();
 }
 
@@ -180,7 +259,7 @@ void Editor::openChooser(int slot)
                           [this, slot](const juce::FileChooser& fc) {
                               const auto file = fc.getResult();
                               if (isAcceptedAudioFile(file))
-                                  fileChosen(slot, file);
+                                  loadFile(slot, file);
                           });
 }
 

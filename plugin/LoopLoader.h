@@ -30,6 +30,8 @@ public:
     // Dekodiert synchron. Bei Fehler nullptr und error ("file not found",
     // "unsupported or damaged file", "file too short ...", "file too long ...").
     static std::shared_ptr<const StereoData> decode(const juce::File& file, juce::String& error);
+    // Header-only check with the same rules and error texts as decode(); empty = would load.
+    static juce::String probe(const juce::File& file);
 
     void request(int slot, std::uint64_t ticket, const juce::File& file);
     std::vector<LoopLoadResult> takeResults();

@@ -55,7 +55,7 @@ void LoopLane::setData(std::shared_ptr<const StereoData> data)
 {
     if (data == data_)
         return;
-    release();
+    cancelDrag();
     data_ = std::move(data);
     peaks_.clear();
     peaksData_ = nullptr;
@@ -133,7 +133,11 @@ void LoopLane::pressAt(float x)
         return;
     dragging_ = boundaryAt(x);
     if (isDragging())
+    {
+        grabOffset_ = xFor(regions_.boundaries[static_cast<std::size_t>(dragging_)]) - x;
+        dragStart_ = regions_;
         return;
+    }
     selected_ = regions_.regionAt(std::clamp(phaseAt(x), 0.0, std::nextafter(1.0, 0.0)));
     repaint();
     if (onRegionSelected)
@@ -145,14 +149,27 @@ void LoopLane::dragTo(float x)
     if (!interactive() || !isDragging())
         return;
     const double before = regions_.boundaries[static_cast<std::size_t>(dragging_)];
-    if (regions_.moveBoundary(dragging_, phaseAt(x))
+    if (regions_.moveBoundary(dragging_, phaseAt(x + grabOffset_))
         && regions_.boundaries[static_cast<std::size_t>(dragging_)] != before)
-        changed();
+        repaint();
 }
 
 void LoopLane::release()
 {
+    if (!isDragging())
+        return;
     dragging_ = -1;
+    if (regions_.boundaries != dragStart_.boundaries)
+        changed();
+}
+
+void LoopLane::cancelDrag()
+{
+    if (!isDragging())
+        return;
+    dragging_ = -1;
+    regions_ = dragStart_;
+    repaint();
 }
 
 void LoopLane::doubleClickAt(float x)
