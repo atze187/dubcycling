@@ -14,6 +14,8 @@ catch_discover_tests(dc_tests)
 juce_add_console_app(dc_plugin_tests PRODUCT_NAME "DubcyclingPluginTests")
 target_sources(dc_plugin_tests PRIVATE
     plugin/test_LoopLoader.cpp
-    plugin/test_HostTransport.cpp)
+    plugin/test_HostTransport.cpp
+    plugin/test_PluginState.cpp
+    plugin/test_FileRelink.cpp)
 target_link_libraries(dc_plugin_tests PRIVATE dc_plugin_shared Catch2::Catch2WithMain)
 catch_discover_tests(dc_plugin_tests)

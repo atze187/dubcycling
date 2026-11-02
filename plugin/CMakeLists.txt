@@ -1,13 +1,17 @@
 # Plugin-Code ohne Processor/Editor, den auch die Tests linken koennen.
 add_library(dc_plugin_shared STATIC
     LoopLoader.h LoopLoader.cpp
-    HostTransport.h HostTransport.cpp)
+    HostTransport.h HostTransport.cpp
+    PluginState.h PluginState.cpp
+    FileRelink.h FileRelink.cpp)
 target_include_directories(dc_plugin_shared PUBLIC ${PROJECT_SOURCE_DIR})
 target_link_libraries(dc_plugin_shared PUBLIC
     dc_engine
     juce::juce_audio_formats
     juce::juce_audio_basics
     juce::juce_core
+    juce::juce_data_structures
+    juce::juce_cryptography
     juce::juce_events
     juce::juce_gui_basics
     PRIVATE
