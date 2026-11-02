@@ -234,3 +234,105 @@ TEST_CASE("Editor: the bars field clamps typed values and writes them to the sta
     CHECK(f.proc.getPluginState().loop1.bars == 1);
     CHECK(f.editor->cycleText() == "Zyklus: 1 Takte");
 }
+
+// ---- Review round 2: re-validation on confirm, one pending confirmation per slot ----
+
+TEST_CASE("Editor: the confirmation names the slot and says all rules are deleted", "[LoopLane][editor]")
+{
+    CHECK(dc::ui::replaceConfirmTitle(0) == "Loop 1 ersetzen?");
+    CHECK(dc::ui::replaceConfirmTitle(1) == "Loop 2 ersetzen?");
+    CHECK(dc::ui::replaceConfirmMessage()
+          == juce::String(juce::CharPointer_UTF8(
+              "Dessen Regionen und alle Regeln (auch die zwischen Loop 1 und Loop 2) werden gel\xc3\xb6scht.")));
+}
+
+TEST_CASE("Editor: a file that becomes unreadable before OK is rejected and changes nothing", "[LoopLane][editor]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(f.wav("good.wav"));
+    const auto before = serialize(f.proc.getPluginState());
+    const auto other = f.wav("other.wav");
+
+    f.editor->loadFile(0, other);
+    REQUIRE(f.asked == 1);
+    other.replaceWithText("now garbage");
+    f.pendingAnswer(true);
+    f.proc.waitForLoads();
+
+    CHECK(serialize(f.proc.getPluginState()) == before);
+    CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
+    CHECK(f.editor->statusText(0).startsWith("Nicht geladen: other.wav"));
+    CHECK(f.asked == 1); // never asked again
+    CHECK_FALSE(f.editor->isConfirmationPending(0));
+}
+
+TEST_CASE("Editor: a second drop while a confirmation is open is ignored", "[LoopLane][editor]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(f.wav("good.wav"));
+    f.editor->loadFile(0, f.wav("first.wav"));
+    REQUIRE(f.asked == 1);
+    CHECK(f.editor->isConfirmationPending(0));
+    f.editor->loadFile(0, f.wav("second.wav")); // ignored: one open confirmation per slot
+    f.editor->loadFile(0, f.broken("broken.wav"));
+    CHECK(f.asked == 1);
+
+    f.pendingAnswer(true);
+    f.proc.waitForLoads();
+    const auto after = f.proc.getPluginState();
+    CHECK(after.loop1.fileName == "first.wav"); // the first drop, replaced once
+    CHECK(after.loop1.boundaries.empty());
+    CHECK_FALSE(f.editor->isConfirmationPending(0));
+
+    // answering the same callback again does nothing
+    const auto block = serialize(after);
+    f.pendingAnswer(true);
+    CHECK(serialize(f.proc.getPluginState()) == block);
+}
+
+TEST_CASE("Editor: OK after the slot was edited in the meantime does not wipe it", "[LoopLane][editor]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(f.wav("good.wav"));
+    f.editor->loadFile(0, f.wav("other.wav"));
+    REQUIRE(f.asked == 1);
+
+    auto s = f.proc.getPluginState();
+    s.loop1.boundaries = { 0.25, 0.5, 0.75 }; // e.g. edited or restored by the host meanwhile
+    f.proc.applyEdit(s);
+    const auto before = serialize(f.proc.getPluginState());
+
+    f.pendingAnswer(true);
+    f.proc.waitForLoads();
+    CHECK(serialize(f.proc.getPluginState()) == before);
+    CHECK(f.editor->statusText(0).startsWith("Nicht ersetzt"));
+    CHECK(f.asked == 1);
+}
+
+TEST_CASE("Editor: OK after the slot became Missing relinks instead of wiping", "[LoopLane][editor]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(f.wav("good.wav"));
+    const auto other = f.wav("other.wav");
+    f.editor->loadFile(0, other);
+    REQUIRE(f.asked == 1);
+
+    // The host restores a session whose Loop 1 file is gone.
+    PluginState s;
+    s.loop1.path = f.dir.getChildFile("gone.wav").getFullPathName();
+    s.loop1.fileName = "gone.wav";
+    s.loop1.bars = 2;
+    s.loop1.boundaries = { 0.5 };
+    s.rules = { RuleEntry { 0, { RuleTarget { 1, 1.0f } } } };
+    const auto block = serialize(s);
+    f.proc.setStateInformation(block.getData(), static_cast<int>(block.getSize()));
+    REQUIRE(f.proc.getSlotStatus(0) == Status::Missing);
+
+    f.pendingAnswer(true);
+    f.proc.waitForLoads();
+    const auto after = f.proc.getPluginState();
+    CHECK(after.loop1.fileName == "other.wav");
+    CHECK(after.loop1.boundaries == std::vector<double> { 0.5 });
+    CHECK(after.rules.size() == 1);
+    CHECK(f.asked == 1);
+}

@@ -33,6 +33,10 @@ enum class LoopFileAction
 LoopFileAction decideLoopFileAction(DubcyclingProcessor::SlotStatus status, bool storedPathExists, bool fileReadable,
                                     bool hasRegionsOrRules);
 
+// Title and text of the "replace loop?" confirmation (slot 0 = Loop 1).
+juce::String replaceConfirmTitle(int slot);
+juce::String replaceConfirmMessage();
+
 // Edit view: Loop 1 lane on top, Loop 2 below, each with bars field, "Load..." button and slot
 // status; the combined cycle length; a placeholder for the rule panel (Task 11). A 10 Hz timer
 // polls the processor and refreshes the lanes; edits go through processor.applyEdit.
@@ -52,11 +56,14 @@ public:
     void refresh();
 
     // A file dropped on a lane or picked with "Load...": rejects, relinks or replaces per
-    // decideLoopFileAction.
+    // decideLoopFileAction. While a confirmation for the slot is open, further files for that
+    // slot are ignored. On OK the decision is re-run; a replace only happens if the state still
+    // equals the one the user was asked about.
     void loadFile(int slot, const juce::File& file);
+    bool isConfirmationPending(int slot) const { return pending_[slot == 0 ? 0 : 1].active; }
 
     // Asks whether to replace a loop whose regions/rules would be lost and calls answer(true) to
-    // go ahead. Defaults to an async AlertWindow; tests replace it.
+    // go ahead. Defaults to an async AlertWindow (replaceConfirmTitle/Message); tests replace it.
     std::function<void(int slot, std::function<void(bool)> answer)> confirmReplace;
 
     void paint(juce::Graphics& g) override;
@@ -66,6 +73,9 @@ private:
     void timerCallback() override { refresh(); }
     void regionsEdited(int slot, const RegionMap& regions);
     void barsEdited(int slot);
+    // confirmedState: serialized state the user confirmed a replace for, or nullptr (not asked yet).
+    void handleFile(int slot, const juce::File& file, const juce::MemoryBlock* confirmedState);
+    void askReplace(int slot, const juce::File& file, const juce::MemoryBlock& askedState);
     void replace(int slot, const juce::File& file);
     void openChooser(int slot);
     void showNotice(int slot, const juce::String& text);
@@ -82,6 +92,12 @@ private:
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::String notice_[2];         // short message shown instead of the status (e.g. rejected file)
     juce::uint32 noticeUntil_[2] {}; // Time::getMillisecondCounter() when the notice expires
+    struct PendingConfirm
+    {
+        bool active = false;
+        juce::MemoryBlock state; // serialized PluginState when the question was asked
+    };
+    PendingConfirm pending_[2];
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Editor)
 };

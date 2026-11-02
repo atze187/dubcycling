@@ -191,9 +191,26 @@ void Editor::barsEdited(int slot)
     refresh();
 }
 
+juce::String replaceConfirmTitle(int slot)
+{
+    return "Loop " + juce::String(slot == 0 ? 1 : 2) + " ersetzen?";
+}
+
+juce::String replaceConfirmMessage()
+{
+    return utf8("Dessen Regionen und alle Regeln (auch die zwischen Loop 1 und Loop 2) werden gel\xc3\xb6scht.");
+}
+
 void Editor::loadFile(int slot, const juce::File& file)
 {
     slot = slot == 0 ? 0 : 1;
+    if (pending_[slot].active)
+        return; // one open confirmation per slot: further drops are ignored until it is answered
+    handleFile(slot, file, nullptr);
+}
+
+void Editor::handleFile(int slot, const juce::File& file, const juce::MemoryBlock* confirmedState)
+{
     const PluginState st = proc_.getPluginState();
     const LoopRef& ref = refOf(st, slot);
     const juce::String error = LoopLoader::probe(file);
@@ -207,32 +224,49 @@ void Editor::loadFile(int slot, const juce::File& file)
         case LoopFileAction::Relink:
             proc_.loadLoop(slot, file); // keeps regions, rules and bars
             noticeUntil_[slot] = 0;
-            break;
+            refresh();
+            return;
         case LoopFileAction::ReplaceDirect:
             replace(slot, file);
             return;
         case LoopFileAction::ReplaceAfterConfirm:
-        {
-            juce::Component::SafePointer<Editor> safe(this);
-            auto answer = [safe, slot, file](bool ok) {
-                if (ok && safe != nullptr)
-                    safe->replace(slot, file);
-            };
-            if (confirmReplace)
+            if (confirmedState != nullptr)
             {
-                confirmReplace(slot, std::move(answer));
+                // The answer only covers the state the user was asked about; never ask twice.
+                if (serialize(st) == *confirmedState)
+                    replace(slot, file);
+                else
+                    showNotice(slot, "Nicht ersetzt: Loop " + juce::String(slot + 1) + " wurde inzwischen ge"
+                                         + utf8("\xc3\xa4") + "ndert");
+                return;
             }
-            else
-            {
-                auto options = juce::MessageBoxOptions::makeOptionsOkCancel(
-                    juce::MessageBoxIconType::WarningIcon, "Loop ersetzen?",
-                    "Regionen und Regeln dieses Loops gehen verloren.", "Ersetzen", "Abbrechen", this);
-                juce::AlertWindow::showAsync(options, [answer](int result) { answer(result == 1); });
-            }
+            askReplace(slot, file, serialize(st));
             return;
-        }
     }
-    refresh();
+}
+
+void Editor::askReplace(int slot, const juce::File& file, const juce::MemoryBlock& askedState)
+{
+    pending_[slot].active = true;
+    pending_[slot].state = askedState;
+    juce::Component::SafePointer<Editor> safe(this);
+    auto answer = [safe, slot, file](bool ok) {
+        if (safe == nullptr || !safe->pending_[slot].active)
+            return;
+        const juce::MemoryBlock asked = safe->pending_[slot].state;
+        safe->pending_[slot] = {};
+        if (ok)
+            safe->handleFile(slot, file, &asked); // re-validates file and slot before replacing
+    };
+    if (confirmReplace)
+    {
+        confirmReplace(slot, std::move(answer));
+        return;
+    }
+    auto options = juce::MessageBoxOptions::makeOptionsOkCancel(juce::MessageBoxIconType::WarningIcon,
+                                                                replaceConfirmTitle(slot), replaceConfirmMessage(),
+                                                                "Ersetzen", "Abbrechen", this);
+    juce::AlertWindow::showAsync(options, [answer](int result) { answer(result == 1); });
 }
 
 void Editor::replace(int slot, const juce::File& file)
