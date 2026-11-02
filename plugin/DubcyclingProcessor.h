@@ -69,8 +69,11 @@ public:
     void setSessionDir(const juce::File& dir) { sessionDir_ = dir; }
     // Last tempo the host reported in processBlock; 0 = none yet. Any thread.
     double hostBpm() const { return hostBpm_.load(std::memory_order_relaxed); }
-    // Test seam: blocks until pending loads are decoded and takes their results. Message thread.
+#ifdef DC_TEST_HOOKS
+    // Test hook (only compiled into dc_plugin_tests, which defines DC_TEST_HOOKS): blocks until
+    // pending loads are decoded and takes their results. Message thread.
     void waitForLoads() { loader_.waitForAll(); timerCallback(); }
+#endif
 
 
     // Publishes a new model to the audio thread (lock-free handoff inside Engine::setModel).

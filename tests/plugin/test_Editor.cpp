@@ -516,3 +516,45 @@ TEST_CASE("Editor: a replace that fails to decode keeps the slot and shows a not
     CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
     CHECK(f.editor->statusText(0) == "Nicht geladen: broken.wav (unsupported or damaged file)");
 }
+
+TEST_CASE("Editor: Vorschlag is only enabled for a Loaded slot", "[editor][suggest][hardening]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, clickWav(f.dir, "clicks.wav"), 2);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    REQUIRE(f.editor->suggestButton(0).isEnabled());
+
+    // Loading: a staged replace, the old loop's data is still there
+    REQUIRE(f.proc.replaceLoop(0, clickWav(f.dir, "clicks2.wav", 2), 2));
+    f.editor->refresh();
+    REQUIRE(f.proc.getSlotStatus(0) == Status::Loading);
+    CHECK(f.editor->lane(0).hasData());
+    CHECK_FALSE(f.editor->suggestButton(0).isEnabled());
+    auto before = serialize(f.proc.getPluginState());
+    f.editor->suggestRegions(0);
+    CHECK(serialize(f.proc.getPluginState()) == before);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    CHECK(f.editor->suggestButton(0).isEnabled());
+
+    // Failed and Missing
+    PluginState s;
+    s.loop1.path = f.broken("damaged.wav").getFullPathName();
+    s.loop1.fileName = "damaged.wav";
+    s.loop2.path = f.dir.getChildFile("gone.wav").getFullPathName();
+    s.loop2.fileName = "gone.wav";
+    const auto block = serialize(s);
+    f.proc.setStateInformation(block.getData(), static_cast<int>(block.getSize()));
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    REQUIRE(f.proc.getSlotStatus(0) == Status::Failed);
+    REQUIRE(f.proc.getSlotStatus(1) == Status::Missing);
+    CHECK_FALSE(f.editor->suggestButton(0).isEnabled());
+    CHECK_FALSE(f.editor->suggestButton(1).isEnabled());
+    before = serialize(f.proc.getPluginState());
+    f.editor->suggestRegions(0);
+    f.editor->suggestRegions(1);
+    CHECK(serialize(f.proc.getPluginState()) == before);
+    CHECK(f.asked == 0);
+}

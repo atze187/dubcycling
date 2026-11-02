@@ -73,8 +73,8 @@ public:
 
     // "Vorschlag": replaces the slot's boundaries with suggestBoundaries(data, kSuggestMaxBoundaries),
     // committed with one applyEdit. Rules are kept (entries for regions that no longer exist show
-    // up as stale in the rule panel). No-op without loaded data, with no transients found, or while
-    // a confirmation for the slot is open. When the slot already has boundaries the user is asked
+    // up as stale in the rule panel). No-op unless the slot is Loaded (the button is enabled only
+    // then), with no transients found, or while a confirmation for the slot is open. When the slot already has boundaries the user is asked
     // first (same hook as below); the answer only counts if the slot is unchanged since the question.
     void suggestRegions(int slot);
     juce::TextButton& suggestButton(int slot) { return suggest_[slot == 0 ? 0 : 1]; }

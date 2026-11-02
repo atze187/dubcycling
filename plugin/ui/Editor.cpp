@@ -156,7 +156,7 @@ void Editor::refresh()
         RegionMap regions;
         regions.boundaries = ref.boundaries;
         lanes_[i].setRegions(regions);
-        suggest_[i].setEnabled(lanes_[i].hasData());
+        suggest_[i].setEnabled(status == DubcyclingProcessor::SlotStatus::Loaded && lanes_[i].hasData());
         bars_[i].setValue(static_cast<double>(ref.bars), juce::dontSendNotification);
 
         // A staged replace that failed to decode: the slot is unchanged, say so once.
@@ -277,8 +277,8 @@ juce::String suggestConfirmMessage()
 void Editor::suggestRegions(int slot)
 {
     slot = slot == 0 ? 0 : 1;
-    if (pending_[slot].active)
-        return;
+    if (pending_[slot].active || proc_.getSlotStatus(slot) != DubcyclingProcessor::SlotStatus::Loaded)
+        return; // e.g. a staged replace: the data shown is about to go away
     const auto model = proc_.getModel();
     const auto data = model == nullptr ? nullptr : (slot == 0 ? model->loop1.data : model->loop2.data);
     if (data == nullptr || data->frames() == 0)
