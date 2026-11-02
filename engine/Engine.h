@@ -100,8 +100,9 @@ private:
     };
     static SwapKey keyOf(const Runtime* rt);
 
-    // A Loop-2 region player: plays [lo, hi) of loop 2 with its own grain stretch, cycling inside
-    // the region (Gate repeats seamlessly) and a linear gain ramp of kCancelFadeMs for start/stop.
+    // A Loop-2 region player: plays [lo, hi) of loop 2 with its own grain stretch (Gate grains cycle
+    // inside the region so it repeats seamlessly; One-Shot grains read the whole loop so an overshoot
+    // past hi plays the continuation) and a linear gain ramp of kCancelFadeMs for start/stop.
     // voice_ is the one logical Loop-2 voice; tail_ only carries the fade-out of the voice a new
     // draw cancelled, so the new region starts on the exact entry frame (crossfade, no allocation).
     struct Voice

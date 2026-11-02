@@ -337,6 +337,42 @@ TEST_CASE("Engine one-shot plays once and then is silent", "[Engine]")
     REQUIRE(allZero(o.r, 24000, kBar));
 }
 
+TEST_CASE("Engine one-shot below loop tempo never reads its region start at the end", "[Engine]")
+{
+    // Loop 2 is 120 bpm, the host plays 84 bpm: the region advances at 0.7 source frames per output
+    // frame while the grains read at pitch rate 1.0, so the last grain overshoots the region end.
+    // Region 0 = [0, 24000): its start [0, 6000) is 0.5, the rest 0.1; the continuation is 0.3.
+    dc::Engine e;
+    prepared(e);
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.75 });
+    m->loop2.data = makeData(kBar, [](int i) { return i < 6000 ? 0.5f : (i < 24000 ? 0.1f : 0.3f); });
+    m->loop2.regions = regions({ 0.25, 0.5, 0.75 });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::OneShot } });
+    e.setModel(m);
+    constexpr double hostBpm = 84.0;
+    constexpr double adv = 0.7;
+    auto o = run(e, 0.0, 40000, 512, hostBpm);
+    // The end fade begins when the region has fewer than kFade output frames left.
+    const auto fadeStart = static_cast<size_t>((24000.0 - kFade * adv) / adv);
+    const size_t from = fadeStart - 960; // last 20 ms before the end fade
+    float hi = 0.0f, lo = 1.0f;
+    double sq = 0.0, sqRef = 0.0;
+    for (size_t i = from; i < fadeStart; ++i)
+    {
+        hi = std::max(hi, o.l[i]);
+        lo = std::min(lo, o.l[i]);
+        sq += static_cast<double>(o.l[i]) * o.l[i];
+        sqRef += 0.3 * 0.3; // reference: the loudest material a correct read can reach (continuation)
+    }
+    REQUIRE(lo > 0.05f);      // still playing at full gain
+    REQUIRE(hi < 0.3f + kTol); // nothing of the 0.5 start
+    REQUIRE(sq <= sqRef + 1e-6);
+    // And the one-shot still ends at its own region end.
+    const auto end = static_cast<size_t>(24000.0 / adv) + 2;
+    REQUIRE(allZero(o.l, end, o.l.size()));
+}
+
 TEST_CASE("Engine back-to-back draws crossfade on the Loop-1 grid", "[Engine]")
 {
     dc::Engine e;

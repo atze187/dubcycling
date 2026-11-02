@@ -204,8 +204,20 @@ void Engine::requestStop()
 
 bool Engine::stepVoice(Voice& v, const StereoData& d, GrainFrame gf, double adv, float& outL, float& outR) const
 {
-    gf.lo = v.lo;
-    gf.hi = v.hi;
+    // Gate: grains wrap inside the region (it repeats). One-Shot: grains read the whole loop, so a
+    // grain overshooting the region end (host tempo below loop tempo: the region position advances
+    // slower than the grains read) plays the real continuation, not the region start. The voice
+    // still ends at its own region end (elapsed vs. hi - lo below).
+    if (v.mode == PlayMode::Gate)
+    {
+        gf.lo = v.lo;
+        gf.hi = v.hi;
+    }
+    else
+    {
+        gf.lo = 0.0;
+        gf.hi = static_cast<double>(framesOf(&d));
+    }
     const double src = v.lo + v.elapsed;
     const float yl = v.gl.process(d.left, src, grainLen_, gf);
     const float yr = v.gr.process(d.right, src, grainLen_, gf);
@@ -318,7 +330,7 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     const double srcRate2 = d2 != nullptr && std::isfinite(d2->sampleRate) && d2->sampleRate > 0.0 ? d2->sampleRate : outRate_;
     gf.step = srcRate2 / outRate_; // pitch from the sample rates only; tempo is in adv2
     gf.dir = 1.0;
-    gf.cycle = true; // grains wrap inside the region: Gate repeats seamlessly
+    gf.cycle = true; // grains wrap (Gate: inside the region; One-Shot: inside the loop, see stepVoice)
 
     bool entry = !running_ || std::abs(t.ppq - expectedPpq_) > kJumpToleranceBeats;
     if (entry)
