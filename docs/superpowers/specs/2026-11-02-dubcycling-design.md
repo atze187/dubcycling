@@ -83,7 +83,7 @@ Der ursprüngliche Wunsch nannte außerdem Effekt-Slots auf einzelnen Regionen o
 
 ## Speichern und Laden
 
-- Der Zustand liegt im Plugin-State der DAW-Session (bei Ableton in der Session-Datei).
+- Der Zustand liegt im Plugin-State der DAW-Session (die DAW legt ihn in der Projektdatei ab).
 - Die Loops werden dort nur als Referenz gespeichert: Dateipfad, Dateiname und Prüfsumme.
 - Regionen, Regeln und Effekt-Einstellungen sind im Plugin-State und gehen nicht verloren, wenn eine Audiodatei fehlt.
 - Ist ein Pfad ungültig, sucht das Plugin den Loop selbst (zum Beispiel im Ordner der Session oder per Dateiname und Prüfsumme). Findet es ihn nicht, meldet es „Datei fehlt“, und der Nutzer ordnet neu zu.
@@ -131,7 +131,7 @@ Alle Punkte hier sind eine **[Annahme]** und ergänzen die Regeln oben:
 - Loop 2 hat höchstens eine Stimme. Eine neue Ziehung bricht die laufende Loop-2-Region ab, auch einen noch laufenden One-Shot, und spielt die neu gezogene Region. Das ist eine Entscheidung von atze187. Der Abbruch geschieht mit einem kurzen Fade (Annahme des Autors, gegen Knackser).
 - Springt oder loopt der Host-Transport, wird die Position von Loop 1 neu berechnet und Loop 2 beendet.
 - Ohne laufenden Transport ist das Plugin stumm.
-- Primäres Ziel-Host ist Ableton Live; andere DAWs werden nicht ausgeschlossen, aber nicht gezielt getestet.
+- Es ist kein bestimmter Host als Ziel festgelegt. Welche DAWs zum Testen herangezogen werden, entscheidet der Builder.
 
 ## Umfang der ersten Version (Annahme des Autors)
 
