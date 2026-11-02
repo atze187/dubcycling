@@ -2,7 +2,8 @@ add_library(dc_engine STATIC
     Version.h Version.cpp
     LoopTiming.h LoopTiming.cpp
     SampleInterp.h GrainStretch.h GrainStretch.cpp
-    LoopReader.h LoopReader.cpp)
+    LoopReader.h LoopReader.cpp
+    RegionMap.h RegionMap.cpp)
 target_include_directories(dc_engine PUBLIC ${PROJECT_SOURCE_DIR})
 target_compile_features(dc_engine PUBLIC cxx_std_20)
 if(MSVC)
