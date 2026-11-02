@@ -45,7 +45,12 @@ void Engine::setModel(std::shared_ptr<const Model> model)
     // Same Loop-1 data as the latest published model: share its reader, so a seamless swap keeps
     // the grain state. prev is owned_ and published, so its data is alive (no address reuse).
     const Runtime* prev = next_.load();
-    if (prev != nullptr && prev->model && rt->model && prev->model->loop1.data == rt->model->loop1.data)
+    const bool comparable = prev != nullptr && prev->model && rt->model;
+    const bool same1 = comparable && prev->model->loop1.data == rt->model->loop1.data;
+    const bool same2 = comparable && prev->model->loop2.data == rt->model->loop2.data;
+    rt->data1Id = same1 ? prev->data1Id : nextDataId_++;
+    rt->data2Id = same2 ? prev->data2Id : nextDataId_++;
+    if (same1)
         rt->reader1 = prev->reader1;
     else
     {
@@ -81,8 +86,8 @@ Engine::SwapKey Engine::keyOf(const Runtime* rt)
         return k;
     const Model& m = *rt->model;
     k.valid = true;
-    k.data1 = m.loop1.data.get();
-    k.data2 = m.loop2.data.get();
+    k.data1Id = rt->data1Id;
+    k.data2Id = rt->data2Id;
     k.bars1 = m.loop1.bars;
     k.bars2 = m.loop2.bars;
     return k;
@@ -252,8 +257,9 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     if (n <= 0 || l == nullptr || r == nullptr)
         return;
 
-    // Key of the Runtime in use, read while it is still protected (inUse_ == current_). The data it
-    // points to stays alive until inUse_ moves on, so a new model's data can never reuse its address.
+    // Key of the Runtime in use, read while it is still protected (inUse_ == current_). It holds ids,
+    // not data pointers: once the loop below moves inUse_ on, current_'s data may be freed and its
+    // address reused by a new model.
     const SwapKey was = keyOf(current_);
 
     // Take the latest Runtime (hazard pointer: announce, then confirm it is still published).
@@ -270,8 +276,8 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     {
         current_ = rt;
         const SwapKey now = keyOf(rt);
-        const bool loop1Same = was.valid && now.valid && was.data1 == now.data1 && was.bars1 == now.bars1;
-        const bool loop2Same = was.valid && now.valid && was.data2 == now.data2 && was.bars2 == now.bars2;
+        const bool loop1Same = was.valid && now.valid && was.data1Id == now.data1Id && was.bars1 == now.bars1;
+        const bool loop2Same = was.valid && now.valid && was.data2Id == now.data2Id && was.bars2 == now.bars2;
         if (running_ && loop1Same && loop2Same)
             swapPending_ = true; // seamless: adopted below once the block's timing is known
         else

@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <type_traits>
 #include <vector>
 #include "engine/Sequencer.h"
 
@@ -131,4 +132,28 @@ TEST_CASE("Sequencer reset idles and default random works", "[Sequencer]")
     REQUIRE_FALSE(s.active());
     REQUIRE_FALSE(s.shouldGateStop(9));
     REQUIRE(dc::kCancelFadeMs == 5);
+}
+
+TEST_CASE("Sequencer clamps a random value of exactly 1 below 1 before drawing", "[Sequencer][hardening]")
+{
+    dc::RuleSet rs;
+    rs.setTargets(0, { T(4, 1.0f) });
+    dc::Sequencer s;
+    s.setRandom([] { return 1.0f; }); // uniform_real_distribution<float> can return exactly 1.0f
+    const auto c = s.onRegion1(0, rs);
+    CHECK(c.type == Type::Start);
+    CHECK(c.region2 == 4);
+}
+
+TEST_CASE("Sequencer is not copyable or movable (audio-thread state, own RNG)", "[Sequencer][hardening]")
+{
+    CHECK_FALSE(std::is_copy_constructible_v<dc::Sequencer>);
+    CHECK_FALSE(std::is_copy_assignable_v<dc::Sequencer>);
+    CHECK_FALSE(std::is_move_constructible_v<dc::Sequencer>);
+    CHECK_FALSE(std::is_move_assignable_v<dc::Sequencer>);
+    dc::RuleSet rs;
+    rs.setTargets(0, { T(1, 1.0f) });
+    dc::Sequencer s; // default RNG
+    for (int i = 0; i < 100; ++i)
+        CHECK(s.onRegion1(0, rs).type == Type::Start);
 }

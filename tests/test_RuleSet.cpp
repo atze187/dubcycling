@@ -3,6 +3,7 @@
 #include <cmath>
 #include <limits>
 #include <random>
+#include <vector>
 #include "engine/RuleSet.h"
 
 using Catch::Approx;
@@ -98,4 +99,31 @@ TEST_CASE("RuleSet statistical: 10000 draws with 0.7/0.2 are within 3 percent", 
     REQUIRE(std::abs(c1 / double(n) - 0.7) < 0.03);
     REQUIRE(std::abs(c2 / double(n) - 0.2) < 0.03);
     REQUIRE(std::abs(none / double(n) - 0.1) < 0.03);
+}
+
+TEST_CASE("RuleSet weights summing to 1 never leave a sliver of silence near u=1", "[RuleSet][hardening]")
+{
+    const float justBelowOne = std::nextafter(1.0f, 0.0f);
+    dc::RuleSet tenths;
+    std::vector<dc::RuleTarget> ten;
+    for (int i = 0; i < 10; ++i)
+        ten.push_back(T(i, 0.1f));
+    tenths.setTargets(0, ten);
+    auto t = tenths.draw(0, justBelowOne);
+    REQUIRE(t.has_value());
+    CHECK(t->region2 == 9);
+
+    dc::RuleSet rs; // float sum just under 1 (within 1e-6): the last non-zero target absorbs the rest
+    rs.setTargets(0, { T(1, 0.5f), T(2, 0.4999999f), T(3, 0.0f) });
+    auto a = rs.draw(0, justBelowOne);
+    REQUIRE(a.has_value());
+    CHECK(a->region2 == 2);
+    auto b = rs.draw(0, 0.9999995f);
+    REQUIRE(b.has_value());
+    CHECK(b->region2 == 2);
+
+    dc::RuleSet partial; // a real remainder stays silent
+    partial.setTargets(0, { T(1, 0.5f), T(2, 0.4999f) });
+    CHECK_FALSE(partial.draw(0, justBelowOne).has_value());
+    CHECK_FALSE(partial.draw(0, 0.99995f).has_value());
 }

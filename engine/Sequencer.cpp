@@ -1,12 +1,10 @@
 #include "engine/Sequencer.h"
-
 namespace dc {
 
 Sequencer::Sequencer()
 {
     std::random_device rd;
     rng.seed(rd());
-    random = [this] { return std::uniform_real_distribution<float>(0.0f, 1.0f)(rng); };
 }
 
 void Sequencer::setRandom(std::function<float()> uniform01)
@@ -15,12 +13,20 @@ void Sequencer::setRandom(std::function<float()> uniform01)
         random = std::move(uniform01);
 }
 
+float Sequencer::nextUniform()
+{
+    const float u = random ? random() : dist(rng);
+    // uniform_real_distribution<float> may return exactly 1.0f (rounding); draw() wants [0,1).
+    constexpr float kBelowOne = 0x1.fffffep-1f; // std::nextafter(1.0f, 0.0f), as a constant (no static init)
+    return u >= 1.0f ? kBelowOne : u; // NaN and negatives pass through (draw() treats them as silence)
+}
+
 Sequencer::Command Sequencer::onRegion1(int region1, const RuleSet& rules)
 {
     Command c;
     if (rules.targets(region1).empty())
         return c; // no rule: not a draw (a running one-shot plays on; Gate ends via shouldGateStop)
-    const auto target = rules.draw(region1, random());
+    const auto target = rules.draw(region1, nextUniform());
     if (!target)
     {
         reset();

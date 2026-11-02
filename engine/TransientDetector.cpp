@@ -64,13 +64,15 @@ std::vector<double> suggestBoundaries(const StereoData& data, int maxBoundaries)
     std::vector<double> logE(energy.size());
     for (size_t k = 0; k < energy.size(); ++k)
         logE[k] = std::log(energy[k] + eps);
-    const double logFloor = std::log(eps);
 
-    // Rise against the disjoint window just before (3 hops back).
+    // Rise against the disjoint window just before (3 hops back). The first kWindowHops frames have
+    // no such window; comparing them with the log floor would give a huge strength to whatever
+    // sound starts the loop and inflate the local mean for the next kLocalSeconds, so they get 0
+    // (they lie in the edge zone anyway).
     std::vector<double> onset(energy.size(), 0.0);
-    for (long long k = 0; k < frames; ++k)
+    for (long long k = kWindowHops; k < frames; ++k)
     {
-        const double prev = k >= kWindowHops ? logE[static_cast<size_t>(k - kWindowHops)] : logFloor;
+        const double prev = logE[static_cast<size_t>(k - kWindowHops)];
         onset[static_cast<size_t>(k)] = std::max(0.0, logE[static_cast<size_t>(k)] - prev);
     }
     std::vector<double> onsetCum(onset.size() + 1, 0.0);
@@ -78,7 +80,7 @@ std::vector<double> suggestBoundaries(const StereoData& data, int maxBoundaries)
         onsetCum[k + 1] = onsetCum[k] + onset[k];
 
     const long long radius = std::max(1LL, std::llround(kLocalSeconds / kHopSeconds));
-    const long long lo = std::llround(kEdge * static_cast<double>(n));
+    const long long lo = std::max(1LL, std::llround(kEdge * static_cast<double>(n))); // never 0 (tiny n)
     const long long hi = static_cast<long long>(n) - lo;
 
     std::vector<Candidate> cands;

@@ -6,6 +6,7 @@ namespace dc {
 
 namespace {
 constexpr int kMaxRegions = 4096;
+constexpr double kFullSumTolerance = 1e-6; // a weight sum at least 1 - this counts as 100 %
 const std::vector<RuleTarget> kNone;
 }
 
@@ -43,13 +44,20 @@ std::optional<RuleTarget> RuleSet::draw(int region1, float u) const
 {
     if (!(u >= 0.0f && u < 1.0f)) // also catches NaN
         return std::nullopt;
+    const auto& ts = targets(region1);
     double cum = 0.0;
-    for (const auto& t : targets(region1))
+    for (const auto& t : ts)
     {
         cum += t.weight;
         if (static_cast<double>(u) < cum)
             return t;
     }
+    // Weights that sum to 1 up to float rounding: no sliver of silence near u -> 1, the last
+    // non-zero target takes the remainder.
+    if (cum >= 1.0 - kFullSumTolerance)
+        for (auto it = ts.rbegin(); it != ts.rend(); ++it)
+            if (it->weight > 0.0f)
+                return *it;
     return std::nullopt;
 }
 

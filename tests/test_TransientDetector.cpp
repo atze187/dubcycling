@@ -217,3 +217,42 @@ TEST_CASE("suggestBoundaries is deterministic", "[TransientDetector]")
     CHECK(a == b);
     CHECK_FALSE(a.empty());
 }
+
+TEST_CASE("a loud hit at sample 0 does not hide a hat 120 ms later", "[TransientDetector][hardening]")
+{
+    const size_t n = 44100; // 1 s
+    auto d = silence(n);
+    Noise nz;
+    addHit(d, 0, 0.05, 0.9f, nz);
+    const size_t hat = static_cast<size_t>(0.120 * kSr);
+    Noise hz;
+    hz.s = 99;
+    for (size_t i = 0; i < 130; ++i)
+    {
+        const float v = 0.2f * hz.next();
+        d.left[hat + i] += v;
+        d.right[hat + i] += v;
+    }
+    const auto b = suggestBoundaries(d, 15);
+    checkValid(b);
+    REQUIRE(b.size() == 1);
+    // The attack search may start up to one window (6 ms) early on the loud tail of the kick.
+    CHECK(std::fabs(b[0] * static_cast<double>(n) - static_cast<double>(hat)) / kSr < 0.008);
+}
+
+TEST_CASE("tiny inputs at a low sample rate never suggest a boundary at 0", "[TransientDetector][hardening]")
+{
+    StereoData d;
+    d.sampleRate = 1000.0; // hop 2 samples, window 6
+    d.left.assign(40, 0.0f);
+    d.left[0] = 0.2f;
+    for (size_t i = 6; i < 12; ++i)
+        d.left[i] = 1.0f;
+    d.right = d.left;
+    const auto b = suggestBoundaries(d, 15);
+    for (double x : b)
+    {
+        CHECK(x > 0.0);
+        CHECK(x < 1.0);
+    }
+}

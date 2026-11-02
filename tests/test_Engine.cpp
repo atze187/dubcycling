@@ -765,3 +765,61 @@ TEST_CASE("FxSlot default is a no-op", "[Engine]")
     REQUIRE(l[0] == 0.5f);
     REQUIRE(r[1] == -0.25f);
 }
+
+namespace {
+// Renders in 512-frame blocks from ppq 0; right before the block at `swapAt` publishes every model in
+// `next` in order (the audio thread only ever sees the last one).
+Out runMultiSwap(dc::Engine& e, int frames, int swapAt, const std::vector<std::shared_ptr<const dc::Model>>& next)
+{
+    Out o;
+    o.l.assign(static_cast<size_t>(frames), 7.0f);
+    o.r.assign(static_cast<size_t>(frames), 7.0f);
+    double ppq = 0.0;
+    for (int pos = 0; pos < frames; pos += 512)
+    {
+        if (pos == swapAt)
+            for (const auto& m : next)
+                e.setModel(m);
+        const int n = std::min(512, frames - pos);
+        dc::TransportInfo t { true, ppq, kBpm, 4, 4 };
+        e.process(t, o.l.data() + pos, o.r.data() + pos, n);
+        ppq += n * kBpm / (60.0 * kRate);
+    }
+    return o;
+}
+} // namespace
+
+TEST_CASE("Engine compares data ids, not addresses: an equal pointer with another identity resets", "[Engine][swap][hardening]")
+{
+    // The audio thread cannot tell a re-published buffer from a new buffer that the allocator put at
+    // a freed address (ABA). Publishing other data in between gives the same pointer a new id, which
+    // simulates exactly that case: it must be a hard restart.
+    auto m = baseModel();
+    m->loop2.data = regionData(kBar, { 0.5f });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    auto other = std::make_shared<dc::Model>(*m);
+    other->loop2.data = regionData(kBar, { 0.5f });
+    auto again = std::make_shared<dc::Model>(*m); // same data pointer as m
+
+    int draws = 0;
+    dc::Engine e;
+    prepared(e);
+    e.setRandom(counting(draws));
+    e.setModel(m);
+    const Out b = runMultiSwap(e, kSwapAt + 4096, kSwapAt, { other, again });
+    CHECK(draws == 2);           // fresh entry draw after the reset
+    CHECK(b.l[kSwapAt - 1] > 0.4f);
+    CHECK(b.l[kSwapAt] == 0.0f); // hard cut, fade-in from 0
+
+    // Same data all along (same id): seamless, no new draw, no cut.
+    auto m2 = std::make_shared<dc::Model>(*m);
+    auto m3 = std::make_shared<dc::Model>(*m);
+    int draws2 = 0;
+    dc::Engine e2;
+    prepared(e2);
+    e2.setRandom(counting(draws2));
+    e2.setModel(m);
+    const Out c = runMultiSwap(e2, kSwapAt + 4096, kSwapAt, { m2, m3 });
+    CHECK(draws2 == 1);
+    CHECK(c.l[kSwapAt] > 0.4f);
+}

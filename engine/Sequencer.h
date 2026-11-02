@@ -9,6 +9,8 @@ namespace dc {
 constexpr int kCancelFadeMs = 5;
 
 // State machine for the single Loop-2 voice. Holds state only; the Engine renders audio.
+// Audio thread only (onRegion1/shouldGateStop/onVoiceEnded/reset/retargetGate do not allocate or
+// lock); setRandom only while the audio thread is not using it. Not copyable or movable.
 class Sequencer
 {
 public:
@@ -20,8 +22,13 @@ public:
     };
 
     Sequencer();
+    Sequencer(const Sequencer&) = delete;
+    Sequencer& operator=(const Sequencer&) = delete;
+    Sequencer(Sequencer&&) = delete;
+    Sequencer& operator=(Sequencer&&) = delete;
 
-    // Replaces the random source (returns uniform values in [0,1)). Default: std::mt19937.
+    // Replaces the random source (returns uniform values in [0,1)). Default (or an empty function):
+    // the member std::mt19937. A value of 1 or more is clamped just below 1 before drawing.
     void setRandom(std::function<float()> uniform01);
 
     // Call on every Loop-1 region entry (also wrap / transport jump); draws anew.
@@ -33,7 +40,9 @@ public:
     // Gate mode only: true when the voice runs in Gate mode and Loop 1 left the triggering region.
     bool shouldGateStop(int region1Now) const;
 
-    // The Engine reports that the voice ended by itself (one-shot finished) or was stopped.
+    // The Engine reports that the voice ended by itself (one-shot finished) or was stopped. After a
+    // Gate stop (shouldGateStop true, or a Stop the Engine issued itself) the Engine must call
+    // onVoiceEnded() or reset(), otherwise shouldGateStop stays true.
     void onVoiceEnded();
     void reset(); // transport stop
     bool active() const { return isActive; }
@@ -49,8 +58,11 @@ public:
     }
 
 private:
-    std::function<float()> random;
+    float nextUniform(); // override or member RNG, clamped below 1
+
+    std::function<float()> random; // empty = member RNG
     std::mt19937 rng;
+    std::uniform_real_distribution<float> dist { 0.0f, 1.0f };
     bool isActive = false;
     int activeRegion2 = -1;
     PlayMode activeMode = PlayMode::Gate;

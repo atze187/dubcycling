@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -47,7 +48,9 @@ struct Model
 // (edits while playing): Loop 1 and the running Loop-2 voice continue sample-continuously, the
 // swap is not a region entry, new rules apply from the next entry. A Gate voice keeps running if
 // the Loop-1 region at the play position still has its trigger region's start or end edge;
-// a voice whose Loop-2 region index no longer exists fades out like a Stop. Any other model change
+// a voice whose Loop-2 region index no longer exists fades out like a Stop. "Same data" means the
+// same data id (see Runtime): a buffer re-published after other data was published in between counts
+// as new. Any other model change
 // is a hard restart of Loop 2 and the Sequencer (the next frame is a fresh entry draw); Loop 1
 // restarts too unless its data pointer and bars are unchanged.
 class Engine
@@ -77,18 +80,22 @@ private:
     // Loop-1 data pointer is the same, so the audio thread keeps rendering the same reader object
     // (grain state intact) across a swap. The shared_ptr's count only changes on the message thread
     // (Runtimes are created and freed there); the audio thread uses the raw pointer.
+    // data1Id/data2Id identify the loop data buffers: setModel keeps the previous Runtime's id when
+    // the data pointer is the same as in the latest published Runtime (which is alive, so that
+    // comparison is safe), else it assigns a new one. The audio thread compares ids, never pointers
+    // of data that may have been freed meanwhile (an address can be reused: ABA).
     struct Runtime
     {
         std::shared_ptr<const Model> model;
         std::shared_ptr<LoopReader> reader1;
+        std::uint64_t data1Id = 0, data2Id = 0;
     };
 
-    // What decides whether a swap can be seamless (raw pointers only compared, never dereferenced).
+    // What decides whether a swap can be seamless.
     struct SwapKey
     {
         bool valid = false; // a model is present
-        const StereoData* data1 = nullptr;
-        const StereoData* data2 = nullptr;
+        std::uint64_t data1Id = 0, data2Id = 0;
         int bars1 = 0, bars2 = 0;
     };
     static SwapKey keyOf(const Runtime* rt);
@@ -130,6 +137,7 @@ private:
     double sampleRate_ = 44100.0;
     int maxBlock_ = 0;
     std::vector<std::unique_ptr<Runtime>> owned_;
+    std::uint64_t nextDataId_ = 1;
 
     // Handoff (plain atomic pointers, lock-free): next_ is the latest published Runtime; inUse_ is
     // the one the audio thread is using (hazard pointer, set and re-validated at block start).

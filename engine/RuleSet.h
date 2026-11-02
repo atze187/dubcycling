@@ -25,6 +25,8 @@ public:
     const std::vector<RuleTarget>& targets(int region1) const;
 
     // u in [0,1): walks the cumulative weights; beyond the sum (silence), or u invalid, gives nullopt.
+    // If the weights sum to at least 1 - 1e-6 there is no silence: the last non-zero target takes
+    // the rounding remainder.
     std::optional<RuleTarget> draw(int region1, float u) const;
 
 private:
