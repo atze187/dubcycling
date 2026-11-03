@@ -174,6 +174,28 @@ void LoopLane::endLabelEdit(bool commit)
     onLabelEdited(region, text);
 }
 
+void LoopLane::setActiveRegion(int region)
+{
+    const int r = region >= 0 && region < regions_.regionCount() ? region : -1;
+    if (r == activeRegion_)
+        return;
+    activeRegion_ = r;
+    repaint();
+}
+
+void LoopLane::setTeaser(int what, double progress)
+{
+    if (!std::isfinite(progress))
+        progress = 0.0;
+    progress = std::clamp(progress, 0.0, 1.0);
+    const int w = what >= 0 && what < regions_.regionCount() ? what : (what == kSilence ? kSilence : kNone);
+    if (w == teaser_ && std::abs(progress - teaserProgress_) < 0.01)
+        return;
+    teaser_ = w;
+    teaserProgress_ = w == kNone ? 0.0 : progress;
+    repaint();
+}
+
 void LoopLane::setPlayhead(double phase)
 {
     const double p = std::isfinite(phase) && phase >= 0.0 && phase <= 1.0 ? phase : -1.0;
@@ -360,6 +382,31 @@ void LoopLane::paint(juce::Graphics& g)
         {
             g.setColour(kSelected);
             g.fillRect(juce::Rectangle<float>(xFor(lo), 0.0f, xFor(hi) - xFor(lo), bounds.getHeight()));
+        }
+
+        // What plays now, and what is about to: the tint of the coming region builds up before it starts.
+        const auto tint = [&](int region, float alpha) {
+            const auto [from, to] = regions_.bounds(region);
+            g.setColour(panel::kGreen.withAlpha(alpha));
+            g.fillRect(juce::Rectangle<float>(xFor(from), 0.0f, xFor(to) - xFor(from), bounds.getHeight()));
+        };
+        if (activeRegion_ >= 0)
+            tint(activeRegion_, 0.20f);
+        const float teaserP = static_cast<float>(teaserProgress_);
+        if (teaser_ >= 0 && teaser_ != activeRegion_)
+        {
+            tint(teaser_, 0.20f * teaserP);
+            const auto [from, to] = regions_.bounds(teaser_);
+            g.setColour(panel::kGreen.withAlpha(0.35f + 0.65f * teaserP));
+            g.fillRect(xFor(from), bounds.getHeight() - 3.0f, (xFor(to) - xFor(from)) * teaserP, 3.0f);
+        }
+        else if (teaser_ == kSilence)
+        {
+            g.setColour(panel::kWindow.withAlpha(0.45f * teaserP));
+            g.fillRect(bounds);
+            g.setColour(kHint.withAlpha(teaserP));
+            g.setFont(panel::mono(10.0f));
+            g.drawText("STILLE", bounds.withTrimmedBottom(bounds.getHeight() * 0.5f), juce::Justification::centred);
         }
 
         const float mid = bounds.getCentreY();

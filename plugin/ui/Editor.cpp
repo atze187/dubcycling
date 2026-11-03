@@ -228,7 +228,7 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
     for (int i = 0; i < 2; ++i)
         seenFailure_[i] = proc_.replaceFailure(i).id; // only failures from now on are shown
     refresh();
-    startTimerHz(30);
+    startTimerHz(60);
 }
 
 Editor::~Editor()
@@ -322,6 +322,14 @@ void Editor::updatePlayheads()
     const auto head = proc_.playhead();
     lanes_[0].setPlayhead(head.phase1);
     lanes_[1].setPlayhead(head.phase2);
+    lanes_[1].setActiveRegion(head.region2);
+    // The draw for the next Loop-1 entry is already made: its Loop-2 region (or silence) builds up
+    // over the lookahead window and takes effect when the countdown ends.
+    if (head.teaser != Engine::kNoTeaser && head.teaserWindow > 0.0f)
+        lanes_[1].setTeaser(head.teaser == Engine::kTeaserSilence ? LoopLane::kSilence : head.teaser,
+                            1.0 - static_cast<double>(head.teaserEta) / static_cast<double>(head.teaserWindow));
+    else
+        lanes_[1].setTeaser(LoopLane::kNone, 0.0);
 }
 
 void Editor::regionsEdited(int slot, const RegionMap& regions)

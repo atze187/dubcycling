@@ -460,3 +460,26 @@ TEST_CASE("LoopLane: a click on a region auditions it, grabbing a boundary does 
     f.lane.release();
     CHECK(previews.size() == 2);
 }
+
+TEST_CASE("LoopLane: active region and teaser are clamped to what exists", "[LoopLane][teaser]")
+{
+    LaneFixture f;
+    f.lane.setRegions(regions({ 0.5 }));
+    f.lane.setActiveRegion(1);
+    CHECK(f.lane.activeRegion() == 1);
+    f.lane.setActiveRegion(2); // no such region
+    CHECK(f.lane.activeRegion() == -1);
+
+    f.lane.setTeaser(1, 0.4);
+    CHECK(f.lane.teaser() == 1);
+    CHECK(f.lane.teaserProgress() == 0.4);
+    f.lane.setTeaser(1, 7.0);
+    CHECK(f.lane.teaserProgress() == 1.0);
+    f.lane.setTeaser(1, std::numeric_limits<double>::quiet_NaN());
+    CHECK(f.lane.teaserProgress() == 0.0);
+    f.lane.setTeaser(LoopLane::kSilence, 0.5);
+    CHECK(f.lane.teaser() == LoopLane::kSilence);
+    f.lane.setTeaser(9, 0.5); // no such region
+    CHECK(f.lane.teaser() == LoopLane::kNone);
+    CHECK(f.lane.teaserProgress() == 0.0);
+}

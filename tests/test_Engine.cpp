@@ -1019,3 +1019,166 @@ TEST_CASE("Engine preview does not allocate", "[Engine][preview]")
     gCountAllocs = false;
     CHECK(gAllocCount.load() == 0);
 }
+
+// --- Early draw (teaser) and loop-wrap guard ---------------------------------------------------------
+
+namespace {
+std::function<float()> sequence(std::vector<float> values, int& calls)
+{
+    return [values = std::move(values), &calls] { return values[static_cast<size_t>(calls++) % values.size()]; };
+}
+
+// Loop 1 = two regions (boundary at half a bar), Loop 2 = four regions; both Loop-1 regions have rules.
+std::shared_ptr<dc::Model> teaserModel()
+{
+    auto m = baseModel();
+    m->loop1.data = regionData(kBar, { 0.05f, 0.06f });
+    m->loop1.regions = regions({ 0.5 });
+    m->loop2.data = regionData(kBar, { 0.1f, 0.2f, 0.3f, 0.4f });
+    m->loop2.regions = regions({ 0.25, 0.5, 0.75 });
+    m->rules.setTargets(0, { { 0, 0.5f, dc::PlayMode::Gate }, { 1, 0.3f, dc::PlayMode::OneShot } }); // 20 % silence
+    m->rules.setTargets(1, { { 2, 0.6f, dc::PlayMode::Gate }, { 3, 0.4f, dc::PlayMode::OneShot } });
+    return m;
+}
+
+constexpr double kStep = kBpm / (60.0 * kRate); // beats per frame
+} // namespace
+
+TEST_CASE("Sequencer: onRegion1 is draw then apply, and draw changes no state", "[Sequencer][teaser]")
+{
+    dc::RuleSet rules;
+    rules.setTargets(0, { { 1, 0.5f, dc::PlayMode::OneShot } });
+    dc::Sequencer s;
+    s.setRandom([] { return 0.25f; });
+    const auto d = s.draw(0, rules);
+    CHECK(d.type == dc::Sequencer::Draw::Type::Target);
+    CHECK(d.region2 == 1);
+    CHECK_FALSE(s.active()); // nothing happened yet
+    const auto c = s.apply(0, d);
+    CHECK(c.type == dc::Sequencer::Command::Type::Start);
+    CHECK(s.active());
+
+    s.setRandom([] { return 0.75f; }); // beyond the 50 % weight: silence
+    CHECK(s.draw(0, rules).type == dc::Sequencer::Draw::Type::Silence);
+    CHECK(s.draw(5, rules).type == dc::Sequencer::Draw::Type::None); // no rule: no draw, no RNG use
+}
+
+TEST_CASE("Engine early draw: same audio as drawing at the entry", "[Engine][teaser]")
+{
+    int callsOff = 0, callsOn = 0;
+    dc::Engine off, on;
+    prepared(off);
+    prepared(on);
+    off.setRandom(sequence({ 0.1f, 0.55f, 0.9f, 0.3f, 0.7f }, callsOff));
+    on.setRandom(sequence({ 0.1f, 0.55f, 0.9f, 0.3f, 0.7f }, callsOn));
+    on.setTeaserLookahead(0.15);
+    off.setModel(teaserModel());
+    on.setModel(teaserModel());
+    // Stop 10000 frames before the next entry, so no early draw is left pending at the end.
+    const int frames = 2 * kBar - 10000;
+    const auto a = run(off, 0.0, frames);
+    const auto b = run(on, 0.0, frames);
+    CHECK(a.l == b.l);
+    CHECK(a.r == b.r);
+    CHECK(callsOff == 4); // entries at frames 0, 48000, 96000 and 144000
+    CHECK(callsOn == callsOff); // one draw per entry either way
+}
+
+TEST_CASE("Engine teaser: the coming draw is visible inside the lookahead window", "[Engine][teaser]")
+{
+    dc::Engine e;
+    prepared(e);
+    e.setRandom([] { return 0.5f; }); // region 1's rule: target Loop-2 region 2
+    e.setTeaserLookahead(0.15);
+    e.setModel(teaserModel());
+
+    run(e, 0.0, 40000); // 0.167 s before the boundary at frame 48000: outside the window
+    CHECK(e.playhead().teaser == dc::Engine::kNoTeaser);
+    CHECK(e.playhead().teaserWindow == Catch::Approx(0.15f));
+
+    run(e, 40000 * kStep, 3200 + 100); // 0.1 s before the boundary
+    auto h = e.playhead();
+    REQUIRE(h.teaser == 2);
+    CHECK(h.teaserEta == Catch::Approx(0.1f).margin(0.015f));
+
+    run(e, 43300 * kStep, 6000); // across the boundary: applied
+    CHECK(e.playhead().teaser == dc::Engine::kNoTeaser);
+    CHECK(e.playhead().region2 == 2);
+}
+
+TEST_CASE("Engine teaser: a silence draw is shown as silence, a region without rule shows nothing", "[Engine][teaser]")
+{
+    dc::Engine e;
+    prepared(e);
+    e.setRandom([] { return 0.9f; }); // region 1's rule has no silence: 0.9 -> still its last target
+    e.setTeaserLookahead(0.15);
+    auto m = teaserModel();
+    m->rules.setTargets(1, { { 2, 0.5f, dc::PlayMode::Gate } }); // 50 % silence
+    e.setModel(m);
+    run(e, 0.0, 46000);
+    CHECK(e.playhead().teaser == dc::Engine::kTeaserSilence);
+
+    dc::Engine n;
+    prepared(n);
+    int calls = 0;
+    n.setRandom(sequence({ 0.5f }, calls));
+    n.setTeaserLookahead(0.15);
+    auto m2 = teaserModel();
+    m2->rules.setTargets(1, {}); // no rule for the coming region
+    n.setModel(m2);
+    run(n, 0.0, 46000);
+    CHECK(n.playhead().teaser == dc::Engine::kNoTeaser);
+    CHECK(calls == 1); // only region 0's entry at frame 0 drew
+}
+
+TEST_CASE("Engine teaser: a model edit discards the early draw and the new rules are drawn", "[Engine][teaser]")
+{
+    dc::Engine e;
+    prepared(e);
+    e.setRandom([] { return 0.5f; });
+    e.setTeaserLookahead(0.15);
+    const auto original = teaserModel();
+    e.setModel(original);
+    run(e, 0.0, 46000);
+    REQUIRE(e.playhead().teaser == 2);
+
+    auto edited = std::make_shared<dc::Model>(*original); // same data buffers: a seamless swap
+    edited->rules.setTargets(1, { { 3, 1.0f, dc::PlayMode::OneShot } });
+    e.setModel(edited);
+    run(e, 46000 * kStep, 512);
+    CHECK(e.playhead().teaser == 3);
+}
+
+TEST_CASE("Engine: a host that wraps without splitting the block does not draw twice", "[Engine][teaser]")
+{
+    auto m = baseModel();
+    m->loop1.data = regionData(kBar, { 0.05f });
+    m->loop2.data = regionData(kBar, { 0.1f, 0.2f });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+
+    int draws = 0;
+    dc::Engine e;
+    prepared(e);
+    e.setRandom(counting(draws));
+    e.setModel(m);
+    std::vector<float> l(512), r(512);
+    auto block = [&](double ppq) { e.process(dc::TransportInfo { true, ppq, kBpm, 4, 4 }, l.data(), r.data(), 512); };
+
+    double ppq = 0.0;
+    for (int i = 0; i < 187; ++i, ppq += 512 * kStep)
+        block(ppq); // up to frame 95744, 256 frames before the end of the bar
+    REQUIRE(draws == 1); // the entry at frame 0
+    block(ppq);         // runs over the cycle boundary: the entry draw of the next cycle
+    CHECK(draws == 2);
+    block(0.0); // the host's loop restart lands on the start of the same region
+    CHECK(draws == 2);
+
+    block(1.0); // a real jump into the middle of the loop draws
+    CHECK(draws == 3);
+    ppq = 1.0 + 512 * kStep;
+    for (int i = 0; i < 20; ++i, ppq += 512 * kStep)
+        block(ppq); // 0.2 s of normal playback
+    block(0.0);     // jump back to a region start, but long after the last entry: a real jump
+    CHECK(draws == 4);
+}

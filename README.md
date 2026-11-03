@@ -13,6 +13,8 @@ Status: edit view and audio engine implemented (stereo out, no input); not yet t
 - **Regions:** double-click in a lane adds a region boundary, double-click on a boundary removes it, drag a
   boundary to move it. Rules move with their regions when a boundary is added or removed (merging two regions
   keeps the left region's rule).
+- **Names, audition, playheads:** double-click a region's name (bottom left in the lane, or in the rule row of a Loop-2 region) to rename it (16 characters; empty = A, B, C). A click on a region plays it once (also with the host stopped; at the host's last tempo, mixed on top). A white line shows each loop's position; the Loop-2 region that sounds is tinted green.
+- **Teaser:** the draw for the next Loop-1 region is made 150 ms before it happens, and Loop 2 shows the result building up (the coming region fades in, "STILLE" dims the lane). What is shown is what plays, unless you edit or the transport jumps in between.
 - **"Vorschlag":** suggests boundaries at transients (meant for drum loops); replaces the lane's boundaries
   after a confirmation.
 - **Rules:** select a Loop-1 region (click) to edit its rule rows, one per Loop-2 region: the slider is the

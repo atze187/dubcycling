@@ -109,11 +109,11 @@ public:
     void resized() override;
 
 private:
-    // 30 Hz: playheads every tick, the full refresh (state, status, rules) every third.
+    // 60 Hz: playheads and teaser every tick, the full refresh (state, status, rules) every sixth.
     void timerCallback() override
     {
         updatePlayheads();
-        if (++tick_ % 3 == 0)
+        if (++tick_ % 6 == 0)
             refresh();
     }
     void updatePlayheads();

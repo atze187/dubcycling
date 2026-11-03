@@ -74,6 +74,8 @@ public:
     void setSessionDir(const juce::File& dir) { sessionDir_ = dir; }
     // Last tempo the host reported in processBlock; 0 = none yet. Any thread.
     double hostBpm() const { return hostBpm_.load(std::memory_order_relaxed); }
+    // How long before a Loop-1 region entry its draw is made and shown (see Engine::Playhead::teaser).
+    static constexpr double kTeaserLookaheadSec = 0.15;
     // Audition of one region (slot 0 = Loop 1, 1 = Loop 2), see Engine::requestPreview. Any thread.
     void previewRegion(int slot, int region) { engine_.requestPreview(slot, region); }
     // Loop positions at the end of the last block, for the editor's playheads. Any thread.

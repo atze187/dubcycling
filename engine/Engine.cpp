@@ -203,6 +203,8 @@ void Engine::resetPlayback(bool keepLoop1)
     lastLo1_ = lastHi1_ = 0.0;
     lastCycle1_ = 0;
     lastPpq_ = 0.0;
+    pending_.valid = false;
+    lastEntryFrame_ = -1;
     sequencer_.reset();
     for (Voice* v : { &voice_, &tail_ })
     {
@@ -366,10 +368,37 @@ bool Engine::stepVoice(Voice& v, const StereoData& d, GrainFrame gf, double adv,
     return false;
 }
 
+void Engine::planEarlyDraw(const Model& m, double ppq, double bpm, double beats1)
+{
+    const double lookBeats = teaserSec_.load(std::memory_order_relaxed) * bpm / 60.0;
+    if (!(lookBeats > 0.0))
+        return;
+    // The next entry is the end of the region under the position (or the loop wrap).
+    const double pos = ppq + kPpqEpsilon;
+    const long long cycle = static_cast<long long>(std::floor(pos / beats1));
+    const double ph = (pos - static_cast<double>(cycle) * beats1) / beats1;
+    const int region = m.loop1.regions.regionAt(ph);
+    const double hi = m.loop1.regions.bounds(region).second;
+    const bool wrap = !(hi < 1.0);
+    const long long nextCycle = wrap ? cycle + 1 : cycle;
+    const int nextRegion = wrap ? 0 : region + 1;
+    const double entryPpq = (static_cast<double>(cycle) + (wrap ? 1.0 : hi)) * beats1;
+    if (entryPpq - ppq > lookBeats)
+        return;
+    if (pending_.valid && pending_.rt == current_ && pending_.cycle == nextCycle && pending_.region == nextRegion)
+        return; // already drawn
+    const Sequencer::Draw d = sequencer_.draw(nextRegion, m.rules);
+    if (d.type == Sequencer::Draw::Type::None)
+        return; // no rule there: the entry is not a draw
+    pending_ = { true, current_, nextCycle, nextRegion, entryPpq, d };
+}
+
 void Engine::process(const TransportInfo& t, float* l, float* r, int n)
 {
     if (n <= 0 || l == nullptr || r == nullptr)
         return;
+    const long long blockStart = frameCounter_;
+    frameCounter_ += n;
 
     // Key of the Runtime in use, read while it is still protected (inUse_ == current_). It holds ids,
     // not data pointers: once the loop below moves inUse_ on, current_'s data may be freed and its
@@ -451,6 +480,17 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     const bool jumped = running_ && entry;
     running_ = true;
 
+    // An early draw is only good for continuous playback on the same model.
+    if (entry || (pending_.valid && pending_.rt != current_))
+        pending_.valid = false;
+    if (!entry)
+        planEarlyDraw(*m, t.ppq, t.bpm, beats1);
+    // A host that loops without splitting the block at the loop end reports the wrap twice: once as
+    // the extrapolated position crossing the cycle (an entry draw in the previous block) and once as
+    // the jump back at the start of this block. A jump that lands on the start of the region the last
+    // entry (shortly before) was for is that same entry, not a second draw.
+    const long long duplicateWindow = static_cast<long long>(0.1 * outRate_);
+
     double lastPhase1 = phase1;
     for (int i = 0; i < n; ++i)
     {
@@ -466,20 +506,36 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
         if (entry || region != lastRegion1_ || cycle != lastCycle1_)
         {
             const bool jumpNow = jumped && i == 0;
+            const long long frame = blockStart + i;
+            const auto [regionLo, regionHi] = m->loop1.regions.bounds(region);
+            (void) regionHi;
+            const bool sameEntryAgain = jumpNow && lastEntryFrame_ >= 0 && region == lastRegion1_
+                                        && frame - lastEntryFrame_ <= duplicateWindow
+                                        && ph >= regionLo && (ph - regionLo) * beats1 <= kJumpToleranceBeats;
             entry = false;
             lastRegion1_ = region;
             std::tie(lastLo1_, lastHi1_) = m->loop1.regions.bounds(region);
             lastCycle1_ = cycle;
-            c = sequencer_.onRegion1(region, m->rules); // None: region without rule, not a draw
-            if (c.type == Sequencer::Command::Type::Start)
-                requestStart(*m, c.region2, c.mode);
-            else if (c.type == Sequencer::Command::Type::Stop)
-                requestStop();
-            else if (jumpNow)
+            if (!sameEntryAgain)
             {
-                // Spec: a transport jump ends Loop 2, also when the new region has no rule.
-                requestStop();
-                sequencer_.reset();
+                lastEntryFrame_ = frame;
+                // The early draw for exactly this entry, if there is one; else draw now. None: region
+                // without rule, not a draw.
+                if (pending_.valid && pending_.rt == current_ && pending_.cycle == cycle && pending_.region == region)
+                    c = sequencer_.apply(region, pending_.draw);
+                else
+                    c = sequencer_.onRegion1(region, m->rules);
+                pending_.valid = false; // consumed, or for an entry that is not coming any more
+                if (c.type == Sequencer::Command::Type::Start)
+                    requestStart(*m, c.region2, c.mode);
+                else if (c.type == Sequencer::Command::Type::Stop)
+                    requestStop();
+                else if (jumpNow)
+                {
+                    // Spec: a transport jump ends Loop 2, also when the new region has no rule.
+                    requestStop();
+                    sequencer_.reset();
+                }
             }
         }
         // Gate ends when Loop 1 leaves its region and no new draw took over (same frame as the entry).
@@ -507,10 +563,20 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     expectedPpq_ = t.ppq + n * ppqStep;
     mixPreview(l, r, n);
 
+    int teaser = kNoTeaser;
+    float eta = 0.0f;
+    if (pending_.valid && pending_.rt == current_)
+    {
+        const auto& d = pending_.draw;
+        teaser = d.type == Sequencer::Draw::Type::Target ? d.region2
+                 : d.type == Sequencer::Draw::Type::Silence ? kTeaserSilence
+                                                           : kNoTeaser;
+        eta = static_cast<float>(std::max(0.0, (pending_.entryPpq - expectedPpq_) * 60.0 / t.bpm));
+    }
     const bool voiceShown = voice_.state != Voice::State::Idle && len2 > 0.0;
     publishPlayhead(static_cast<float>(std::clamp(lastPhase1, 0.0, 1.0)),
                     voiceShown ? static_cast<float>(std::clamp((voice_.lo + voice_.elapsed) / len2, 0.0, 1.0)) : -1.0f,
-                    voiceShown ? voice_.region2 : -1);
+                    voiceShown ? voice_.region2 : -1, teaser, eta);
 
     // Final safety: never hand non-finite samples to the host.
     for (int i = 0; i < n; ++i)

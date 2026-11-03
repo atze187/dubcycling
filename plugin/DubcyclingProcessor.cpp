@@ -8,6 +8,7 @@ namespace dc {
 
 DubcyclingProcessor::DubcyclingProcessor()
     : juce::AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
+    engine_.setTeaserLookahead(kTeaserLookaheadSec);
     startTimerHz(20);
 }
 

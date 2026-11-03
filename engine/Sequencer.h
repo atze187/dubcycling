@@ -35,7 +35,21 @@ public:
     // Start = (re)start target, cancelling any running voice. Stop = silence draw (a rule exists,
     // the draw lands in the remainder; a no-op for the Engine if the voice is idle).
     // None = the region has no rule: not a draw, state unchanged (check shouldGateStop).
+    // Same as apply(region1, draw(region1, rules)).
     Command onRegion1(int region1, const RuleSet& rules);
+
+    // The two halves of onRegion1, so the Engine can draw ahead of an entry and apply the result at it.
+    struct Draw
+    {
+        enum class Type { None, Silence, Target } type = Type::None; // None: the region has no rule
+        int region2 = -1;
+        PlayMode mode = PlayMode::Gate;
+    };
+    // The weighted draw for an entry into region1. Consumes the random source (only when a rule
+    // exists); changes no state, so it may run before the entry.
+    Draw draw(int region1, const RuleSet& rules);
+    // The entry itself: updates the state like onRegion1 and returns the command.
+    Command apply(int region1, const Draw& d);
 
     // Gate mode only: true when the voice runs in Gate mode and Loop 1 left the triggering region.
     bool shouldGateStop(int region1Now) const;

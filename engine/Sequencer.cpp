@@ -21,26 +21,49 @@ float Sequencer::nextUniform()
     return u >= 1.0f ? kBelowOne : u; // NaN and negatives pass through (draw() treats them as silence)
 }
 
-Sequencer::Command Sequencer::onRegion1(int region1, const RuleSet& rules)
+Sequencer::Draw Sequencer::draw(int region1, const RuleSet& rules)
+{
+    Draw d;
+    if (rules.targets(region1).empty())
+        return d; // no rule: not a draw (a running one-shot plays on; Gate ends via shouldGateStop)
+    if (const auto target = rules.draw(region1, nextUniform()))
+    {
+        d.type = Draw::Type::Target;
+        d.region2 = target->region2;
+        d.mode = target->mode;
+    }
+    else
+        d.type = Draw::Type::Silence;
+    return d;
+}
+
+Sequencer::Command Sequencer::apply(int region1, const Draw& d)
 {
     Command c;
-    if (rules.targets(region1).empty())
-        return c; // no rule: not a draw (a running one-shot plays on; Gate ends via shouldGateStop)
-    const auto target = rules.draw(region1, nextUniform());
-    if (!target)
+    switch (d.type)
     {
-        reset();
-        c.type = Command::Type::Stop;
-        return c;
+        case Draw::Type::None:
+            return c;
+        case Draw::Type::Silence:
+            reset();
+            c.type = Command::Type::Stop;
+            return c;
+        case Draw::Type::Target:
+            break;
     }
     isActive = true;
-    activeRegion2 = target->region2;
-    activeMode = target->mode;
+    activeRegion2 = d.region2;
+    activeMode = d.mode;
     triggerRegion1 = region1;
     c.type = Command::Type::Start;
     c.region2 = activeRegion2;
     c.mode = activeMode;
     return c;
+}
+
+Sequencer::Command Sequencer::onRegion1(int region1, const RuleSet& rules)
+{
+    return apply(region1, draw(region1, rules));
 }
 
 bool Sequencer::shouldGateStop(int region1Now) const

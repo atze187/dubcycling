@@ -51,6 +51,17 @@ public:
     void endLabelEdit(bool commit);
     bool isEditingLabel() const { return labelEditor_ != nullptr; }
     juce::TextEditor* labelEditor() { return labelEditor_.get(); }
+    // The region that is sounding (a Loop-2 voice); -1 = none. Drawn as a tint.
+    void setActiveRegion(int region);
+    int activeRegion() const { return activeRegion_; }
+    // The coming draw, shown before it takes effect: `what` is a region (>= 0, it fades in as a tint
+    // with a bar that fills up), kSilence (the lane dims and says so) or kNone; progress runs 0..1 up
+    // to the moment it takes effect (values outside are clamped).
+    static constexpr int kNone = -1;
+    static constexpr int kSilence = -2;
+    void setTeaser(int what, double progress);
+    int teaser() const { return teaser_; }
+    double teaserProgress() const { return teaserProgress_; }
     // Play position as a phase over the whole loop (0..1); anything outside (e.g. -1) hides it.
     // Repaints only the strip the line moved across.
     void setPlayhead(double phase);
@@ -116,6 +127,9 @@ private:
     int editingRegion_ = -1;
     bool dropHighlight_ = false;
     double playhead_ = -1.0; // -1 = hidden
+    int activeRegion_ = -1;
+    int teaser_ = -1;
+    double teaserProgress_ = 0.0;
     std::vector<PeakColumn> peaks_;
     const StereoData* peaksData_ = nullptr;
     int peaksWidth_ = 0;

@@ -1,5 +1,7 @@
 #pragma once
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -86,16 +88,37 @@ public:
     // fine for a display. phase1/phase2 are 0..1 over the whole loop (Loop 2: its source position),
     // -1 when there is nothing to show: transport stopped or invalid for phase1, no running Loop-2
     // voice for phase2/region2.
+    //
+    // Teaser: with a lookahead set (below), the draw for the next Loop-1 region entry is made that
+    // long before the entry and shown here: `teaser` is the Loop-2 region that will start (>= 0),
+    // kTeaserSilence for a silence draw, kNoTeaser when nothing is pending; `teaserEta` the seconds
+    // from the end of the last block to that entry, `teaserWindow` the lookahead it counts down from.
+    static constexpr int kNoTeaser = -1;
+    static constexpr int kTeaserSilence = -2;
     struct Playhead
     {
         float phase1 = -1.0f;
         float phase2 = -1.0f;
         int region2 = -1;
+        int teaser = kNoTeaser;
+        float teaserEta = 0.0f;
+        float teaserWindow = 0.0f;
     };
     Playhead playhead() const
     {
-        return { head1_.load(std::memory_order_relaxed), head2_.load(std::memory_order_relaxed),
-                 headRegion2_.load(std::memory_order_relaxed) };
+        return { head1_.load(std::memory_order_relaxed),    head2_.load(std::memory_order_relaxed),
+                 headRegion2_.load(std::memory_order_relaxed), headTeaser_.load(std::memory_order_relaxed),
+                 headEta_.load(std::memory_order_relaxed),     static_cast<float>(teaserSec_.load(std::memory_order_relaxed)) };
+    }
+
+    // Seconds before a Loop-1 region entry at which its draw is made (and shown as teaser); 0 (the
+    // default) draws at the entry itself. Any thread. The decision is the same either way: the
+    // result of the early draw is what the entry applies. Edits to the model, transport jumps and
+    // a stop discard an early draw (the entry then draws again).
+    void setTeaserLookahead(double seconds)
+    {
+        teaserSec_.store(std::isfinite(seconds) && seconds > 0.0 ? std::min(seconds, 2.0) : 0.0,
+                         std::memory_order_relaxed);
     }
 
     // Frees models the audio thread no longer uses. Called by setModel(); may also be called
@@ -198,12 +221,33 @@ private:
     std::atomic<float> head1_ { -1.0f };
     std::atomic<float> head2_ { -1.0f };
     std::atomic<int> headRegion2_ { -1 };
-    void publishPlayhead(float phase1, float phase2, int region2)
+    std::atomic<int> headTeaser_ { kNoTeaser };
+    std::atomic<float> headEta_ { 0.0f };
+    std::atomic<double> teaserSec_ { 0.0 };
+    void publishPlayhead(float phase1, float phase2, int region2, int teaser = kNoTeaser, float eta = 0.0f)
     {
         head1_.store(phase1, std::memory_order_relaxed);
         head2_.store(phase2, std::memory_order_relaxed);
         headRegion2_.store(region2, std::memory_order_relaxed);
+        headTeaser_.store(teaser, std::memory_order_relaxed);
+        headEta_.store(eta, std::memory_order_relaxed);
     }
+
+    // The early draw for the next Loop-1 entry: valid until that entry applies it or something
+    // (a model swap, a jump, a stop) makes it stale. rt/cycle/region identify the entry.
+    struct PendingDraw
+    {
+        bool valid = false;
+        const Runtime* rt = nullptr;
+        long long cycle = 0;
+        int region = -1;
+        double entryPpq = 0.0;
+        Sequencer::Draw draw;
+    };
+    PendingDraw pending_;
+    void planEarlyDraw(const Model& m, double ppq, double bpm, double beats1);
+    long long frameCounter_ = 0;      // frames processed since prepare (valid transport or not)
+    long long lastEntryFrame_ = -1;   // frame of the latest Loop-1 entry handled, -1 = none
 
     // Audio-thread state.
     Runtime* current_ = nullptr;
