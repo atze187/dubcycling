@@ -498,3 +498,31 @@ TEST_CASE("Editor: no weight sliders until both loops are loaded", "[RulePanel][
     editor->refresh();
     CHECK(editor->rulePanel().rowCount() == 1);
 }
+
+TEST_CASE("Editor: a freshly loaded loop is one region over the whole loop", "[RulePanel][editor]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    DubcyclingProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
+    auto* editor = dynamic_cast<dc::ui::Editor*>(ed.get());
+    REQUIRE(editor != nullptr);
+    LoopPair loops(proc);
+    editor->refresh();
+    for (int slot = 0; slot < 2; ++slot)
+    {
+        CHECK(editor->lane(slot).hasData());
+        CHECK(editor->lane(slot).regions().regionCount() == 1);
+    }
+    CHECK(editor->rulePanel().rowCount() == 1);
+
+    auto img = ed->createComponentSnapshot(ed->getLocalBounds());
+    CHECK(img.isValid());
+    const auto snapDir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {});
+    if (snapDir.isNotEmpty())
+    {
+        auto png = juce::File(snapDir).getChildFile("editor_unsplit.png");
+        png.deleteFile();
+        if (auto out = png.createOutputStream())
+            juce::PNGImageFormat().writeImageToStream(img, *out);
+    }
+}
