@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: win64
+            os: windows-latest
+            bundle: build/plugin/Dubcycling_artefacts/Release/VST3/Dubcycling.vst3
+          - name: macos
+            os: macos-latest
+            bundle: build-macos/plugin/Dubcycling_artefacts/Release/VST3/Dubcycling.vst3
+          - name: linux
+            os: ubuntu-latest
+            bundle: build-linux/plugin/Dubcycling_artefacts/Release/VST3/Dubcycling.vst3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 all -Config Release
+
+      - name: Build and test (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          command -v ninja >/dev/null || brew install ninja
+          cmake --preset macos-universal
+          cmake --build --preset macos-release --parallel
+          ctest --preset macos-release
+          archs=$(lipo -archs "${{ matrix.bundle }}/Contents/MacOS/Dubcycling")
+          echo "archs: $archs"
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
+
+      - name: Build and test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build xvfb libasound2-dev libjack-jackd2-dev \
+            libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libcurl4-openssl-dev \
+            mesa-common-dev libgl1-mesa-dev
+          cmake --preset linux-x64
+          cmake --build --preset linux-release --parallel
+          xvfb-run -a ctest --preset linux-release
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        id: package-win
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0,7))" }
+          $name = "Dubcycling-$version-${{ matrix.name }}"
+          $staging = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Force $staging | Out-Null
+          Copy-Item -Recurse "${{ matrix.bundle }}" $staging
+          Copy-Item README.md, LICENSE $staging
+          $zip = Join-Path $env:RUNNER_TEMP "$name.zip"
+          Compress-Archive -Path "$staging\*" -DestinationPath $zip -Force
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+          "name=$name" >> $env:GITHUB_OUTPUT
+
+      - name: Package (macOS, ad-hoc signed)
+        if: runner.os == 'macOS'
+        id: package-mac
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version=$GITHUB_REF_NAME; else version="dev-${GITHUB_SHA::7}"; fi
+          name="Dubcycling-$version-${{ matrix.name }}"
+          staging="$RUNNER_TEMP/$name"
+          mkdir -p "$staging"
+          codesign --force --deep -s - "${{ matrix.bundle }}"
+          ditto "${{ matrix.bundle }}" "$staging/Dubcycling.vst3"
+          cp README.md LICENSE "$staging"
+          zip="$RUNNER_TEMP/$name.zip"
+          ditto -c -k "$staging" "$zip"
+          check="$RUNNER_TEMP/check"
+          mkdir -p "$check"
+          ditto -x -k "$zip" "$check"
+          codesign --verify --deep --strict --verbose=2 "$check/Dubcycling.vst3"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        id: package-linux
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version=$GITHUB_REF_NAME; else version="dev-${GITHUB_SHA::7}"; fi
+          name="Dubcycling-$version-${{ matrix.name }}"
+          staging="$RUNNER_TEMP/$name"
+          mkdir -p "$staging"
+          cp -r "${{ matrix.bundle }}" "$staging/"
+          cp README.md LICENSE "$staging"
+          zip="$RUNNER_TEMP/$name.zip"
+          (cd "$staging" && zip -qr "$zip" .)
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package-win.outputs.name || steps.package-mac.outputs.name || steps.package-linux.outputs.name }}
+          path: ${{ steps.package-win.outputs.zip || steps.package-mac.outputs.zip || steps.package-linux.outputs.zip }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    # Publish whatever platforms built; one failing platform must not block the others.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Dubcycling-*
+          merge-multiple: true
+          path: dist
+
+      - name: List artifacts
+        run: ls -l dist
+
+      - name: Write release notes
+        run: |
+          cat > notes.md <<'NOTES'
+          **macOS and Linux (experimental):** these builds are untested on real hardware; the macOS bundle is ad-hoc signed, not notarized.
+          On macOS, after copying `Dubcycling.vst3` to `~/Library/Audio/Plug-Ins/VST3`, remove the quarantine with
+          `xattr -cr ~/Library/Audio/Plug-Ins/VST3/Dubcycling.vst3` and rescan plugins in your DAW.
+
+          NOTES
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          body_path: notes.md
+          generate_release_notes: true
