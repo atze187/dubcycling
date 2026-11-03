@@ -375,7 +375,10 @@ void Editor::updateRules(const PluginState& st)
             targets = e.targets;
             break;
         }
-    rules_.setContext(region1, lanes_[1].regions().regionCount(), targets);
+    // Nothing to weight until both loops exist: no rows (and so no sliders) for an empty slot.
+    const bool bothLoops = proc_.getSlotStatus(0) != DubcyclingProcessor::SlotStatus::Empty
+                        && proc_.getSlotStatus(1) != DubcyclingProcessor::SlotStatus::Empty;
+    rules_.setContext(region1, bothLoops ? lanes_[1].regions().regionCount() : 0, targets);
 }
 
 void Editor::rulesEdited(int region1, std::vector<RuleTarget> targets)

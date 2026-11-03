@@ -29,6 +29,34 @@ void record(RulePanel& p, Published& out)
     };
 }
 
+// Loads a short WAV into both slots: the rule panel only shows weights once both loops exist.
+// Must be created before the state is edited (replaceLoop resets regions and rules).
+struct LoopPair
+{
+    juce::File dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("dcpair", "", false);
+
+    explicit LoopPair(DubcyclingProcessor& proc)
+    {
+        dir.createDirectory();
+        const auto file = dir.getChildFile("loop.wav");
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> out = std::make_unique<juce::FileOutputStream>(file);
+        auto writer = wav.createWriterFor(out, juce::AudioFormatWriterOptions {}
+                                                   .withSampleRate(8000)
+                                                   .withNumChannels(2)
+                                                   .withBitsPerSample(16));
+        REQUIRE(writer != nullptr);
+        juce::AudioBuffer<float> buf(2, 16000);
+        buf.clear();
+        REQUIRE(writer->writeFromAudioSampleBuffer(buf, 0, 16000));
+        writer.reset();
+        REQUIRE(proc.replaceLoop(0, file, 2));
+        REQUIRE(proc.replaceLoop(1, file, 2));
+        proc.waitForLoads();
+    }
+    ~LoopPair() { dir.deleteRecursively(); }
+};
+
 float pct(float p) { return p / 100.0f; }
 
 } // namespace
@@ -218,6 +246,7 @@ TEST_CASE("Editor: selecting a Loop 1 region shows its rule and edits reach the 
 {
     juce::ScopedJuceInitialiser_GUI gui;
     DubcyclingProcessor proc;
+    LoopPair loops(proc);
     auto s = proc.getPluginState();
     s.loop1.boundaries = { 0.25, 0.5, 0.75 };
     s.loop2.boundaries = { 0.5 };
@@ -265,6 +294,7 @@ TEST_CASE("Editor: a selected region that disappears falls back to the last vali
 {
     juce::ScopedJuceInitialiser_GUI gui;
     DubcyclingProcessor proc;
+    LoopPair loops(proc);
     auto s = proc.getPluginState();
     s.loop1.boundaries = { 0.25, 0.5, 0.75 };
     s.loop2.boundaries = { 0.5 };
@@ -404,6 +434,7 @@ TEST_CASE("Editor: resetting stale targets leaves other region1 entries alone", 
 {
     juce::ScopedJuceInitialiser_GUI gui;
     DubcyclingProcessor proc;
+    LoopPair loops(proc);
     auto s = proc.getPluginState();
     s.loop1.boundaries = { 0.5 };
     s.loop2.boundaries = { 0.5 };
@@ -451,4 +482,19 @@ TEST_CASE("Editor: renders the rule panel with a stale target", "[RulePanel][edi
         if (auto out = png.createOutputStream())
             juce::PNGImageFormat().writeImageToStream(img, *out);
     }
+}
+
+TEST_CASE("Editor: no weight sliders until both loops are loaded", "[RulePanel][editor]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    DubcyclingProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
+    auto* editor = dynamic_cast<dc::ui::Editor*>(ed.get());
+    REQUIRE(editor != nullptr);
+    editor->refresh();
+    CHECK(editor->rulePanel().rowCount() == 0);
+
+    LoopPair loops(proc);
+    editor->refresh();
+    CHECK(editor->rulePanel().rowCount() == 1);
 }
