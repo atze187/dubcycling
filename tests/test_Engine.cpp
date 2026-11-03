@@ -902,3 +902,120 @@ TEST_CASE("Engine compares data ids, not addresses: an equal pointer with anothe
     CHECK(draws2 == 1);
     CHECK(c.l[kSwapAt] > 0.4f);
 }
+
+// --- Audition (preview) ----------------------------------------------------------------------------
+
+namespace {
+// Loop 2 = four constant quarters 0.1 .. 0.4, the transport is stopped (the audition needs none).
+std::shared_ptr<dc::Model> previewModel()
+{
+    auto m = baseModel();
+    m->loop1.data = makeData(kBar, [](int i) { return sineAt(i, 220.0, 0.25f); });
+    m->loop1.regions = regions({ 0.5 });
+    m->loop2.data = regionData(kBar, { 0.1f, 0.2f, 0.3f, 0.4f });
+    m->loop2.regions = regions({ 0.25, 0.5, 0.75 });
+    return m;
+}
+
+Out runStopped(dc::Engine& e, int frames, double bpm = kBpm)
+{
+    Out o;
+    o.l.assign(static_cast<size_t>(frames), 7.0f);
+    o.r.assign(static_cast<size_t>(frames), 7.0f);
+    for (int pos = 0; pos < frames; pos += 512)
+    {
+        const int n = std::min(512, frames - pos);
+        e.process(dc::TransportInfo { false, 0.0, bpm, 4, 4 }, o.l.data() + pos, o.r.data() + pos, n);
+    }
+    return o;
+}
+} // namespace
+
+TEST_CASE("Engine preview plays the region once, also while the transport is stopped", "[Engine][preview]")
+{
+    dc::Engine e;
+    prepared(e);
+    e.setModel(previewModel());
+    e.requestPreview(1, 1); // Loop 2, region 1 = 0.2, 24000 frames at 120 bpm
+    const auto o = runStopped(e, 40000);
+    CHECK(o.l[0] == 0.0f);                          // fades in from silence
+    CHECK(maxDev(o.l, kFade, 24000 - kFade, 0.2f) < kTol);
+    CHECK(maxDev(o.r, kFade, 24000 - kFade, -0.2f) < kTol); // data is stereo-inverted
+    CHECK(allZero(o.l, 24000 + 64, 40000));         // one-shot: ends with its region
+}
+
+TEST_CASE("Engine preview of Loop 1 and tempo follow the host's last bpm", "[Engine][preview]")
+{
+    dc::Engine e;
+    prepared(e);
+    auto m = previewModel();
+    m->loop1.data = regionData(kBar, { 0.5f, 0.6f });
+    e.setModel(m);
+    e.requestPreview(0, 1); // Loop 1, region 1 = second half = 0.6
+    const auto o = runStopped(e, 60000, 240.0); // twice the tempo: the half bar is 24000 frames
+    CHECK(maxDev(o.l, kFade, 24000 - kFade, 0.6f) < kTol);
+    CHECK(allZero(o.l, 24000 + 64, 60000));
+}
+
+TEST_CASE("Engine preview mixes on top of running playback", "[Engine][preview]")
+{
+    dc::Engine e;
+    prepared(e);
+    auto m = previewModel();
+    m->loop1.data = regionData(kBar, { 0.05f });
+    e.setModel(m);
+    run(e, 0.0, 2048);
+    e.requestPreview(1, 3); // 0.4
+    const auto o = run(e, 2048 * 120.0 / (60.0 * kRate), 2048);
+    CHECK(maxDev(o.l, 1024, 2048, 0.45f) < kTol); // 0.05 (Loop 1) + 0.4 (audition)
+}
+
+TEST_CASE("Engine preview: a new request cancels with a crossfade, bad requests do nothing", "[Engine][preview]")
+{
+    dc::Engine e;
+    prepared(e);
+    e.setModel(previewModel());
+    e.requestPreview(1, 7); // no such region
+    e.requestPreview(1, -1);
+    e.requestPreview(2, 0);
+    CHECK(allZero(runStopped(e, 2048).l));
+
+    e.requestPreview(1, 0); // 0.1
+    runStopped(e, 4096);
+    e.requestPreview(1, 3); // 0.4, cancels
+    const auto o = runStopped(e, 4096);
+    CHECK(maxDev(o.l, kFade + 600, 4000, 0.4f) < kTol);
+    for (float v : o.l) // never louder than the two together
+        REQUIRE(v <= 0.5f + kTol);
+}
+
+TEST_CASE("Engine preview ends when its loop's data is replaced", "[Engine][preview]")
+{
+    dc::Engine e;
+    prepared(e);
+    e.setModel(previewModel());
+    e.requestPreview(1, 0);
+    runStopped(e, 2048);
+    auto m2 = previewModel();
+    m2->loop2.data = regionData(kBar, { 0.9f, 0.9f, 0.9f, 0.9f }); // new buffer
+    e.setModel(m2);
+    CHECK(allZero(runStopped(e, 2048).l));
+}
+
+TEST_CASE("Engine preview does not allocate", "[Engine][preview]")
+{
+    dc::Engine e;
+    prepared(e);
+    e.setModel(previewModel());
+    std::vector<float> l(512), r(512);
+    gAllocCount = 0;
+    gCountAllocs = true;
+    for (int i = 0; i < 40; ++i)
+    {
+        if (i % 7 == 0)
+            e.requestPreview(i % 2, i % 3);
+        e.process(dc::TransportInfo { i % 2 == 0, 0.0, kBpm, 4, 4 }, l.data(), r.data(), 512);
+    }
+    gCountAllocs = false;
+    CHECK(gAllocCount.load() == 0);
+}

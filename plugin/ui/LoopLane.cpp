@@ -243,6 +243,8 @@ void LoopLane::pressAt(float x)
     repaint();
     if (onRegionSelected)
         onRegionSelected(selected_);
+    if (onRegionPreview)
+        onRegionPreview(selected_);
 }
 
 void LoopLane::dragTo(float x)

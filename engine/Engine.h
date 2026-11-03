@@ -69,6 +69,18 @@ public:
     // Tests: deterministic draws. Not while process() runs.
     void setRandom(std::function<float()> uniform01) { sequencer_.setRandom(std::move(uniform01)); }
 
+    // Audition: plays region `region` of loop `slot` (0 = Loop 1, 1 = Loop 2) once, mixed on top of
+    // whatever else plays and independent of the transport (also while the host is stopped). Tempo
+    // is the host's last reported one (120 bpm and 4/4 before the first block). A new request cancels
+    // a running one with the usual short crossfade. Any thread, lock-free; the request is taken at the
+    // next block (several requests within one block: the last wins). Ignored for a loop without data or
+    // a region that does not exist. A model swap that changes that loop's data ends the audition.
+    void requestPreview(int slot, int region)
+    {
+        if (slot >= 0 && slot <= 1 && region >= 0 && region < 0x10000)
+            previewReq_.store((slot << 16) | region, std::memory_order_relaxed);
+    }
+
     // Where the loops were at the end of the last processed block, for the UI. Any thread; the three
     // fields are read separately (relaxed), so a read during a block may mix two blocks, which is
     // fine for a display. phase1/phase2 are 0..1 over the whole loop (Loop 2: its source position),
@@ -162,6 +174,25 @@ private:
     // A Runtime is freed only when it is neither next_ nor inUse_.
     std::atomic<Runtime*> next_ { nullptr };
     std::atomic<Runtime*> inUse_ { nullptr };
+
+    // Audition voices: a One-Shot Voice per request plus the tail of the one it cancelled. slot and
+    // dataId say which loop buffer the voice reads; a swap to other data idles it.
+    struct PreviewVoice
+    {
+        Voice voice;
+        int slot = -1;
+        std::uint64_t dataId = 0;
+    };
+    void startPreview(int slot, int region);
+    void resetPreview();
+    void dropStalePreviews();
+    void mixPreview(float* l, float* r, int n);
+    void mixPreviewVoice(PreviewVoice& pv, const Model& m, float* l, float* r, int n);
+
+    std::atomic<int> previewReq_ { -1 }; // (slot << 16) | region, or -1
+    PreviewVoice preview_, previewTail_;
+    double lastBpm_ = 120.0; // last tempo / bar length the host reported (any transport state)
+    double lastBeatsPerBar_ = 4.0;
 
     // Written by process(), read by playhead().
     std::atomic<float> head1_ { -1.0f };

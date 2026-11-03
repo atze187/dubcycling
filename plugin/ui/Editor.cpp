@@ -207,7 +207,8 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
 
         lanes_[i].onRegionsChanged = [this, i](const RegionMap& m) { regionsEdited(i, m); };
         lanes_[i].onFileDropped = [this, i](const juce::File& f) { loadFile(i, f); };
-        lanes_[i].onLabelEdited = [this, i](int region, juce::String text) { labelEdited(i, region, text); };
+        lanes_[i].onRegionPreview = [this, i](int region) { proc_.previewRegion(i, region); };
+        lanes_[i].onLabelEdited =[this, i](int region, juce::String text) { labelEdited(i, region, text); };
         addAndMakeVisible(lanes_[i]);
     }
 

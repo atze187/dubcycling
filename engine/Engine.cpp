@@ -35,6 +35,108 @@ void Engine::prepare(double sampleRate, int maxBlock)
     for (auto& rt : owned_)
         rt->reader1->prepare(outRate_); // a shared reader is prepared more than once: harmless
     resetPlayback();
+    resetPreview();
+    previewReq_.store(-1, std::memory_order_relaxed);
+}
+
+void Engine::resetPreview()
+{
+    for (PreviewVoice* pv : { &preview_, &previewTail_ })
+    {
+        pv->voice.state = Voice::State::Idle;
+        pv->voice.gain = 0.0f;
+        pv->voice.fadeLeft = 0;
+        pv->voice.endedByItself = false;
+        pv->voice.gl.reset();
+        pv->voice.gr.reset();
+        pv->slot = -1;
+    }
+}
+
+void Engine::dropStalePreviews()
+{
+    for (PreviewVoice* pv : { &preview_, &previewTail_ })
+    {
+        if (pv->voice.state == Voice::State::Idle)
+            continue;
+        const std::uint64_t id = current_ == nullptr ? 0 : (pv->slot == 0 ? current_->data1Id : current_->data2Id);
+        if (id != pv->dataId)
+        {
+            pv->voice.state = Voice::State::Idle;
+            pv->voice.gain = 0.0f;
+            pv->slot = -1;
+        }
+    }
+}
+
+void Engine::startPreview(int slot, int region)
+{
+    if (current_ == nullptr || !current_->model)
+        return;
+    const Model& m = *current_->model;
+    const LoopSlot& s = slot == 0 ? m.loop1 : m.loop2;
+    const double len = static_cast<double>(framesOf(s.data.get()));
+    if (!(len > 0.0) || region >= s.regions.regionCount())
+        return;
+    const auto [lo01, hi01] = s.regions.bounds(region);
+    if (!(hi01 > lo01))
+        return;
+
+    if (preview_.voice.state != Voice::State::Idle)
+    {
+        // Cancel: the running audition fades out as the tail while the new one starts at once.
+        previewTail_ = preview_;
+        previewTail_.voice.endedByItself = false;
+        if (previewTail_.voice.state == Voice::State::Playing)
+            beginFadeOut(previewTail_.voice);
+    }
+    Voice& v = preview_.voice;
+    v.endedByItself = false;
+    v.lo = lo01 * len;
+    v.hi = hi01 * len;
+    v.mode = PlayMode::OneShot;
+    v.region2 = region;
+    v.elapsed = 0.0;
+    v.state = Voice::State::Playing;
+    v.gain = 0.0f;
+    v.fadeLeft = fadeLen_; // fade in
+    v.gl.start(v.lo, 1.0, grainLen_);
+    v.gr.start(v.lo, 1.0, grainLen_);
+    preview_.slot = slot;
+    preview_.dataId = slot == 0 ? current_->data1Id : current_->data2Id;
+}
+
+void Engine::mixPreviewVoice(PreviewVoice& pv, const Model& m, float* l, float* r, int n)
+{
+    if (pv.voice.state == Voice::State::Idle)
+        return;
+    const LoopSlot& s = pv.slot == 0 ? m.loop1 : m.loop2;
+    const StereoData* d = s.data.get();
+    const size_t frames = framesOf(d);
+    if (frames == 0)
+    {
+        pv.voice.state = Voice::State::Idle;
+        pv.voice.gain = 0.0f;
+        return;
+    }
+    // Source frames per output frame at the host tempo, like Loop 2.
+    const double beats = std::max(1, s.bars) * lastBeatsPerBar_;
+    const double adv = static_cast<double>(frames) * lastBpm_ / (60.0 * outRate_ * beats);
+    GrainFrame gf;
+    const double srcRate = std::isfinite(d->sampleRate) && d->sampleRate > 0.0 ? d->sampleRate : outRate_;
+    gf.step = srcRate / outRate_;
+    gf.dir = 1.0;
+    gf.cycle = true;
+    for (int i = 0; i < n && pv.voice.state != Voice::State::Idle; ++i)
+        stepVoice(pv.voice, *d, gf, adv, l[i], r[i]);
+}
+
+void Engine::mixPreview(float* l, float* r, int n)
+{
+    if (current_ == nullptr || !current_->model)
+        return;
+    mixPreviewVoice(previewTail_, *current_->model, l, r, n);
+    mixPreviewVoice(preview_, *current_->model, l, r, n);
 }
 
 void Engine::setModel(std::shared_ptr<const Model> model)
@@ -296,6 +398,15 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
             resetPlayback(running_ && loop1Same); // hard restart, the next valid frame is a fresh entry
     }
 
+    // Audition: independent of the transport, so it is handled before the validity checks.
+    dropStalePreviews();
+    if (std::isfinite(t.bpm) && t.bpm > 0.0)
+        lastBpm_ = t.bpm;
+    if (t.tsNum > 0 && t.tsDen > 0)
+        lastBeatsPerBar_ = beatsPerBar(t.tsNum, t.tsDen);
+    if (const int req = previewReq_.exchange(-1, std::memory_order_relaxed); req >= 0)
+        startPreview(req >> 16, req & 0xffff);
+
     const Model* m = current_ != nullptr ? current_->model.get() : nullptr;
     const double ppqStep = std::isfinite(t.bpm) ? t.bpm / (60.0 * outRate_) : 0.0;
     if (m == nullptr || !validTransport(t) || !std::isfinite(ppqStep) || !(ppqStep > 0.0))
@@ -304,6 +415,7 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
         std::fill(r, r + n, 0.0f);
         if (running_)
             resetPlayback();
+        mixPreview(l, r, n);
         publishPlayhead(-1.0f, -1.0f, -1);
         return;
     }
@@ -393,6 +505,7 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     }
 
     expectedPpq_ = t.ppq + n * ppqStep;
+    mixPreview(l, r, n);
 
     const bool voiceShown = voice_.state != Voice::State::Idle && len2 > 0.0;
     publishPlayhead(static_cast<float>(std::clamp(lastPhase1, 0.0, 1.0)),

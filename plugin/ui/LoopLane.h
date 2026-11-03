@@ -65,6 +65,8 @@ public:
 
     std::function<void(const RegionMap&)> onRegionsChanged;
     std::function<void(int)> onRegionSelected;
+    // A click on a region (not on a boundary): audition it. Fires together with onRegionSelected.
+    std::function<void(int)> onRegionPreview;
     std::function<void(const juce::File&)> onFileDropped;
 
     // Click: grabs the nearest boundary within the hit tolerance, otherwise selects the region under x.

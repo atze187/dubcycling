@@ -442,3 +442,21 @@ TEST_CASE("LoopLane: a double-click on empty lane still adds a boundary and name
     empty.setSize(1000, 100);
     CHECK_FALSE(empty.beginLabelEdit(0));
 }
+
+TEST_CASE("LoopLane: a click on a region auditions it, grabbing a boundary does not", "[LoopLane][preview]")
+{
+    LaneFixture f;
+    f.lane.setRegions(regions({ 0.5 }));
+    std::vector<int> previews;
+    f.lane.onRegionPreview = [&](int r) { previews.push_back(r); };
+
+    f.lane.pressAt(750.0f);
+    f.lane.release();
+    f.lane.pressAt(250.0f);
+    f.lane.release();
+    CHECK(previews == std::vector<int> { 1, 0 });
+
+    f.lane.pressAt(500.0f); // on the boundary: a drag starts
+    f.lane.release();
+    CHECK(previews.size() == 2);
+}
