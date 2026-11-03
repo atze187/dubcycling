@@ -378,11 +378,9 @@ void LoopLane::paint(juce::Graphics& g)
         }
 
         const auto [lo, hi] = regions_.bounds(selected_);
-        if (regions_.regionCount() > 1)
-        {
-            g.setColour(kSelected);
-            g.fillRect(juce::Rectangle<float>(xFor(lo), 0.0f, xFor(hi) - xFor(lo), bounds.getHeight()));
-        }
+        // Also for an unsplit loop: its single region spans the whole lane.
+        g.setColour(kSelected);
+        g.fillRect(juce::Rectangle<float>(xFor(lo), 0.0f, xFor(hi) - xFor(lo), bounds.getHeight()));
 
         // What plays now, and what is about to: the tint of the coming region builds up before it starts.
         const auto tint = [&](int region, float alpha) {
