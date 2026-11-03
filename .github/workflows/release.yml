@@ -59,6 +59,39 @@ jobs:
           cmake --build --preset linux-release --parallel
           xvfb-run -a ctest --preset linux-release
 
+      - name: Validate (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip" -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval-extract -Force
+          New-Item -ItemType Directory -Force tools\bin | Out-Null
+          $exe = Get-ChildItem -Path pluginval-extract -Recurse -Filter pluginval.exe | Select-Object -First 1
+          Copy-Item $exe.FullName tools\bin\pluginval.exe
+          powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 validate -Config Release
+
+      - name: Validate (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          (cd tools/vst3validator && cmake --preset validator-macos && cmake --build --preset validator-macos --parallel)
+          validator=$(find build-macos/vst3validator -type f -name validator | head -n 1)
+          test -n "$validator"
+          "$validator" "${{ matrix.bundle }}"
+          curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip"
+          unzip -q pluginval.zip -d pluginval-extract
+          pluginval-extract/pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --validate-in-process --validate "${{ matrix.bundle }}"
+
+      - name: Validate (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          (cd tools/vst3validator && cmake --preset validator-linux && cmake --build --preset validator-linux --parallel)
+          validator=$(find build-linux/vst3validator -type f -name validator | head -n 1)
+          test -n "$validator"
+          "$validator" "${{ matrix.bundle }}"
+          curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip"
+          unzip -q pluginval.zip -d pluginval-extract
+          xvfb-run -a pluginval-extract/pluginval --strictness-level 5 --validate-in-process --validate "${{ matrix.bundle }}"
+
       - name: Package (Windows)
         if: runner.os == 'Windows'
         id: package-win

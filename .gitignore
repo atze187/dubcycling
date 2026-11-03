@@ -4,3 +4,6 @@ build/
 .vscode/
 .idea/
 *.user
+build-macos/
+build-linux/
+tools/bin/
