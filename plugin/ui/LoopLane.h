@@ -38,6 +38,10 @@ public:
     // clamped into the new region count.
     void setRegions(const RegionMap& regions);
     void setSelectedRegion(int region);
+    // Play position as a phase over the whole loop (0..1); anything outside (e.g. -1) hides it.
+    // Repaints only the strip the line moved across.
+    void setPlayhead(double phase);
+    double playhead() const { return playhead_; }
 
     const RegionMap& regions() const { return regions_; }
     int selectedRegion() const { return selected_; }
@@ -89,6 +93,7 @@ private:
     float grabOffset_ = 0.0f; // boundary x minus cursor x at the press
     RegionMap dragStart_;     // regions at the press, to detect a real move and to cancel
     bool dropHighlight_ = false;
+    double playhead_ = -1.0; // -1 = hidden
     std::vector<PeakColumn> peaks_;
     const StereoData* peaksData_ = nullptr;
     int peaksWidth_ = 0;

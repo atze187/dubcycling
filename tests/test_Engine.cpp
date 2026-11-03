@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>
 #include <atomic>
@@ -302,6 +303,48 @@ TEST_CASE("Engine loop 2 plays target region when rule weight is 1", "[Engine]")
     REQUIRE(o.l[kFade / 2] < 0.5f);
     REQUIRE(maxDev(o.l, kFade, kBar, 0.6f) < kTol);
     REQUIRE(maxDev(o.r, kFade, kBar, -0.6f) < kTol);
+}
+
+TEST_CASE("Engine playhead: nothing to show while stopped or before the first block", "[Engine][playhead]")
+{
+    dc::Engine e;
+    prepared(e);
+    auto m = baseModel();
+    m->loop1.data = makeData(kBar, [](int i) { return sineAt(i, 220.0, 0.5f); });
+    e.setModel(m);
+    CHECK(e.playhead().phase1 == -1.0f);
+    CHECK(e.playhead().phase2 == -1.0f);
+    CHECK(e.playhead().region2 == -1);
+
+    std::vector<float> l(512), r(512);
+    e.process(dc::TransportInfo { true, 0.0, kBpm, 4, 4 }, l.data(), r.data(), 512);
+    REQUIRE(e.playhead().phase1 >= 0.0f);
+    e.process(dc::TransportInfo { false, 0.0, kBpm, 4, 4 }, l.data(), r.data(), 512);
+    CHECK(e.playhead().phase1 == -1.0f);
+}
+
+TEST_CASE("Engine playhead follows the host position in Loop 1 and the voice in Loop 2", "[Engine][playhead]")
+{
+    dc::Engine e;
+    prepared(e);
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.75 });
+    m->loop2.data = regionData(kBar, { 0.1f, 0.2f, 0.3f, 0.4f });
+    m->loop2.regions = regions({ 0.25, 0.5, 0.75 });
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::Gate } }); // Loop-2 region 1 = 0.25..0.5
+    e.setModel(m);
+    run(e, 0.0, 24000); // a quarter of the bar
+    const auto h = e.playhead();
+    CHECK(h.phase1 == Catch::Approx(0.25).margin(0.002));
+    REQUIRE(h.region2 == 1);
+    // Gate over 24000 frames of a 24000-frame region: back at its start, a quarter into the loop.
+    CHECK(h.phase2 >= 0.25f);
+    CHECK(h.phase2 <= 0.5f);
+
+    run(e, 0.75 * 4.0, 1024); // Loop-1 region 1 has no rule: the Gate ended, the voice is gone
+    run(e, 0.75 * 4.0 + 1024 * kBpm / (60.0 * kRate), 4096);
+    CHECK(e.playhead().phase2 == -1.0f);
+    CHECK(e.playhead().region2 == -1);
 }
 
 TEST_CASE("Engine gate region repeats until region 1 ends", "[Engine]")

@@ -206,7 +206,7 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
     for (int i = 0; i < 2; ++i)
         seenFailure_[i] = proc_.replaceFailure(i).id; // only failures from now on are shown
     refresh();
-    startTimerHz(10);
+    startTimerHz(30);
 }
 
 Editor::~Editor()
@@ -291,6 +291,13 @@ void Editor::refresh()
     updateRules(st);
     cycle_.setText("Zyklus: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Takte",
                    juce::dontSendNotification);
+}
+
+void Editor::updatePlayheads()
+{
+    const auto head = proc_.playhead();
+    lanes_[0].setPlayhead(head.phase1);
+    lanes_[1].setPlayhead(head.phase2);
 }
 
 void Editor::regionsEdited(int slot, const RegionMap& regions)

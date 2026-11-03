@@ -101,7 +101,15 @@ public:
     void resized() override;
 
 private:
-    void timerCallback() override { refresh(); }
+    // 30 Hz: playheads every tick, the full refresh (state, status, rules) every third.
+    void timerCallback() override
+    {
+        updatePlayheads();
+        if (++tick_ % 3 == 0)
+            refresh();
+    }
+    void updatePlayheads();
+    int tick_ = 0;
     // New boundaries from a lane; the rules are remapped (remapRulesForBoundaryEdit) in the same applyEdit.
     void regionsEdited(int slot, const RegionMap& regions);
     // Shows the rule of the selected Loop-1 region for the current Loop-2 region count.

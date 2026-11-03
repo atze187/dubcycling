@@ -90,6 +90,20 @@ void LoopLane::setSelectedRegion(int region)
     repaint();
 }
 
+void LoopLane::setPlayhead(double phase)
+{
+    const double p = std::isfinite(phase) && phase >= 0.0 && phase <= 1.0 ? phase : -1.0;
+    if (p == playhead_)
+        return;
+    const auto strip = [this](double ph) {
+        return ph < 0.0 ? juce::Rectangle<int>()
+                        : juce::Rectangle<int>(juce::roundToInt(xFor(ph)) - 3, 0, 6, getHeight());
+    };
+    const auto before = strip(playhead_);
+    playhead_ = p;
+    repaint(before.getUnion(strip(p)));
+}
+
 juce::String LoopLane::hintText() const
 {
     if (hasData())
@@ -276,6 +290,12 @@ void LoopLane::paint(juce::Graphics& g)
             g.drawText(regionLetters(r), juce::Rectangle<float>(xFor(from) + 4.0f, bounds.getBottom() - 14.0f, 24.0f, 12.0f),
                        juce::Justification::centredLeft);
         }
+    }
+
+    if (hasData() && playhead_ >= 0.0)
+    {
+        g.setColour(juce::Colours::white.withAlpha(0.9f));
+        g.fillRect(xFor(playhead_) - 0.5f, 0.0f, 1.0f, bounds.getHeight());
     }
 
     g.setColour(dropHighlight_ ? kBoundary : kOutline);

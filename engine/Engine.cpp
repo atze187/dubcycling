@@ -304,6 +304,7 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
         std::fill(r, r + n, 0.0f);
         if (running_)
             resetPlayback();
+        publishPlayhead(-1.0f, -1.0f, -1);
         return;
     }
 
@@ -338,6 +339,7 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     const bool jumped = running_ && entry;
     running_ = true;
 
+    double lastPhase1 = phase1;
     for (int i = 0; i < n; ++i)
     {
         // Never step backwards inside continuous playback (host rounding at block starts).
@@ -346,6 +348,7 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
         const double pos = ppq + kPpqEpsilon;
         const long long cycle = static_cast<long long>(std::floor(pos / beats1));
         const double ph = (pos - static_cast<double>(cycle) * beats1) / beats1;
+        lastPhase1 = ph;
         const int region = m->loop1.regions.regionAt(ph);
         Sequencer::Command c;
         if (entry || region != lastRegion1_ || cycle != lastCycle1_)
@@ -390,6 +393,11 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     }
 
     expectedPpq_ = t.ppq + n * ppqStep;
+
+    const bool voiceShown = voice_.state != Voice::State::Idle && len2 > 0.0;
+    publishPlayhead(static_cast<float>(std::clamp(lastPhase1, 0.0, 1.0)),
+                    voiceShown ? static_cast<float>(std::clamp((voice_.lo + voice_.elapsed) / len2, 0.0, 1.0)) : -1.0f,
+                    voiceShown ? voice_.region2 : -1);
 
     // Final safety: never hand non-finite samples to the host.
     for (int i = 0; i < n; ++i)

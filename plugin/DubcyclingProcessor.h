@@ -74,6 +74,8 @@ public:
     void setSessionDir(const juce::File& dir) { sessionDir_ = dir; }
     // Last tempo the host reported in processBlock; 0 = none yet. Any thread.
     double hostBpm() const { return hostBpm_.load(std::memory_order_relaxed); }
+    // Loop positions at the end of the last block, for the editor's playheads. Any thread.
+    Engine::Playhead playhead() const { return engine_.playhead(); }
 #ifdef DC_TEST_HOOKS
     // Test hook (only compiled into dc_plugin_tests, which defines DC_TEST_HOOKS): blocks until
     // pending loads are decoded and takes their results. Message thread.

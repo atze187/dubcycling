@@ -8,9 +8,9 @@ Punkte stehen so, wie der Nutzer sie formuliert hat. Einschätzungen darunter si
 
 ## Offen
 
-0. Kompaktes Industrie-Panel umsetzen (Entwurf siehe oben, abgenommen, noch nicht gebaut). Berührt dieselbe Lane-Darstellung wie Punkt 1 (Playhead) und 4 (Labels).
+0. ERLEDIGT (2026-11-03): Kompaktes Industrie-Panel umgesetzt (PanelLook, LCD-Anzeigen, Segmentbalken, GATE/1-SHOT-Schalter, Regionsbuchstaben in den Lanes, BPM-Anzeige). Noch nicht in der DAW angesehen.
 
-1. "die loops brauchen einen indikator an welcher position sie sich gerade befinden"
+1. ERLEDIGT (2026-11-03, Playhead pro Lane; nicht umgesetzt: aktive Loop-2-Region hervorheben). "die loops brauchen einen indikator an welcher position sie sich gerade befinden"
 2. "können wir die anhand der wahrscheinlichkeit ermittelte entscheidung ob eine region aus loop 2 gespielt wird im hundertstel sekunden bereich schon vorher visuell anteasern? als sich ganz kurz aufbauenden balken oder die abgespielte regionen bekommen eine andere farbe und zu dieser wird dann schon ganz bevor die region abgespielt wird geblended"
    - Einschätzung: Machbar, aber die Ziehung muss dafür früher fallen. Heute würfelt der Sequencer erst beim Eintritt in die Loop-1-Region. Neu: kurz vor der Grenze (Vorlauf z. B. 100-250 ms) ziehen, Ergebnis (Region oder Stille) festhalten und am Eintritt genau dieses Ergebnis verwenden; die UI liest es lock-frei. Die Vorab-Ziehung muss verfallen bei Host-Sprung, Tempo-/Transportwechsel, Regel- oder Regionsänderung (Modelltausch) und bei Loop-Wrap, sonst teasert die UI etwas anderes als dann gespielt wird. Ein Vorlauf von 10-30 ms wäre unter einem UI-Frame (30-60 Hz) und kaum sichtbar; ein Aufbau-Effekt braucht eher 100+ ms. Vorlauf als einstellbarer Wert. Hängt mit dem offenen Double-Draw-Thema am Loop-Wrap zusammen, sollte gemeinsam angegangen werden.
 

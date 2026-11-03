@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
@@ -170,6 +171,25 @@ TEST_CASE("LoopLane: click selects the region under x and fires onRegionSelected
     f.lane.release();
     CHECK(f.selected == std::vector<int> { 1, 2 });
     CHECK(f.changes == 0); // selecting does not change regions
+}
+
+TEST_CASE("LoopLane: the playhead takes phases in 0..1 and hides on anything else", "[LoopLane][playhead]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    LoopLane lane;
+    lane.setSize(1000, 100);
+    CHECK(lane.playhead() == -1.0);
+    lane.setPlayhead(0.25);
+    CHECK(lane.playhead() == 0.25);
+    lane.setPlayhead(1.0);
+    CHECK(lane.playhead() == 1.0);
+    for (double bad : { -1.0, -0.001, 1.001, std::numeric_limits<double>::quiet_NaN(),
+                        std::numeric_limits<double>::infinity() })
+    {
+        lane.setPlayhead(0.5);
+        lane.setPlayhead(bad);
+        CHECK(lane.playhead() == -1.0);
+    }
 }
 
 TEST_CASE("LoopLane: empty data shows hint text and ignores clicks", "[LoopLane]")

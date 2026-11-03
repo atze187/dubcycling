@@ -69,6 +69,23 @@ public:
     // Tests: deterministic draws. Not while process() runs.
     void setRandom(std::function<float()> uniform01) { sequencer_.setRandom(std::move(uniform01)); }
 
+    // Where the loops were at the end of the last processed block, for the UI. Any thread; the three
+    // fields are read separately (relaxed), so a read during a block may mix two blocks, which is
+    // fine for a display. phase1/phase2 are 0..1 over the whole loop (Loop 2: its source position),
+    // -1 when there is nothing to show: transport stopped or invalid for phase1, no running Loop-2
+    // voice for phase2/region2.
+    struct Playhead
+    {
+        float phase1 = -1.0f;
+        float phase2 = -1.0f;
+        int region2 = -1;
+    };
+    Playhead playhead() const
+    {
+        return { head1_.load(std::memory_order_relaxed), head2_.load(std::memory_order_relaxed),
+                 headRegion2_.load(std::memory_order_relaxed) };
+    }
+
     // Frees models the audio thread no longer uses. Called by setModel(); may also be called
     // periodically from a non-audio thread to release memory sooner.
     void releaseRetired();
@@ -145,6 +162,17 @@ private:
     // A Runtime is freed only when it is neither next_ nor inUse_.
     std::atomic<Runtime*> next_ { nullptr };
     std::atomic<Runtime*> inUse_ { nullptr };
+
+    // Written by process(), read by playhead().
+    std::atomic<float> head1_ { -1.0f };
+    std::atomic<float> head2_ { -1.0f };
+    std::atomic<int> headRegion2_ { -1 };
+    void publishPlayhead(float phase1, float phase2, int region2)
+    {
+        head1_.store(phase1, std::memory_order_relaxed);
+        head2_.store(phase2, std::memory_order_relaxed);
+        headRegion2_.store(region2, std::memory_order_relaxed);
+    }
 
     // Audio-thread state.
     Runtime* current_ = nullptr;
