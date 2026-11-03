@@ -394,3 +394,51 @@ TEST_CASE("suggestedBarsFor uses the file length and the tempo", "[LoopLane][edi
     CHECK(dc::ui::suggestedBarsFor(dir.getChildFile("nope.wav"), 120.0) == 1);
     dir.deleteRecursively();
 }
+
+TEST_CASE("LoopLane: double-click on a region name edits it; Enter commits, Escape cancels", "[LoopLane][labels]")
+{
+    LaneFixture f;
+    f.lane.setRegions(regions({ 0.5 }));
+    std::vector<std::pair<int, juce::String>> edits;
+    f.lane.onLabelEdited = [&](int r, juce::String t) { edits.emplace_back(r, t); };
+
+    const float y = static_cast<float>(f.lane.getHeight()) - 8.0f;
+    CHECK(f.lane.labelAt(10.0f, y) == 0);
+    CHECK(f.lane.labelAt(510.0f, y) == 1);
+    CHECK(f.lane.labelAt(300.0f, y) == -1);          // between the names
+    CHECK(f.lane.labelAt(10.0f, 5.0f) == -1);        // too high
+
+    f.lane.doubleClickAt(10.0f, y);
+    REQUIRE(f.lane.isEditingLabel());
+    f.lane.labelEditor()->setText("  Kick  ", false);
+    f.lane.endLabelEdit(true);
+    CHECK_FALSE(f.lane.isEditingLabel());
+    REQUIRE(edits.size() == 1);
+    CHECK(edits[0] == std::make_pair(0, juce::String("Kick")));
+
+    REQUIRE(f.lane.beginLabelEdit(1));
+    f.lane.labelEditor()->setText("Snare", false);
+    f.lane.endLabelEdit(false);
+    CHECK(edits.size() == 1); // cancelled
+
+    REQUIRE(f.lane.beginLabelEdit(1));
+    f.lane.labelEditor()->setText("B", false); // the default letter of region 1
+    f.lane.endLabelEdit(true);
+    REQUIRE(edits.size() == 2);
+    CHECK(edits[1] == std::make_pair(1, juce::String()));
+}
+
+TEST_CASE("LoopLane: a double-click on empty lane still adds a boundary and names can be set", "[LoopLane][labels]")
+{
+    LaneFixture f;
+    int changes = 0;
+    f.lane.onRegionsChanged = [&](const RegionMap&) { ++changes; };
+    f.lane.setLabels({ "Kick" });
+    f.lane.doubleClickAt(300.0f, 30.0f); // away from every name
+    CHECK(changes == 1);
+    CHECK_FALSE(f.lane.isEditingLabel());
+
+    LoopLane empty; // no data: no editor
+    empty.setSize(1000, 100);
+    CHECK_FALSE(empty.beginLabelEdit(0));
+}

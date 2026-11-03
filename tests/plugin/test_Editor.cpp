@@ -736,3 +736,50 @@ TEST_CASE("Editor: adding or removing a boundary in a lane moves the rules with 
     CHECK(st.loop1.boundaries[0] != 0.25);
     CHECK(shapeOf(st.rules) == rulesBefore);
 }
+
+TEST_CASE("remapLabels: a new boundary leaves the new half unnamed, a merge keeps the left name", "[editor][remap][labels]")
+{
+    using dc::ui::remapLabelsForBoundaryEdit;
+    using Labels = std::vector<juce::String>;
+    const Labels names { "Kick", "", "Snare", "Hat" };
+    // insert in region 0: Kick stays, the new region 1 is unnamed, the rest moves up
+    CHECK(remapLabelsForBoundaryEdit(names, kFour, { 0.1, 0.25, 0.5, 0.75 }) == Labels { "Kick", "", "", "Snare", "Hat" });
+    // insert in the last region: no later names, nothing to shift
+    CHECK(remapLabelsForBoundaryEdit(names, kFour, { 0.25, 0.5, 0.75, 0.9 }) == names);
+    // merge 0 and 1: left name stays, the right one goes
+    CHECK(remapLabelsForBoundaryEdit(names, kFour, { 0.5, 0.75 }) == Labels { "Kick", "Snare", "Hat" });
+    // merge 1 and 2: the empty left name stays, Snare goes
+    CHECK(remapLabelsForBoundaryEdit(names, kFour, { 0.25, 0.75 }) == Labels { "Kick", "", "Hat" });
+    // a drag (same boundary count) changes nothing; trailing empties are trimmed
+    CHECK(remapLabelsForBoundaryEdit(names, kFour, { 0.3, 0.5, 0.75 }) == names);
+    CHECK(remapLabelsForBoundaryEdit(Labels { "Kick", "" }, kFour, { 0.25, 0.5, 0.75 }) == Labels { "Kick" });
+}
+
+TEST_CASE("Editor: a name typed into a lane is stored and follows its region when a boundary is added", "[editor][labels]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(f.wav("a.wav")); // slot 0: boundaries 0.25, 0.5
+    f.editor->lane(0).onLabelEdited(1, "Kick");
+    CHECK(f.proc.getPluginState().loop1.labels == std::vector<juce::String> { "", "Kick" });
+    CHECK(f.editor->rulePanel().region1() >= 0);
+
+    auto& lane = f.editor->lane(0);
+    lane.doubleClickAt(0.1f * static_cast<float>(lane.getWidth())); // splits region 0
+    CHECK(f.proc.getPluginState().loop1.labels == std::vector<juce::String> { "", "", "Kick" });
+
+    f.editor->lane(0).onLabelEdited(2, ""); // back to the default letter
+    CHECK(f.proc.getPluginState().loop1.labels.empty());
+}
+
+TEST_CASE("Editor: replacing a loop clears its names", "[editor][labels]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(f.wav("a.wav"));
+    f.editor->lane(0).onLabelEdited(0, "Kick");
+    REQUIRE(f.proc.getPluginState().loop1.labels.size() == 1);
+    f.editor->loadFile(0, f.wav("b.wav"));
+    REQUIRE(f.pendingAnswer);
+    f.pendingAnswer(true);
+    f.proc.waitForLoads();
+    CHECK(f.proc.getPluginState().loop1.labels.empty());
+}

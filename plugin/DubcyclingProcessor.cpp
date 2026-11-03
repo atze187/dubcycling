@@ -175,6 +175,7 @@ void DubcyclingProcessor::applyEdit(const PluginState& edited) {
             const LoopRef& src = i == 0 ? clean->loop1 : clean->loop2;
             dst.bars = src.bars;
             dst.boundaries = src.boundaries;
+            dst.labels = src.labels;
         }
         state_.rules = clean->rules;
     }

@@ -19,7 +19,7 @@ Punkte stehen so, wie der Nutzer sie formuliert hat. Einschätzungen darunter si
 
    - Entschieden (Nutzer): Vorschau ist immer möglich (auch bei gestopptem Host), immer One-Shot, und wird dazugemischt.
 
-4. "die labels der regionen bearbeitbar machen"
+4. ERLEDIGT (2026-11-03; Umbenennen per Doppelklick auf den Namen in der Lane oder in der Regelzeile von Loop 2, max. 16 Zeichen; Loop-1-Name steht im Regel-Titel; AUTO (Vorschlag) lässt die Namen wie die Regeln auf ihren Indizes stehen). "die labels der regionen bearbeitbar machen"
    - Einschätzung: Pro Region ein frei benennbares Label, Standard bleibt A, B, C. Im State speichern (Versionsfeld erhöhen, Längenlimit z. B. 16 Zeichen, alte Sessions laden weiter). Labels müssen beim Hinzufügen/Entfernen von Grenzen mit ihren Regionen wandern, wie die Regeln (`remapRulesForBoundaryEdit`). Sie erscheinen in der Lane und in den Regelzeilen. Bearbeiten nicht per Doppelklick in die Lane (der fügt Grenzen hinzu/entfernt sie), sondern per Doppelklick auf das Label-Feld oder im Regelpanel.
 
 5. Presets (später): "eventuell nehmen wir dann noch presets mit rein (das kann vor allem später interessant werden, wenn man auch nicht-drums-loops verwendet)"

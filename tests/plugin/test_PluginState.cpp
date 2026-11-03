@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <juce_core/juce_core.h>
 #include "plugin/PluginState.h"
@@ -186,4 +187,55 @@ TEST_CASE("PluginState deserialize caps rule and target counts and drops absurd 
     CHECK(r->rules[0].targets.size() == 1024);
     for (const auto& e : r->rules)
         CHECK(e.region1 < 4096);
+}
+
+TEST_CASE("PluginState roundtrip keeps region labels by index", "[PluginState][labels]")
+{
+    auto s = sample();
+    s.loop1.labels = { "Kick", "", "Snare" };
+    s.loop2.labels = { "", "Fill" };
+    const auto block = serialize(s);
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    CHECK(r->loop1.labels == std::vector<juce::String> { "Kick", "", "Snare" });
+    CHECK(r->loop2.labels == std::vector<juce::String> { "", "Fill" });
+}
+
+TEST_CASE("PluginState without labels loads with none (older sessions)", "[PluginState][labels]")
+{
+    const auto block = serialize(sample());
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    CHECK(r->loop1.labels.empty());
+    CHECK(r->loop2.labels.empty());
+    CHECK(block.toString().contains("Labels") == false); // nothing written when there is nothing to keep
+}
+
+TEST_CASE("sanitizeLabel trims, drops control characters and cuts to kMaxLabelLength", "[PluginState][labels]")
+{
+    CHECK(sanitizeLabel("  Kick  ") == "Kick");
+    CHECK(sanitizeLabel(juce::String("Ki") + juce::String::charToString(7) + "ck\n") == "Kick");
+    CHECK(sanitizeLabel("   ") == "");
+    CHECK(sanitizeLabel("12345678901234567890") == "1234567890123456");
+    CHECK(sanitizeLabel("123456789012345 ABC") == "123456789012345"); // cut after 16, then trimmed again
+    CHECK(sanitizeLabel(juce::String(juce::CharPointer_UTF8("Bass \xc3\xa4"))) == juce::String(juce::CharPointer_UTF8("Bass \xc3\xa4")));
+}
+
+TEST_CASE("PluginState sanitizes labels after load and drops absurd ones", "[PluginState][labels][hardening]")
+{
+    const juce::String xml =
+        "<DubcyclingState version=\"1\"><Loop1 bars=\"1\"><Labels>"
+        "<Label region=\"2\" text=\"  Hat \"/>"
+        "<Label region=\"-1\" text=\"neg\"/>"
+        "<Label region=\"4096\" text=\"huge\"/>"
+        "<Label region=\"0\" text=\"   \"/>"
+        "<Label region=\"1\" text=\"12345678901234567890\"/>"
+        "</Labels></Loop1><Loop2 bars=\"1\"/></DubcyclingState>";
+    const auto utf8 = xml.toRawUTF8();
+    const auto r = deserialize(utf8, std::strlen(utf8));
+    REQUIRE(r.has_value());
+    REQUIRE(r->loop1.labels.size() == 3);
+    CHECK(r->loop1.labels[0] == "");
+    CHECK(r->loop1.labels[1] == "1234567890123456");
+    CHECK(r->loop1.labels[2] == "Hat");
 }

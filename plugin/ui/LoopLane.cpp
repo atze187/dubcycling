@@ -1,6 +1,7 @@
 #include "plugin/ui/LoopLane.h"
 #include <algorithm>
 #include <cmath>
+#include "plugin/PluginState.h"
 #include "plugin/ui/PanelLook.h"
 #include "plugin/ui/RulePanel.h"
 
@@ -9,6 +10,8 @@ namespace dc::ui {
 namespace {
 constexpr float kHit = 5.0f; // hit tolerance of a boundary, in pixels left and right
 constexpr float kCorner = 0.0f;
+constexpr float kLabelFont = 10.0f;
+constexpr float kLabelCharW = 6.2f; // monospace advance at kLabelFont, a little generous
 
 const juce::Colour kBackground { 0xff101215 };
 const juce::Colour kOutline { 0xff2a2e35 };
@@ -58,6 +61,7 @@ void LoopLane::setData(std::shared_ptr<const StereoData> data)
     if (data == data_)
         return;
     cancelDrag();
+    endLabelEdit(false);
     data_ = std::move(data);
     peaks_.clear();
     peaksData_ = nullptr;
@@ -76,6 +80,7 @@ void LoopLane::setRegions(const RegionMap& regions)
 {
     if (isDragging() || regions.boundaries == regions_.boundaries)
         return;
+    endLabelEdit(false); // its region may be gone
     regions_ = regions;
     selected_ = std::clamp(selected_, 0, regions_.regionCount() - 1);
     repaint();
@@ -88,6 +93,85 @@ void LoopLane::setSelectedRegion(int region)
         return;
     selected_ = r;
     repaint();
+}
+
+void LoopLane::setLabels(const std::vector<juce::String>& labels)
+{
+    if (labels == labels_)
+        return;
+    labels_ = labels;
+    repaint();
+}
+
+juce::Rectangle<float> LoopLane::labelRect(int region) const
+{
+    if (!hasData() || region < 0 || region >= regions_.regionCount())
+        return {};
+    const auto [lo, hi] = regions_.bounds(region);
+    const float width = xFor(hi) - xFor(lo) - 8.0f;
+    if (width < 12.0f)
+        return {};
+    const float wanted = 6.0f + kLabelCharW * static_cast<float>(regionLabel(labels_, region).length());
+    return { xFor(lo) + 4.0f, static_cast<float>(getHeight()) - 14.0f, std::min(wanted, width), 12.0f };
+}
+
+int LoopLane::labelAt(float x, float y) const
+{
+    for (int r = 0; r < regions_.regionCount(); ++r)
+        if (labelRect(r).contains(x, y))
+            return r;
+    return -1;
+}
+
+bool LoopLane::beginLabelEdit(int region)
+{
+    endLabelEdit(true);
+    if (!interactive() || region < 0 || region >= regions_.regionCount())
+        return false;
+    editingRegion_ = region;
+    labelEditor_ = std::make_unique<juce::TextEditor>();
+    auto& ed = *labelEditor_;
+    ed.setFont(juce::Font(panel::mono(11.0f)));
+    ed.setInputRestrictions(kMaxLabelLength);
+    ed.setColour(juce::TextEditor::backgroundColourId, panel::kLcd);
+    ed.setColour(juce::TextEditor::textColourId, panel::kAmber);
+    ed.setColour(juce::TextEditor::outlineColourId, panel::kAmber);
+    ed.setColour(juce::TextEditor::focusedOutlineColourId, panel::kAmber);
+    ed.setText(regionLabel(labels_, region), false);
+    ed.onReturnKey = [this] { endLabelEdit(true); };
+    ed.onEscapeKey = [this] { endLabelEdit(false); };
+    ed.onFocusLost = [this] { endLabelEdit(true); };
+    const auto [lo, hi] = regions_.bounds(region);
+    juce::ignoreUnused(hi);
+    const float x = xFor(lo) + 2.0f;
+    const int w = std::min(120, std::max(40, getWidth() - static_cast<int>(x)));
+    ed.setBounds(juce::roundToInt(x), getHeight() - 20, w, 18);
+    addAndMakeVisible(ed);
+    ed.grabKeyboardFocus();
+    ed.selectAll();
+    repaint();
+    return true;
+}
+
+void LoopLane::endLabelEdit(bool commit)
+{
+    if (labelEditor_ == nullptr)
+        return;
+    const int region = editingRegion_;
+    // Take it out of the member first: removing a focused child fires its onFocusLost, which must
+    // find the lane no longer editing.
+    auto ed = std::move(labelEditor_);
+    editingRegion_ = -1;
+    const auto typed = ed->getText();
+    removeChildComponent(ed.get());
+    retiredEditor_ = std::move(ed); // may be the caller: freed on the next edit or with the lane
+    repaint();
+    if (!commit || !onLabelEdited)
+        return;
+    auto text = sanitizeLabel(typed);
+    if (text == regionLetters(region))
+        text = {}; // typing the default letter means "no custom name"
+    onLabelEdited(region, text);
 }
 
 void LoopLane::setPlayhead(double phase)
@@ -189,6 +273,17 @@ void LoopLane::cancelDrag()
     repaint();
 }
 
+void LoopLane::doubleClickAt(float x, float y)
+{
+    if (const int r = labelAt(x, y); r >= 0)
+    {
+        release();
+        beginLabelEdit(r);
+        return;
+    }
+    doubleClickAt(x);
+}
+
 void LoopLane::doubleClickAt(float x)
 {
     release();
@@ -280,15 +375,14 @@ void LoopLane::paint(juce::Graphics& g)
         for (double b : regions_.boundaries)
             g.fillRect(xFor(b) - 1.0f, 0.0f, 2.0f, bounds.getHeight());
 
-        g.setFont(panel::mono(10.0f));
+        g.setFont(panel::mono(kLabelFont));
         for (int r = 0; r < regions_.regionCount(); ++r)
         {
-            const auto [from, to] = regions_.bounds(r);
-            if (xFor(to) - xFor(from) < 16.0f)
+            const auto rect = labelRect(r);
+            if (rect.isEmpty() || r == editingRegion_)
                 continue;
             g.setColour(r == selected_ ? kBoundary : kHint);
-            g.drawText(regionLetters(r), juce::Rectangle<float>(xFor(from) + 4.0f, bounds.getBottom() - 14.0f, 24.0f, 12.0f),
-                       juce::Justification::centredLeft);
+            g.drawText(regionLabel(labels_, r), rect, juce::Justification::centredLeft);
         }
     }
 

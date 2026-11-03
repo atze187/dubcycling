@@ -10,6 +10,9 @@ namespace dc::ui {
 // Spreadsheet-style row letters: 0 -> "A", 25 -> "Z", 26 -> "AA", ...
 juce::String regionLetters(int index);
 
+// The name shown for a region: its custom label if there is one, else regionLetters(index).
+juce::String regionLabel(const std::vector<juce::String>& labels, int index);
+
 // The rules of one Loop-1 region: one row per CURRENT Loop-2 region
 //   A  |-------------o-------|  70 %  [GATE]
 // (slider 0..100 %, percent value, Gate/One-Shot toggle) and "Stille: x %" for the remainder.
@@ -37,6 +40,11 @@ public:
     void setContext(int region1, int region2Count, const std::vector<RuleTarget>& targets);
 
     std::function<void(int region1, std::vector<RuleTarget> targets)> onChanged;
+    // A Loop-2 row's name was edited by double-click (already sanitized; empty = back to the letter).
+    std::function<void(int region2, juce::String text)> onLabelEdited;
+
+    // Names of the Loop-2 regions (rows) and of the selected Loop-1 region (title).
+    void setLabels(const std::vector<juce::String>& loop1Labels, const std::vector<juce::String>& loop2Labels);
 
     void setWeight(int row, float percent);
     void setMode(int row, PlayMode mode);
@@ -63,6 +71,7 @@ private:
     struct Row;
     static constexpr int kRowH = 20;
     static constexpr int kHeaderH = 22;
+    static constexpr int kLabelW = 72; // name column of a row (kMaxLabelLength characters fit scaled)
 
     float otherPercent(int row) const; // everything except this row's own target
     float stalePercent() const;        // stored targets no row shows
@@ -73,6 +82,8 @@ private:
     void rebuildRows(int count);
 
     int region1_ = 0;
+    std::vector<juce::String> labels1_, labels2_;
+    void updateTitle();
     std::vector<RuleTarget> stored_; // the full list as last set / published, stale entries included
     std::vector<std::unique_ptr<Row>> rows_;
     int dragRow_ = -1;

@@ -38,6 +38,19 @@ public:
     // clamped into the new region count.
     void setRegions(const RegionMap& regions);
     void setSelectedRegion(int region);
+    // Custom region names by index (see LoopRef::labels); missing or empty = the default letter.
+    void setLabels(const std::vector<juce::String>& labels);
+    // Fired when an inline edit is committed: `text` is sanitized, empty when the user typed nothing
+    // or the default letter (= remove the custom name).
+    std::function<void(int region, juce::String text)> onLabelEdited;
+    // Region whose name is drawn under the point, or -1 (names of very narrow regions are not drawn).
+    int labelAt(float x, float y) const;
+    // Opens the inline editor over a region's name; false if the lane has no data or no such region.
+    // A running edit is committed first. Enter or leaving the field commits, Escape cancels.
+    bool beginLabelEdit(int region);
+    void endLabelEdit(bool commit);
+    bool isEditingLabel() const { return labelEditor_ != nullptr; }
+    juce::TextEditor* labelEditor() { return labelEditor_.get(); }
     // Play position as a phase over the whole loop (0..1); anything outside (e.g. -1) hides it.
     // Repaints only the strip the line moved across.
     void setPlayhead(double phase);
@@ -63,12 +76,14 @@ public:
     void release();
     // On a boundary: removes it; elsewhere: adds a boundary at x.
     void doubleClickAt(float x);
+    // Same, but a double-click on a region's name edits the name instead.
+    void doubleClickAt(float x, float y);
 
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override { pressAt(e.position.x); }
     void mouseDrag(const juce::MouseEvent& e) override { dragTo(e.position.x); }
     void mouseUp(const juce::MouseEvent&) override { release(); }
-    void mouseDoubleClick(const juce::MouseEvent& e) override { doubleClickAt(e.position.x); }
+    void mouseDoubleClick(const juce::MouseEvent& e) override { doubleClickAt(e.position.x, e.position.y); }
     void mouseMove(const juce::MouseEvent& e) override;
 
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
@@ -92,6 +107,11 @@ private:
     int dragging_ = -1;
     float grabOffset_ = 0.0f; // boundary x minus cursor x at the press
     RegionMap dragStart_;     // regions at the press, to detect a real move and to cancel
+    juce::Rectangle<float> labelRect(int region) const; // empty when the name is not drawn
+    std::vector<juce::String> labels_;
+    std::unique_ptr<juce::TextEditor> labelEditor_;
+    std::unique_ptr<juce::TextEditor> retiredEditor_; // finished editor, freed later (it may still be on the stack)
+    int editingRegion_ = -1;
     bool dropHighlight_ = false;
     double playhead_ = -1.0; // -1 = hidden
     std::vector<PeakColumn> peaks_;

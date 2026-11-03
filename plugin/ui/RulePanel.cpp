@@ -1,6 +1,7 @@
 #include "plugin/ui/RulePanel.h"
 #include <algorithm>
 #include <cmath>
+#include "plugin/PluginState.h"
 #include "plugin/ui/PanelLook.h"
 
 namespace dc::ui {
@@ -86,14 +87,35 @@ juce::String regionLetters(int index)
     return s;
 }
 
+juce::String regionLabel(const std::vector<juce::String>& labels, int index)
+{
+    if (index >= 0 && static_cast<std::size_t>(index) < labels.size() && labels[static_cast<std::size_t>(index)].isNotEmpty())
+        return labels[static_cast<std::size_t>(index)];
+    return regionLetters(index);
+}
+
 struct RulePanel::Row final : public juce::Component
 {
     Row(RulePanel& owner, int index) : owner_(owner), index_(index)
     {
-        letter.setText(regionLetters(index), juce::dontSendNotification);
-        letter.setTooltip("Loop 2, Region " + juce::String(index + 1));
+        letter.setText(regionLabel(owner.labels2_, index), juce::dontSendNotification);
+        letter.setTooltip("Loop 2, Region " + juce::String(index + 1) + utf8(" \xe2\x80\x93 Doppelklick zum Umbenennen"));
         letter.setColour(juce::Label::textColourId, kText);
+        letter.setColour(juce::Label::textWhenEditingColourId, kAmber);
+        letter.setColour(juce::Label::backgroundWhenEditingColourId, kLcd);
         letter.setFont(mono(12.0f, true));
+        letter.setMinimumHorizontalScale(0.8f);
+        letter.setEditable(false, true, false);
+        letter.onEditorShow = [this] {
+            if (auto* ed = letter.getCurrentTextEditor())
+                ed->setInputRestrictions(kMaxLabelLength);
+        };
+        letter.onTextChange = [this] {
+            const auto text = sanitizeLabel(letter.getText());
+            letter.setText(text.isNotEmpty() ? text : regionLetters(index_), juce::dontSendNotification);
+            if (owner_.onLabelEdited)
+                owner_.onLabelEdited(index_, text);
+        };
         addAndMakeVisible(letter);
 
         slider.setSliderStyle(juce::Slider::LinearHorizontal);
@@ -148,7 +170,7 @@ struct RulePanel::Row final : public juce::Component
     void resized() override
     {
         auto r = getLocalBounds().reduced(0, 2);
-        letter.setBounds(r.removeFromLeft(22));
+        letter.setBounds(r.removeFromLeft(kLabelW));
         toggle.setBounds(r.removeFromRight(84));
         r.removeFromRight(8);
         value.setBounds(r.removeFromRight(42));
@@ -197,7 +219,28 @@ RulePanel::~RulePanel()
 
 juce::String RulePanel::rowLabel(int row) const
 {
-    return row >= 0 && row < rowCount() ? regionLetters(row) : juce::String();
+    return row >= 0 && row < rowCount() ? regionLabel(labels2_, row) : juce::String();
+}
+
+void RulePanel::setLabels(const std::vector<juce::String>& loop1Labels, const std::vector<juce::String>& loop2Labels)
+{
+    if (loop1Labels == labels1_ && loop2Labels == labels2_)
+        return;
+    labels1_ = loop1Labels;
+    labels2_ = loop2Labels;
+    for (int i = 0; i < rowCount(); ++i)
+    {
+        auto& letter = rows_[static_cast<std::size_t>(i)]->letter;
+        if (!letter.isBeingEdited())
+            letter.setText(regionLabel(labels2_, i), juce::dontSendNotification);
+    }
+    updateTitle();
+}
+
+void RulePanel::updateTitle()
+{
+    title_.setText(utf8("Regeln f\xc3\xbcr Loop 1 \xe2\x80\x93 ") + regionLabel(labels1_, region1_),
+                   juce::dontSendNotification);
 }
 
 float RulePanel::weightPercent(int row) const
@@ -263,7 +306,7 @@ void RulePanel::setContext(int region1, int region2Count, const std::vector<Rule
             }
         row.show();
     }
-    title_.setText(utf8("Regeln f\xc3\xbcr Loop-1-Region ") + juce::String(region1_ + 1), juce::dontSendNotification);
+    updateTitle();
     updateSilence();
 }
 

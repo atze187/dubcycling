@@ -49,6 +49,14 @@ std::vector<RuleEntry> remapRulesForBoundaryEdit(std::vector<RuleEntry> rules, i
                                                  const std::vector<double>& before,
                                                  const std::vector<double>& after);
 
+// Region names are keyed by region index like the rules, with the same rule: a new boundary splits
+// old region k into k and k+1 (k keeps its name, the new region k+1 has none, later names shift
+// up); removing the boundary between k and k+1 keeps the left name and drops k+1's. Any other
+// change (a drag, several boundaries at once) returns the names unchanged. No trailing empty entries.
+std::vector<juce::String> remapLabelsForBoundaryEdit(std::vector<juce::String> labels,
+                                                     const std::vector<double>& before,
+                                                     const std::vector<double>& after);
+
 // Title and text of the "replace loop?" confirmation (slot 0 = Loop 1).
 juce::String replaceConfirmTitle(int slot);
 juce::String replaceConfirmMessage();
@@ -112,6 +120,8 @@ private:
     int tick_ = 0;
     // New boundaries from a lane; the rules are remapped (remapRulesForBoundaryEdit) in the same applyEdit.
     void regionsEdited(int slot, const RegionMap& regions);
+    // A region name was edited in a lane or in the rule panel; empty text removes the custom name.
+    void labelEdited(int slot, int region, const juce::String& text);
     // Shows the rule of the selected Loop-1 region for the current Loop-2 region count.
     void updateRules(const PluginState& st);
     // Replaces the entry for region1 (other entries, stale ones included, stay), then applyEdit.

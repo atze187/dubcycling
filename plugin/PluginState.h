@@ -13,12 +13,22 @@ constexpr int kMaxRuleEntries = 1024; // rule entries (Loop-1 regions with a rul
 constexpr int kMaxRuleTargets = 1024; // targets per rule entry
 constexpr int kMaxRegion1 = 4096;     // region1 at or above this is dropped (RuleSet's limit)
 
+constexpr int kMaxLabelLength = 16;    // characters of a region label
+constexpr int kMaxLabelEntries = 1024; // custom labels kept per loop when loading
+
+// Trimmed, control characters removed, cut to kMaxLabelLength characters. Empty = "no custom label".
+juce::String sanitizeLabel(const juce::String& text);
+
 // Reference to a loop file (never the audio itself) plus its region boundaries.
 struct LoopRef
 {
     juce::String path, fileName, hash; // hash = SHA-256 (hex) of the whole file
     int bars = 1;
     std::vector<double> boundaries;
+    // Custom region names by region index; an empty or missing entry means the default letter
+    // (A, B, ...). Optional in the stored state: sessions saved without labels load unchanged, so
+    // kStateVersion stays 1. After deserialize the vector has no trailing empty entries.
+    std::vector<juce::String> labels;
 };
 
 struct RuleEntry

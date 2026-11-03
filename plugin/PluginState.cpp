@@ -35,6 +35,17 @@ juce::ValueTree loopToTree(const juce::String& type, const LoopRef& l)
     t.setProperty("hash", l.hash, nullptr);
     t.setProperty("bars", l.bars, nullptr);
     t.setProperty("boundaries", joinDoubles(l.boundaries), nullptr);
+    juce::ValueTree labels("Labels");
+    for (std::size_t i = 0; i < l.labels.size() && i < static_cast<std::size_t>(kMaxRegion1); ++i)
+        if (const auto text = sanitizeLabel(l.labels[i]); text.isNotEmpty())
+        {
+            juce::ValueTree n("Label");
+            n.setProperty("region", static_cast<int>(i), nullptr);
+            n.setProperty("text", text, nullptr);
+            labels.appendChild(n, nullptr);
+        }
+    if (labels.getNumChildren() > 0)
+        t.appendChild(labels, nullptr);
     return t;
 }
 
@@ -49,10 +60,33 @@ LoopRef loopFromTree(const juce::ValueTree& t)
     for (double b : splitDoubles(t.getProperty("boundaries").toString()))
         map.addBoundary(b);
     l.boundaries = map.boundaries;
+    int kept = 0;
+    for (auto n : t.getChildWithName("Labels"))
+    {
+        if (kept >= kMaxLabelEntries)
+            break;
+        const int region = n.getProperty("region", -1);
+        const auto text = sanitizeLabel(n.getProperty("text").toString());
+        if (region < 0 || region >= kMaxRegion1 || text.isEmpty())
+            continue;
+        if (l.labels.size() <= static_cast<std::size_t>(region))
+            l.labels.resize(static_cast<std::size_t>(region) + 1);
+        l.labels[static_cast<std::size_t>(region)] = text;
+        ++kept;
+    }
     return l;
 }
 
 } // namespace
+
+juce::String sanitizeLabel(const juce::String& text)
+{
+    juce::String out;
+    for (auto p = text.getCharPointer(); !p.isEmpty(); ++p)
+        if (const auto c = *p; c >= 32 && c != 127)
+            out += juce::String::charToString(c);
+    return out.trim().substring(0, kMaxLabelLength).trim();
+}
 
 juce::MemoryBlock serialize(const PluginState& s)
 {

@@ -45,6 +45,7 @@ std::uint64_t SlotTracker::beginReplace(int slot, LoopRef replacement)
         return 0;
     Slot& s = slots_[slot];
     replacement.boundaries.clear();
+    replacement.labels.clear();
     s.pending = std::move(replacement);
     s.pendingTicket = nextTicket_++;
     return s.pendingTicket;

@@ -131,6 +131,25 @@ std::vector<RuleEntry> remapRulesForBoundaryEdit(std::vector<RuleEntry> rules, i
     return rules;
 }
 
+std::vector<juce::String> remapLabelsForBoundaryEdit(std::vector<juce::String> labels,
+                                                     const std::vector<double>& before,
+                                                     const std::vector<double>& after)
+{
+    if (const int k = singleInsertIndex(before, after); k >= 0)
+    {
+        if (labels.size() > static_cast<std::size_t>(k) + 1)
+            labels.insert(labels.begin() + k + 1, juce::String());
+    }
+    else if (const int k2 = singleInsertIndex(after, before); k2 >= 0)
+    {
+        if (labels.size() > static_cast<std::size_t>(k2) + 1)
+            labels.erase(labels.begin() + k2 + 1);
+    }
+    while (!labels.empty() && labels.back().isEmpty())
+        labels.pop_back();
+    return labels;
+}
+
 Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), proc_(proc)
 {
     setLookAndFeel(&look_);
@@ -188,6 +207,7 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
 
         lanes_[i].onRegionsChanged = [this, i](const RegionMap& m) { regionsEdited(i, m); };
         lanes_[i].onFileDropped = [this, i](const juce::File& f) { loadFile(i, f); };
+        lanes_[i].onLabelEdited = [this, i](int region, juce::String text) { labelEdited(i, region, text); };
         addAndMakeVisible(lanes_[i]);
     }
 
@@ -198,6 +218,7 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
     rules_.onChanged = [this](int region1, std::vector<RuleTarget> targets) {
         rulesEdited(region1, std::move(targets));
     };
+    rules_.onLabelEdited = [this](int region, juce::String text) { labelEdited(1, region, text); };
     addAndMakeVisible(rules_);
 
     setResizable(true, true);
@@ -228,6 +249,7 @@ void Editor::refresh()
         RegionMap regions;
         regions.boundaries = ref.boundaries;
         lanes_[i].setRegions(regions);
+        lanes_[i].setLabels(ref.labels);
         suggest_[i].setEnabled(status == DubcyclingProcessor::SlotStatus::Loaded && lanes_[i].hasData());
         bars_[i].setValue(static_cast<double>(ref.bars), juce::dontSendNotification);
 
@@ -288,6 +310,7 @@ void Editor::refresh()
     const double bpm = proc_.hostBpm();
     bpm_.setText(std::isfinite(bpm) && bpm > 0.0 ? juce::String(bpm, 1) : juce::String("--"),
                  juce::dontSendNotification);
+    rules_.setLabels(st.loop1.labels, st.loop2.labels);
     updateRules(st);
     cycle_.setText("Zyklus: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Takte",
                    juce::dontSendNotification);
@@ -305,8 +328,30 @@ void Editor::regionsEdited(int slot, const RegionMap& regions)
     PluginState st = proc_.getPluginState();
     // Rules move with their regions; boundaries and rules go out in one applyEdit (one model swap).
     st.rules = remapRulesForBoundaryEdit(std::move(st.rules), slot, refOf(st, slot).boundaries, regions.boundaries);
+    refOf(st, slot).labels = remapLabelsForBoundaryEdit(std::move(refOf(st, slot).labels),
+                                                        refOf(st, slot).boundaries, regions.boundaries);
     refOf(st, slot).boundaries = regions.boundaries;
     proc_.applyEdit(st);
+}
+
+void Editor::labelEdited(int slot, int region, const juce::String& text)
+{
+    if (region < 0 || region >= kMaxRegion1)
+        return;
+    PluginState st = proc_.getPluginState();
+    auto& labels = refOf(st, slot).labels;
+    const auto index = static_cast<std::size_t>(region);
+    if (labels.size() <= index)
+    {
+        if (text.isEmpty())
+            return;
+        labels.resize(index + 1);
+    }
+    labels[index] = sanitizeLabel(text);
+    while (!labels.empty() && labels.back().isEmpty())
+        labels.pop_back();
+    proc_.applyEdit(st);
+    refresh();
 }
 
 void Editor::updateRules(const PluginState& st)
