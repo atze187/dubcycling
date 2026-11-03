@@ -1,16 +1,16 @@
 #include "plugin/ui/RulePanel.h"
 #include <algorithm>
 #include <cmath>
+#include "plugin/ui/PanelLook.h"
 
 namespace dc::ui {
 
 namespace {
 constexpr float kEps = 0.0005f;
 
-const juce::Colour kText { 0xffd7dbe0 };
-const juce::Colour kDim { 0xff9aa1ab };
-const juce::Colour kOutline { 0xff3a3f47 };
-const juce::Colour kAccent { 0xff5aa9e6 };
+using namespace panel;
+
+const juce::Colour kOutline { 0xff2a2e35 };
 const juce::Colour kOneShot { 0xffd69a3c };
 
 juce::String utf8(const char* s) { return juce::String(juce::CharPointer_UTF8(s)); }
@@ -29,7 +29,43 @@ float toPercent(float weight)
 }
 
 juce::String percentString(float percent) { return juce::String(juce::roundToInt(percent)) + " %"; }
-juce::String modeText(PlayMode m) { return m == PlayMode::Gate ? "GATE" : "ONESHOT"; }
+
+// Two-position switch: GATE | 1-SHOT, the active side lit. A click anywhere flips it.
+struct ModeSwitch final : public juce::Component, public juce::SettableTooltipClient
+{
+    ModeSwitch()
+    {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        setTooltip("Gate: l" + utf8("\xc3\xa4") + "uft so lange wie die Loop-1-Region. One-Shot: einmal, dann Ende.");
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced(0.5f);
+        const auto cell = [&](juce::Rectangle<float> area, const char* text, bool active, juce::Colour on,
+                              juce::Colour onText) {
+            g.setColour(active ? on : kWindow);
+            g.fillRect(area);
+            g.setColour(active ? onText : kDim);
+            g.setFont(mono(10.0f));
+            g.drawText(text, area, juce::Justification::centred);
+        };
+        auto left = r.removeFromLeft(r.getWidth() * 0.5f);
+        cell(left, "GATE", mode == PlayMode::Gate, kEdgeLight, kText);
+        cell(r, "1-SHOT", mode == PlayMode::OneShot, juce::Colour(0xff6b4a14), juce::Colour(0xffffd9a0));
+        g.setColour(kEdgeLight);
+        g.drawRect(getLocalBounds().toFloat().reduced(0.5f), 1.0f);
+    }
+
+    void mouseUp(const juce::MouseEvent& e) override
+    {
+        if (getLocalBounds().contains(e.getPosition()) && onClick)
+            onClick();
+    }
+
+    PlayMode mode = PlayMode::Gate;
+    std::function<void()> onClick;
+};
 
 bool same(const std::vector<RuleTarget>& a, const std::vector<RuleTarget>& b)
 {
@@ -57,7 +93,7 @@ struct RulePanel::Row final : public juce::Component
         letter.setText(regionLetters(index), juce::dontSendNotification);
         letter.setTooltip("Loop 2, Region " + juce::String(index + 1));
         letter.setColour(juce::Label::textColourId, kText);
-        letter.setFont(juce::FontOptions(15.0f, juce::Font::bold));
+        letter.setFont(mono(12.0f, true));
         addAndMakeVisible(letter);
 
         slider.setSliderStyle(juce::Slider::LinearHorizontal);
@@ -79,6 +115,7 @@ struct RulePanel::Row final : public juce::Component
 
         value.setJustificationType(juce::Justification::centredRight);
         value.setColour(juce::Label::textColourId, kText);
+        value.setFont(mono(11.0f));
         addAndMakeVisible(value);
 
         toggle.onClick = [this] {
@@ -95,18 +132,27 @@ struct RulePanel::Row final : public juce::Component
         slider.setValue(static_cast<double>(percent), juce::dontSendNotification);
         updating = false;
         value.setText(percentString(percent), juce::dontSendNotification);
-        toggle.setButtonText(modeText(mode));
-        toggle.setColour(juce::TextButton::buttonColourId, mode == PlayMode::Gate ? kOutline : kOneShot.darker(0.4f));
-        toggle.setColour(juce::TextButton::textColourOffId, mode == PlayMode::Gate ? kDim : kText);
+        toggle.mode = mode;
+        toggle.repaint();
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        if (index_ > 0)
+        {
+            g.setColour(juce::Colour(0xff20242a));
+            g.drawHorizontalLine(0, 0.0f, static_cast<float>(getWidth()));
+        }
     }
 
     void resized() override
     {
         auto r = getLocalBounds().reduced(0, 2);
-        letter.setBounds(r.removeFromLeft(34));
-        toggle.setBounds(r.removeFromRight(86));
+        letter.setBounds(r.removeFromLeft(22));
+        toggle.setBounds(r.removeFromRight(84));
         r.removeFromRight(8);
-        value.setBounds(r.removeFromRight(48));
+        value.setBounds(r.removeFromRight(42));
+        r.removeFromRight(4);
         slider.setBounds(r);
     }
 
@@ -114,7 +160,7 @@ struct RulePanel::Row final : public juce::Component
     int index_;
     juce::Label letter, value;
     juce::Slider slider;
-    juce::TextButton toggle;
+    ModeSwitch toggle;
     float percent = 0.0f;
     PlayMode mode = PlayMode::Gate;
     bool touched = false; // edited since the last setContext/publish and not yet in stored_
@@ -123,12 +169,12 @@ struct RulePanel::Row final : public juce::Component
 
 RulePanel::RulePanel()
 {
-    title_.setFont(juce::FontOptions(15.0f, juce::Font::bold));
+    title_.setFont(mono(11.0f, true));
     title_.setColour(juce::Label::textColourId, kText);
     addAndMakeVisible(title_);
 
-    silence_.setColour(juce::Label::textColourId, kDim);
-    silence_.setJustificationType(juce::Justification::centredRight);
+    styleLcd(silence_, kAmber);
+    staleHint_.setFont(mono(11.0f));
     staleHint_.setColour(juce::Label::textColourId, kOneShot);
     staleHint_.setJustificationType(juce::Justification::centredRight);
     addChildComponent(staleHint_);
@@ -386,19 +432,22 @@ void RulePanel::publish()
 
 void RulePanel::paint(juce::Graphics& g)
 {
+    g.fillAll(kStrip);
     g.setColour(kOutline);
     g.drawRect(getLocalBounds(), 1);
+    g.drawHorizontalLine(kHeaderH + 3, 1.0f, static_cast<float>(getWidth() - 1));
 }
 
 void RulePanel::resized()
 {
-    auto r = getLocalBounds().reduced(8, 6);
-    auto top = r.removeFromTop(24);
-    silence_.setBounds(top.removeFromRight(150));
+    auto r = getLocalBounds().reduced(6, 3);
+    auto top = r.removeFromTop(kHeaderH);
+    silence_.setBounds(top.removeFromRight(112).reduced(0, 2));
     title_.setBounds(top);
+    r.removeFromTop(3);
     if (staleHint_.isVisible())
     {
-        auto line = r.removeFromTop(24);
+        auto line = r.removeFromTop(22);
         staleReset_.setBounds(line.removeFromRight(110).reduced(0, 1));
         line.removeFromRight(8);
         staleHint_.setBounds(line);

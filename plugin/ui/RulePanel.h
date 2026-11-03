@@ -61,7 +61,8 @@ public:
 
 private:
     struct Row;
-    static constexpr int kRowH = 28;
+    static constexpr int kRowH = 20;
+    static constexpr int kHeaderH = 22;
 
     float otherPercent(int row) const; // everything except this row's own target
     float stalePercent() const;        // stored targets no row shows

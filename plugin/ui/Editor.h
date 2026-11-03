@@ -5,6 +5,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
 #include "plugin/ui/LoopLane.h"
+#include "plugin/ui/PanelLook.h"
 #include "plugin/ui/RulePanel.h"
 
 namespace dc::ui {
@@ -115,6 +116,7 @@ private:
     void openChooser(int slot);
     void showNotice(int slot, const juce::String& text);
 
+    PanelLook look_; // declared first: destroyed after every child that uses it
     DubcyclingProcessor& proc_;
     LoopLane lanes_[2];
     juce::Label titles_[2];
@@ -123,7 +125,13 @@ private:
     juce::Slider bars_[2];
     juce::TextButton load_[2];
     juce::TextButton suggest_[2];
+    juce::Label logo_;
+    juce::Label bpmCaption_;
+    juce::Label bpm_;
     juce::Label cycle_;
+    juce::Rectangle<int> stripBounds_[2];
+    juce::Rectangle<float> ledBounds_[2];
+    juce::Colour ledColour_[2];
     RulePanel rules_;
     juce::TooltipWindow tooltips_ { this };
     std::unique_ptr<juce::FileChooser> chooser_;

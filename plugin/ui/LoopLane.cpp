@@ -1,19 +1,21 @@
 #include "plugin/ui/LoopLane.h"
 #include <algorithm>
 #include <cmath>
+#include "plugin/ui/PanelLook.h"
+#include "plugin/ui/RulePanel.h"
 
 namespace dc::ui {
 
 namespace {
 constexpr float kHit = 5.0f; // hit tolerance of a boundary, in pixels left and right
-constexpr float kCorner = 4.0f;
+constexpr float kCorner = 0.0f;
 
-const juce::Colour kBackground { 0xff202328 };
-const juce::Colour kOutline { 0xff3a3f47 };
-const juce::Colour kWave { 0xff8ab4d8 };
-const juce::Colour kSelected { 0x268ab4d8 };
+const juce::Colour kBackground { 0xff101215 };
+const juce::Colour kOutline { 0xff2a2e35 };
+const juce::Colour kWave { 0xff6f94b3 };
+const juce::Colour kSelected { 0x245aa9e6 };
 const juce::Colour kBoundary { 0xffe8c26a };
-const juce::Colour kHint { 0xff9aa1ab };
+const juce::Colour kHint { 0xff7b828d };
 } // namespace
 
 std::vector<PeakColumn> computePeaks(const std::vector<float>& left, const std::vector<float>& right, int columns)
@@ -263,6 +265,17 @@ void LoopLane::paint(juce::Graphics& g)
         g.setColour(kBoundary);
         for (double b : regions_.boundaries)
             g.fillRect(xFor(b) - 1.0f, 0.0f, 2.0f, bounds.getHeight());
+
+        g.setFont(panel::mono(10.0f));
+        for (int r = 0; r < regions_.regionCount(); ++r)
+        {
+            const auto [from, to] = regions_.bounds(r);
+            if (xFor(to) - xFor(from) < 16.0f)
+                continue;
+            g.setColour(r == selected_ ? kBoundary : kHint);
+            g.drawText(regionLetters(r), juce::Rectangle<float>(xFor(from) + 4.0f, bounds.getBottom() - 14.0f, 24.0f, 12.0f),
+                       juce::Justification::centredLeft);
+        }
     }
 
     g.setColour(dropHighlight_ ? kBoundary : kOutline);

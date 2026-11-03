@@ -3,20 +3,18 @@
 #include <cmath>
 #include "engine/LoopTiming.h"
 #include "engine/TransientDetector.h"
+#include "plugin/ui/PanelLook.h"
 
 namespace dc::ui {
 
 namespace {
 constexpr double kDefaultBpm = 120.0;
-constexpr int kHeaderH = 30;
-constexpr int kLaneH = 150;
-constexpr int kGap = 10;
-constexpr int kMargin = 16;
+constexpr int kHeaderH = 26;
+constexpr int kTopH = 24;
+constexpr int kGap = 6;
+constexpr int kMargin = 8;
 
-const juce::Colour kWindow { 0xff16181c };
-const juce::Colour kText { 0xffd7dbe0 };
-const juce::Colour kDim { 0xff9aa1ab };
-const juce::Colour kWarn { 0xffe0816a };
+using namespace panel;
 
 juce::String utf8(const char* s) { return juce::String(juce::CharPointer_UTF8(s)); }
 
@@ -135,23 +133,40 @@ std::vector<RuleEntry> remapRulesForBoundaryEdit(std::vector<RuleEntry> rules, i
 
 Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), proc_(proc)
 {
+    setLookAndFeel(&look_);
+
+    logo_.setText("DUBCYCLING", juce::dontSendNotification);
+    logo_.setFont(mono(12.0f, true));
+    logo_.setColour(juce::Label::textColourId, kText);
+    addAndMakeVisible(logo_);
+    bpmCaption_.setText("BPM", juce::dontSendNotification);
+    bpmCaption_.setFont(mono(10.0f));
+    bpmCaption_.setColour(juce::Label::textColourId, kDim);
+    bpmCaption_.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(bpmCaption_);
+    styleLcd(bpm_, kGreen);
+    addAndMakeVisible(bpm_);
+
     for (int i = 0; i < 2; ++i)
     {
-        titles_[i].setText("Loop " + juce::String(i + 1), juce::dontSendNotification);
-        titles_[i].setFont(juce::FontOptions(16.0f, juce::Font::bold));
+        titles_[i].setText("L" + juce::String(i + 1), juce::dontSendNotification);
+        titles_[i].setFont(mono(11.0f, true));
+        titles_[i].setJustificationType(juce::Justification::centred);
         titles_[i].setColour(juce::Label::textColourId, kText);
+        titles_[i].setColour(juce::Label::backgroundColourId, kEdge);
         addAndMakeVisible(titles_[i]);
 
-        status_[i].setColour(juce::Label::textColourId, kDim);
+        styleLcd(status_[i], kAmber, juce::Justification::centredLeft);
         addAndMakeVisible(status_[i]);
 
-        barsLabel_[i].setText("Takte", juce::dontSendNotification);
+        barsLabel_[i].setText("TAKTE", juce::dontSendNotification);
+        barsLabel_[i].setFont(mono(10.0f));
         barsLabel_[i].setColour(juce::Label::textColourId, kDim);
         barsLabel_[i].setJustificationType(juce::Justification::centredRight);
         addAndMakeVisible(barsLabel_[i]);
 
         bars_[i].setSliderStyle(juce::Slider::IncDecButtons);
-        bars_[i].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, kHeaderH - 6);
+        bars_[i].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 34, kHeaderH - 6);
         bars_[i].setRange(1.0, static_cast<double>(kMaxBars), 1.0);
         bars_[i].setValue(1.0, juce::dontSendNotification);
         bars_[i].valueFromTextFunction = [this, i](const juce::String& text) {
@@ -160,11 +175,12 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
         bars_[i].onValueChange = [this, i] { barsEdited(i); };
         addAndMakeVisible(bars_[i]);
 
-        load_[i].setButtonText(utf8("Load\xe2\x80\xa6"));
+        load_[i].setButtonText("LOAD");
+        load_[i].setTooltip("Audiodatei laden (wav, mp3, flac, aif)");
         load_[i].onClick = [this, i] { openChooser(i); };
         addAndMakeVisible(load_[i]);
 
-        suggest_[i].setButtonText("Vorschlag");
+        suggest_[i].setButtonText("AUTO");
         suggest_[i].setTooltip("Grenzen an Transienten vorschlagen (f" + utf8("\xc3\xbc") + "r Drum-Loops)");
         suggest_[i].onClick = [this, i] { suggestRegions(i); };
         suggest_[i].setEnabled(false);
@@ -175,8 +191,7 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
         addAndMakeVisible(lanes_[i]);
     }
 
-    cycle_.setColour(juce::Label::textColourId, kText);
-    cycle_.setFont(juce::FontOptions(15.0f));
+    styleLcd(cycle_, kAmber);
     addAndMakeVisible(cycle_);
 
     lanes_[0].onRegionSelected = [this](int) { updateRules(proc_.getPluginState()); };
@@ -186,8 +201,8 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
     addAndMakeVisible(rules_);
 
     setResizable(true, true);
-    setResizeLimits(700, 620, 1800, 1400);
-    setSize(900, 720);
+    setResizeLimits(640, 400, 1800, 1400);
+    setSize(760, 480);
     for (int i = 0; i < 2; ++i)
         seenFailure_[i] = proc_.replaceFailure(i).id; // only failures from now on are shown
     refresh();
@@ -197,6 +212,7 @@ Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), pr
 Editor::~Editor()
 {
     stopTimer();
+    setLookAndFeel(nullptr);
 }
 
 void Editor::refresh()
@@ -225,25 +241,34 @@ void Editor::refresh()
         }
 
         juce::String text;
-        juce::Colour colour = kDim;
+        juce::Colour colour = kAmber;
+        juce::Colour led = kGreen;
         switch (status)
         {
-            case DubcyclingProcessor::SlotStatus::Empty:   text = "Leer"; break;
+            case DubcyclingProcessor::SlotStatus::Empty:   text = "Leer"; led = kDim; break;
             case DubcyclingProcessor::SlotStatus::Loading:
             {
                 const auto pending = proc_.pendingReplaceFileName(i);
                 text = utf8("L\xc3\xa4" "dt\xe2\x80\xa6 ") + (pending.isNotEmpty() ? pending : ref.fileName);
+                led = kAmber;
                 break;
             }
             case DubcyclingProcessor::SlotStatus::Loaded:  text = ref.fileName; break;
             case DubcyclingProcessor::SlotStatus::Missing:
                 text = "Datei fehlt: " + ref.fileName;
                 colour = kWarn;
+                led = kWarn;
                 break;
             case DubcyclingProcessor::SlotStatus::Failed:
                 text = "Nicht lesbar: " + proc_.slotError(i);
                 colour = kWarn;
+                led = kWarn;
                 break;
+        }
+        if (led != ledColour_[i])
+        {
+            ledColour_[i] = led;
+            repaint(ledBounds_[i].getSmallestIntegerContainer().expanded(2));
         }
         if (noticeUntil_[i] != 0 && juce::Time::getMillisecondCounter() < noticeUntil_[i])
         {
@@ -256,8 +281,13 @@ void Editor::refresh()
         }
         status_[i].setText(text, juce::dontSendNotification);
         status_[i].setColour(juce::Label::textColourId, colour);
-        load_[i].setButtonText(fileIsMissing(status, ref) ? utf8("Neu zuordnen\xe2\x80\xa6") : utf8("Load\xe2\x80\xa6"));
+        const bool relink = fileIsMissing(status, ref);
+        load_[i].setButtonText(relink ? "RELINK" : "LOAD");
+        load_[i].setTooltip(relink ? "Datei neu zuordnen" : "Audiodatei laden (wav, mp3, flac, aif)");
     }
+    const double bpm = proc_.hostBpm();
+    bpm_.setText(std::isfinite(bpm) && bpm > 0.0 ? juce::String(bpm, 1) : juce::String("--"),
+                 juce::dontSendNotification);
     updateRules(st);
     cycle_.setText("Zyklus: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Takte",
                    juce::dontSendNotification);
@@ -495,28 +525,64 @@ void Editor::openChooser(int slot)
 void Editor::paint(juce::Graphics& g)
 {
     g.fillAll(kWindow);
+    for (int i = 0; i < 2; ++i)
+    {
+        const auto strip = stripBounds_[i];
+        g.setColour(kStrip);
+        g.fillRect(strip);
+        g.setColour(kEdge);
+        g.drawRect(strip, 1);
+        g.drawHorizontalLine(strip.getY() + kHeaderH, static_cast<float>(strip.getX()),
+                             static_cast<float>(strip.getRight()));
+        g.setColour(ledColour_[i]);
+        g.fillEllipse(ledBounds_[i]);
+    }
+    g.setColour(kEdge);
+    g.drawHorizontalLine(kMargin + kTopH + 3, static_cast<float>(kMargin), static_cast<float>(getWidth() - kMargin));
 }
 
 void Editor::resized()
 {
     auto area = getLocalBounds().reduced(kMargin);
+
+    auto top = area.removeFromTop(kTopH);
+    cycle_.setBounds(top.removeFromRight(130));
+    top.removeFromRight(kGap * 2);
+    bpm_.setBounds(top.removeFromRight(52));
+    top.removeFromRight(kGap);
+    bpmCaption_.setBounds(top.removeFromRight(34));
+    logo_.setBounds(top);
+    area.removeFromTop(kGap + 3);
+
+    // Lanes and the rule panel share what is left: the rule panel gets about a third, the rest goes
+    // to Loop 1 (58 %) and Loop 2 (42 %).
+    const int shared = area.getHeight() - 2 * kHeaderH - 2 * kGap;
+    const int rulesH = std::clamp(shared * 38 / 100, 100, 320);
+    const int laneSpace = std::max(shared - rulesH, 80);
+    const int lane0H = std::max(laneSpace * 58 / 100, 40);
+    const int laneH[2] = { lane0H, std::max(laneSpace - lane0H, 40) };
+
     for (int i = 0; i < 2; ++i)
     {
-        auto header = area.removeFromTop(kHeaderH);
-        titles_[i].setBounds(header.removeFromLeft(80));
-        load_[i].setBounds(header.removeFromRight(130).reduced(0, 2));
+        auto strip = area.removeFromTop(kHeaderH + laneH[i]);
+        stripBounds_[i] = strip;
+        auto header = strip.removeFromTop(kHeaderH).reduced(6, 3);
+        ledBounds_[i] = juce::Rectangle<float>(7.0f, 7.0f)
+                            .withCentre({ static_cast<float>(header.getX()) + 3.5f, header.getCentreY() + 0.0f });
+        header.removeFromLeft(14);
+        titles_[i].setBounds(header.removeFromLeft(28));
+        header.removeFromLeft(kGap);
+        load_[i].setBounds(header.removeFromRight(58));
         header.removeFromRight(4);
-        suggest_[i].setBounds(header.removeFromRight(90).reduced(0, 2));
+        suggest_[i].setBounds(header.removeFromRight(46));
         header.removeFromRight(kGap);
-        bars_[i].setBounds(header.removeFromRight(110));
-        barsLabel_[i].setBounds(header.removeFromRight(60));
+        bars_[i].setBounds(header.removeFromRight(84));
+        barsLabel_[i].setBounds(header.removeFromRight(46));
+        header.removeFromRight(kGap);
         status_[i].setBounds(header);
-        area.removeFromTop(4);
-        lanes_[i].setBounds(area.removeFromTop(kLaneH));
+        lanes_[i].setBounds(strip.reduced(1, 0).withTrimmedBottom(1));
         area.removeFromTop(kGap);
     }
-    cycle_.setBounds(area.removeFromTop(kHeaderH));
-    area.removeFromTop(kGap);
     rules_.setBounds(area);
 }
 
