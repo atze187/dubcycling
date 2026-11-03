@@ -421,6 +421,9 @@ void LoopLane::paint(juce::Graphics& g)
         g.setColour(kBoundary);
         for (double b : regions_.boundaries)
             g.fillRect(xFor(b) - 1.0f, 0.0f, 2.0f, bounds.getHeight());
+        // Start and end of the loop, so an unsplit loop reads as a region too (not draggable).
+        g.fillRect(0.0f, 0.0f, 3.0f, bounds.getHeight()); // 1 px is covered by the outline
+        g.fillRect(bounds.getWidth() - 3.0f, 0.0f, 3.0f, bounds.getHeight());
 
         g.setFont(panel::mono(kLabelFont));
         for (int r = 0; r < regions_.regionCount(); ++r)
