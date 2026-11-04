@@ -57,6 +57,12 @@ public:
     // Replaces regions/rules/bars (e.g. from the editor) and republishes the model. Boundaries and
     // rules are sanitized like on load. Loop files are not touched.
     void applyEdit(const PluginState& edited);
+    // Applies a complete state (e.g. a loaded preset): relink, hash check and async load exactly like
+    // setStateInformation. Each loop's fileName is reduced to its leaf first (an imported bank could
+    // carry "../x.wav"). Message thread.
+    void restoreState(const PluginState& s);
+    // Remembers which preset is loaded (saved with the state). No publish. Message thread.
+    void setActivePreset(const juce::String& bank, const juce::String& preset);
     // Relink: assigns a file to the slot and KEEPS regions, rules and bars (use for the "file missing"
     // case or a re-exported version of the same loop). Recomputes path/name/hash, loads async.
     // A file that does not exist or cannot be read changes nothing and returns false.

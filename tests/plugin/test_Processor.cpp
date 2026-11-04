@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <memory>
+#include <tuple>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
 
@@ -298,4 +299,130 @@ TEST_CASE("Processor: the folder of the last loaded file is searched for a moved
     f.proc.waitForLoads();
     CHECK(f.proc.getSlotStatus(1) == Status::Loaded);
     CHECK(juce::File(f.proc.getPluginState().loop2.path) == f.dir.getChildFile("library").getChildFile("loop.wav"));
+}
+
+// ---- Presets: restoreState and the active preset ----
+
+namespace {
+PluginState twoLoopState(const juce::File& a, const juce::File& b)
+{
+    PluginState s;
+    s.loop1 = refOfFile(a);
+    s.loop2 = refOfFile(b);
+    s.loop1.bars = 2;
+    s.loop1.boundaries = { 0.25, 0.5 };
+    s.loop2.boundaries = { 0.75 };
+    s.rules = { RuleEntry { 1, { RuleTarget { 0, 1.0f } } } };
+    s.activeBank = "Bank";
+    s.activePreset = "Preset";
+    return s;
+}
+} // namespace
+
+TEST_CASE("Processor: restoreState replaces both loops and rules and loads the files", "[processor][presets]")
+{
+    ProcFixture f;
+    f.loadedWithRegionsAndRules(f.wav("old.wav", 8000));
+    const auto a = f.wav("a.wav", 16000);
+    const auto b = f.wav("b.wav", 24000);
+    const auto s = twoLoopState(a, b);
+
+    f.proc.restoreState(s);
+    f.proc.waitForLoads();
+
+    CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
+    CHECK(f.proc.getSlotStatus(1) == Status::Loaded);
+    const auto st = f.proc.getPluginState();
+    CHECK(st.loop1.fileName == "a.wav");
+    CHECK(st.loop2.fileName == "b.wav");
+    CHECK(st.loop1.boundaries == std::vector<double> { 0.25, 0.5 });
+    CHECK(st.loop2.boundaries == std::vector<double> { 0.75 });
+    CHECK(st.rules.size() == 1);
+    CHECK(st.activeBank == "Bank");
+    CHECK(st.activePreset == "Preset");
+    CHECK(f.frames1() == 16000);
+}
+
+TEST_CASE("Processor: restoreState with a missing file marks the slot Missing and keeps regions and rules", "[processor][presets]")
+{
+    ProcFixture f;
+    const auto a = f.wav("a.wav", 16000);
+    const auto b = f.wav("b.wav", 24000);
+    const auto s = twoLoopState(a, b);
+    b.deleteFile();
+
+    f.proc.restoreState(s);
+    f.proc.waitForLoads();
+
+    CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
+    CHECK(f.proc.getSlotStatus(1) == Status::Missing);
+    const auto st = f.proc.getPluginState();
+    CHECK(st.loop2.boundaries == std::vector<double> { 0.75 });
+    CHECK(st.rules.size() == 1);
+}
+
+TEST_CASE("Processor: restoreState with a changed file (hash differs) behaves like setStateInformation", "[processor][presets]")
+{
+    auto run = [](bool viaRestore) {
+        ProcFixture f;
+        const auto a = f.wav("a.wav", 16000);
+        const auto b = f.wav("b.wav", 24000);
+        const auto s = twoLoopState(a, b);
+        f.wav("b.wav", 20000); // same name, different content
+        if (viaRestore)
+            f.proc.restoreState(s);
+        else
+            f.setState(s);
+        f.proc.waitForLoads();
+        struct R { Status s0, s1; std::string err; std::vector<double> bounds; std::string path; } r;
+        r.s0 = f.proc.getSlotStatus(0);
+        r.s1 = f.proc.getSlotStatus(1);
+        r.err = f.proc.slotError(1).toStdString();
+        r.bounds = f.proc.getPluginState().loop2.boundaries;
+        r.path = f.proc.getPluginState().loop2.path.toStdString();
+        return std::make_tuple(r.s0, r.s1, r.err, r.bounds, r.path != "");
+    };
+    CHECK(run(true) == run(false));
+}
+
+TEST_CASE("Processor: the active preset survives getStateInformation and setStateInformation", "[processor][presets]")
+{
+    ProcFixture f;
+    f.proc.setActivePreset("Bank", "Preset");
+    CHECK(f.proc.getPluginState().activeBank == "Bank");
+    CHECK(f.proc.getPluginState().activePreset == "Preset");
+
+    juce::MemoryBlock block;
+    f.proc.getStateInformation(block);
+    DubcyclingProcessor other;
+    other.setStateInformation(block.getData(), static_cast<int>(block.getSize()));
+    CHECK(other.getPluginState().activeBank == "Bank");
+    CHECK(other.getPluginState().activePreset == "Preset");
+}
+
+TEST_CASE("Processor: applyEdit keeps the active preset", "[processor][presets]")
+{
+    ProcFixture f;
+    f.proc.setActivePreset("Bank", "Preset");
+    auto s = f.proc.getPluginState();
+    s.activeBank = "Other";
+    s.activePreset = "Other";
+    s.loop1.boundaries = { 0.5 };
+    f.proc.applyEdit(s);
+    CHECK(f.proc.getPluginState().activeBank == "Bank");
+    CHECK(f.proc.getPluginState().activePreset == "Preset");
+    CHECK(f.proc.getPluginState().loop1.boundaries == std::vector<double> { 0.5 });
+}
+
+TEST_CASE("Processor: restoreState reduces a hostile fileName to its leaf", "[processor][presets]")
+{
+    ProcFixture f;
+    PluginState s;
+    s.loop1.fileName = "../something.wav";
+    s.loop2.fileName = "..\\sub\\other.wav";
+    f.proc.restoreState(s);
+    f.proc.waitForLoads();
+    const auto st = f.proc.getPluginState();
+    CHECK(st.loop1.fileName == "something.wav");
+    CHECK(st.loop2.fileName == "other.wav");
 }
