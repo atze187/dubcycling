@@ -19,6 +19,11 @@ constexpr int kMaxLabelEntries = 1024; // custom labels kept per loop when loadi
 // Trimmed, control characters removed, cut to kMaxLabelLength characters. Empty = "no custom label".
 juce::String sanitizeLabel(const juce::String& text);
 
+constexpr int kMaxNameStoredLength = 64; // characters of a stored bank or preset name
+
+// Trimmed, control characters removed, cut to maxLength characters.
+juce::String sanitizeName(const juce::String& text, int maxLength);
+
 // Reference to a loop file (never the audio itself) plus its region boundaries.
 struct LoopRef
 {
@@ -42,6 +47,9 @@ struct PluginState
     int version = kStateVersion;
     LoopRef loop1, loop2;
     std::vector<RuleEntry> rules;
+    // Names of the bank and preset last loaded or saved; empty = none. Optional in the stored
+    // state (only written when not empty), so kStateVersion stays 1.
+    juce::String activeBank, activePreset;
 };
 
 juce::MemoryBlock serialize(const PluginState&);

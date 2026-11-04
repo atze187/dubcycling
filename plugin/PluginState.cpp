@@ -81,17 +81,26 @@ LoopRef loopFromTree(const juce::ValueTree& t)
 
 juce::String sanitizeLabel(const juce::String& text)
 {
+    return sanitizeName(text, kMaxLabelLength);
+}
+
+juce::String sanitizeName(const juce::String& text, int maxLength)
+{
     juce::String out;
     for (auto p = text.getCharPointer(); !p.isEmpty(); ++p)
         if (const auto c = *p; c >= 32 && c != 127)
             out += juce::String::charToString(c);
-    return out.trim().substring(0, kMaxLabelLength).trim();
+    return out.trim().substring(0, maxLength).trim();
 }
 
 juce::MemoryBlock serialize(const PluginState& s)
 {
     juce::ValueTree root("DubcyclingState");
     root.setProperty("version", s.version, nullptr);
+    if (s.activeBank.isNotEmpty())
+        root.setProperty("activeBank", s.activeBank, nullptr);
+    if (s.activePreset.isNotEmpty())
+        root.setProperty("activePreset", s.activePreset, nullptr);
     root.appendChild(loopToTree("Loop1", s.loop1), nullptr);
     root.appendChild(loopToTree("Loop2", s.loop2), nullptr);
     juce::ValueTree rules("Rules");
@@ -136,6 +145,8 @@ std::optional<PluginState> deserialize(const void* data, std::size_t size)
             return std::nullopt;
 
         PluginState s;
+        s.activeBank = sanitizeName(root.getProperty("activeBank").toString(), kMaxNameStoredLength);
+        s.activePreset = sanitizeName(root.getProperty("activePreset").toString(), kMaxNameStoredLength);
         s.loop1 = loopFromTree(root.getChildWithName("Loop1"));
         s.loop2 = loopFromTree(root.getChildWithName("Loop2"));
         for (auto r : root.getChildWithName("Rules"))
