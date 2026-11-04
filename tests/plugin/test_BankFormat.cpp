@@ -54,6 +54,90 @@ TEST_CASE("BankFormat: a bank survives a JSON round trip")
     CHECK(r.bank->presets[0].state.rules[0].targets[0].mode == PlayMode::Gate);
 }
 
+TEST_CASE("BankFormat: awkward doubles survive the JSON round trip exactly")
+{
+    // Boundaries come from x / width (e.g. 137 / 700) and need all 17 significant digits.
+    Bank bank;
+    Preset p;
+    p.name = "P";
+    p.state.loop1 = { "samples/a.wav", "a.wav", "abc", 2,
+                      { 0.012345678901234568, 0.12345678901234568, 137.0 / 700.0, 0.30000000000000004, 2.0 / 3.0,
+                        691.0 / 700.0 },
+                      {} };
+    p.state.loop2 = { "samples/b.wav", "b.wav", "def", 4, { 1.0 / 3.0, 0.5 + 1e-16 * 3 }, {} };
+    p.state.rules.push_back({ 0, { { 1, 1.0f / 3.0f, PlayMode::Gate }, { 0, 0.1f, PlayMode::OneShot } } });
+    bank.presets.push_back(p);
+
+    const auto r = bankFromJson(bankToJson(bank));
+    REQUIRE(r.bank.has_value());
+    REQUIRE(r.bank->presets.size() == 1);
+    const auto& back = r.bank->presets[0].state;
+    CHECK(back.loop1.boundaries == p.state.loop1.boundaries);
+    CHECK(back.loop2.boundaries == p.state.loop2.boundaries);
+    REQUIRE(back.rules.size() == 1);
+    REQUIRE(back.rules[0].targets.size() == 2);
+    CHECK(back.rules[0].targets[0].weight == p.state.rules[0].targets[0].weight);
+    CHECK(back.rules[0].targets[1].weight == p.state.rules[0].targets[1].weight);
+    CHECK(presetFingerprint(back) == presetFingerprint(p.state));
+}
+
+TEST_CASE("BankFormat: entries that reading skips are counted")
+{
+    CHECK(bankFromJson(bankToJson(sampleBank())).skipped == 0);
+    CHECK(bankFromJson("{\"version\":1,\"presets\":[]}").skipped == 0);
+
+    const auto nonObject = bankFromJson("{\"version\":1,\"presets\":[{\"name\":\"A\"},5,\"x\"]}");
+    REQUIRE(nonObject.bank.has_value());
+    CHECK(nonObject.bank->presets.size() == 1);
+    CHECK(nonObject.skipped == 2);
+
+    const auto emptyName = bankFromJson("{\"version\":1,\"presets\":[{\"name\":\"A\"},{\"name\":\"  \"},{}]}");
+    REQUIRE(emptyName.bank.has_value());
+    CHECK(emptyName.bank->presets.size() == 1);
+    CHECK(emptyName.skipped == 2);
+
+    juce::String many = "{\"version\":1,\"presets\":[";
+    for (int i = 0; i < kMaxPresetsPerBank + 1; ++i)
+        many << (i ? "," : "") << "{\"name\":\"p" << i << "\"}";
+    many << "]}";
+    const auto over = bankFromJson(many);
+    REQUIRE(over.bank.has_value());
+    CHECK(static_cast<int>(over.bank->presets.size()) == kMaxPresetsPerBank);
+    CHECK(over.skipped == 1);
+}
+
+TEST_CASE("BankFormat: huge numbers are clamped, not cast")
+{
+    const auto json = juce::String(
+        "{\"version\":1,\"presets\":[{\"name\":\"P\","
+        "\"loop1\":{\"bars\":1e30},\"loop2\":{\"bars\":-1e30},"
+        "\"rules\":[{\"region1\":-1e30,\"targets\":[{\"region2\":0,\"weight\":1}]},"
+        "{\"region1\":1e30,\"targets\":[{\"region2\":0,\"weight\":1}]},"
+        "{\"region1\":1,\"targets\":[{\"region2\":-1e30,\"weight\":1},{\"region2\":1e30,\"weight\":1e300,\"mode\":1e30},"
+        "{\"region2\":2,\"weight\":-1e300,\"mode\":1}]}]}]}");
+    const auto r = bankFromJson(json);
+    REQUIRE(r.bank.has_value());
+    REQUIRE(r.bank->presets.size() == 1);
+    const auto& s = r.bank->presets[0].state;
+    CHECK(s.loop1.bars == 1024);
+    CHECK(s.loop2.bars == 1);
+    REQUIRE(s.rules.size() == 1);
+    CHECK(s.rules[0].region1 == 1);
+    for (auto& t : s.rules[0].targets)
+    {
+        CHECK(t.region2 >= 0);
+        CHECK(t.weight >= 0.0f);
+        CHECK(t.weight <= 1.0f);
+    }
+
+    const auto tooNew = bankFromJson("{\"version\":1e30,\"presets\":[]}");
+    CHECK(tooNew.tooNew);
+    CHECK_FALSE(tooNew.bank.has_value());
+    const auto negative = bankFromJson("{\"version\":-1e30,\"presets\":[]}");
+    CHECK_FALSE(negative.tooNew);
+    CHECK_FALSE(negative.bank.has_value());
+}
+
 TEST_CASE("BankFormat: json carries version and a presets list")
 {
     const auto v = juce::JSON::parse(bankToJson(sampleBank()));

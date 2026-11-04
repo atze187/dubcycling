@@ -40,17 +40,22 @@ juce::String bankNameProblem(const juce::String& name, const juce::StringArray& 
 // Windows name. No length limit.
 bool isPortableFileName(const juce::String& name);
 
+// Doubles are written with as many digits as it takes (at most 17 significant) to read them back
+// exactly, so a saved preset compares equal to the state it was saved from.
 juce::String bankToJson(const Bank& bank);
 
 struct BankParseResult
 {
     std::optional<Bank> bank; // nullopt for damaged or too new data
     bool tooNew = false;      // "version" is newer than kBankVersion
+    int skipped = 0;          // entries of "presets" that were not read (see bankFromJson)
 };
 
 // Never throws. The loaded presets are sanitized like a loaded session state (see deserialize);
-// at most kMaxPresetsPerBank presets are kept, presets without a name are dropped. JSON nested
-// deeper than kMaxJsonDepth counts as damaged (checked before parsing, the parser recurses).
+// at most kMaxPresetsPerBank presets are kept, entries that are no object or have no name are
+// dropped; every dropped entry counts in `skipped`. Numbers are clamped as doubles before they
+// become ints. JSON nested deeper than kMaxJsonDepth counts as damaged (checked before parsing,
+// the parser recurses).
 BankParseResult bankFromJson(const juce::String& json);
 
 // Canonical text of everything that makes a preset sound the way it does: hash, bars, boundaries

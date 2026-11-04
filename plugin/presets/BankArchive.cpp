@@ -8,6 +8,7 @@ namespace {
 
 const char* const kBankFile = BankStore::kBankFileName;
 const char* const kSamplesDir = "samples";
+const char* const kMacMetadataDir = "__MACOSX"; // resource forks the macOS archiver adds
 constexpr int kCompressionLevel = 9;
 constexpr int kCopyChunk = 65536;
 constexpr int kMaxNameCounter = 9999;
@@ -65,6 +66,9 @@ BankStore::Result planImport(const juce::ZipFile& zip, const ArchiveLimits& limi
         if (!safe)
             return invalid(text("Die Zip-Datei enth\xc3\xa4lt einen unzul\xc3\xa4ssigen Pfad: ") + name);
 
+        // macOS metadata is skipped, never unpacked (checked for safe paths above all the same).
+        if (parts[0] == kMacMetadataDir || (!isFolder && parts.size() > 1 && parts[parts.size() - 1].startsWith("._")))
+            continue;
         if (parts.size() == 1 && !isFolder)
             return invalid(oneFolder);
         if (plan.top.isEmpty())
@@ -76,6 +80,8 @@ BankStore::Result planImport(const juce::ZipFile& zip, const ArchiveLimits& limi
         juce::String relative;
         if (isFolder && (parts.isEmpty() || parts == juce::StringArray { kSamplesDir }))
             continue;
+        if (!isFolder && parts.size() == 1 && parts[0] != kBankFile)
+            continue; // other files beside bank.json (.DS_Store, Thumbs.db, desktop.ini, ...) stay packed
         if (!isFolder && parts == juce::StringArray { kBankFile })
         {
             if (entry.uncompressedSize > limits.maxBankJsonBytes)
@@ -87,7 +93,7 @@ BankStore::Result planImport(const juce::ZipFile& zip, const ArchiveLimits& limi
         else if (!isFolder && parts.size() == 2 && parts[0] == kSamplesDir)
             relative = juce::String(kSamplesDir) + "/" + parts[1];
         else
-            return invalid(text("Die Zip-Datei enth\xc3\xa4lt eine fremde Datei: ") + name);
+            return invalid(text("Die Zip-Datei enth\xc3\xa4lt einen fremden Ordner: ") + name);
 
         if (seen.contains(relative, true))
             return invalid(text("Die Zip-Datei enth\xc3\xa4lt eine Datei doppelt: ") + name);
@@ -161,6 +167,9 @@ juce::String freeBankName(const BankStore& store, const juce::String& wanted)
 
 BankStore::Result exportBank(const BankStore& store, const juce::String& bank, const juce::File& zipFile)
 {
+    // Import refuses a top folder with such a name; a folder made by hand may have one.
+    if (const auto problem = bankNameProblem(bank, {}); problem.isNotEmpty())
+        return fail(BankStore::Error::InvalidName, problem);
     const auto dir = store.bankDir(bank);
     const auto bankFile = dir.getChildFile(kBankFile);
     const auto parsed = store.readBank(bank);

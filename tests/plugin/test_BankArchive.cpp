@@ -310,7 +310,7 @@ TEST_CASE("Archive: entries escaping the folder are rejected and nothing is crea
     }
 }
 
-TEST_CASE("Archive: a zip with two top-level folders, no bank.json, or a foreign file outside samples is rejected")
+TEST_CASE("Archive: a zip with two top-level folders, no bank.json, or a foreign folder is rejected")
 {
     ArchiveFixture f;
     const auto json = emptyBankJson();
@@ -318,8 +318,10 @@ TEST_CASE("Archive: a zip with two top-level folders, no bank.json, or a foreign
         { { "A/bank.json", json }, { "B/bank.json", json } },
         { { "A/bank.json", json }, { "B/samples/a.wav", "x" } },
         { { "A/samples/a.wav", "x" } },
-        { { "A/bank.json", json }, { "A/readme.txt", "x" } },
+        { { "A/bank.json", json }, { "A/extra/readme.txt", "x" } },
         { { "A/bank.json", json }, { "A/samples/sub/a.wav", "x" } },
+        { { "__MACOSX/A/bank.json", json } },
+        { { "A/bank.json", json }, { ".DS_Store", "x" } },
         { { "A/bank.json", json }, { "A/samples/con.wav", "x" } },
         { { "A/bank.json", json }, { "A/samples/a.wav", "x" }, { "A/samples/A.wav", "y" } },
         { { "A/bank.json", json }, { "A/bank.json", json } },
@@ -482,5 +484,59 @@ TEST_CASE("Archive: a failed import leaves no temporary folder behind")
         juce::String imported;
         CHECK_FALSE(importBank(f.store, zipFile, imported).ok());
         CHECK(ArchiveFixture::tree(f.store.root()) == before);
+    }
+}
+
+TEST_CASE("Archive: import skips system files and __MACOSX, but still rejects unsafe names among them")
+{
+    ArchiveFixture f;
+    const auto zipFile = handZip(f.zip("mac.zip"), {
+                                                       { "B/", "" },
+                                                       { "B/bank.json", bankJsonWithLoop("samples/a.wav") },
+                                                       { "B/samples/a.wav", "x" },
+                                                       { "B/.DS_Store", "ds" },
+                                                       { "B/Thumbs.db", "th" },
+                                                       { "B/desktop.ini", "ini" },
+                                                       { "B/._bank.json", "rsrc" },
+                                                       { "B/samples/._x.wav", "rsrc" },
+                                                       { "__MACOSX/", "" },
+                                                       { "__MACOSX/B/._bank.json", "rsrc" },
+                                                       { "__MACOSX/B/samples/._a.wav", "rsrc" },
+                                                   });
+    juce::String imported;
+    const auto r = importBank(f.store, zipFile, imported);
+    REQUIRE(r.message == "");
+    REQUIRE(r.ok());
+    CHECK(imported == "B");
+    CHECK(f.store.listBanks() == juce::StringArray { "B" });
+    CHECK(ArchiveFixture::tree(f.store.root()) == std::set<juce::String> { "B", "B/bank.json", "B/samples", "B/samples/a.wav" });
+    CHECK(f.store.loadPreset("B", "P").result.ok());
+
+    const juce::StringArray hostile { "__MACOSX/../evil.txt", "__MACOSX/B/a:b", "__MACOSX\\x", "B/._../x", "B/../.DS_Store",
+                                      "B/samples/._x/../../x.wav", "__MACOSX//B/._a" };
+    for (auto& name : hostile)
+    {
+        INFO("entry " << name);
+        const auto bad = handZip(f.zip("evil.zip"), { { "C/bank.json", emptyBankJson() }, { name, "x" } });
+        juce::String none = "unchanged";
+        const auto rejected = importBank(f.store, bad, none);
+        CHECK(rejected.error == Error::ArchiveInvalid);
+        CHECK(none == "unchanged");
+        CHECK(f.store.listBanks() == juce::StringArray { "B" });
+        CHECK_FALSE(f.dir.getChildFile("evil.txt").exists());
+    }
+}
+
+TEST_CASE("Archive: export refuses a bank folder name that import would reject")
+{
+    ArchiveFixture f;
+    const auto target = f.zip("bad.zip");
+    for (const juce::String name : { "a:b", "con", "end.", "x?" })
+    {
+        INFO("bank " << name);
+        const auto r = exportBank(f.store, name, target);
+        CHECK(r.error == Error::InvalidName);
+        CHECK(r.message == bankNameProblem(name, {}));
+        CHECK_FALSE(target.exists());
     }
 }

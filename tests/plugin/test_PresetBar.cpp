@@ -438,6 +438,39 @@ TEST_CASE("PresetBar: SAVE AS asks for a name and stores a variant, which become
     CHECK_FALSE(f.bar().hasUnsavedChanges());
 }
 
+TEST_CASE("PresetBar: right after SAVE AS or SAVE with hand-placed boundaries nothing is unsaved", "[PresetBar]")
+{
+    BarFixture f;
+    f.savePreset("A", "Eins", { 0.5 });
+    f.open();
+    f.bar().requestLoad("Eins");
+    f.proc.waitForLoads();
+
+    // x / width as the lane computes it; these need all 17 significant digits.
+    const std::vector<double> awkward { 0.012345678901234568, 137.0 / 700.0, 0.30000000000000004, 2.0 / 3.0 };
+    f.editLoop1(awkward);
+    REQUIRE(f.proc.getPluginState().loop1.boundaries.size() == awkward.size()); // applyEdit may round the last bit
+
+    f.bar().requestSaveAs();
+    f.bar().submitName("Krumm");
+    REQUIRE(f.bar().mode() == PresetBar::Mode::Normal);
+    REQUIRE(f.bar().message().isEmpty());
+    CHECK_FALSE(f.bar().hasUnsavedChanges());
+
+    f.editLoop1({ 1.0 / 700.0 * 9.0, 691.0 / 700.0 });
+    REQUIRE(f.bar().hasUnsavedChanges());
+    f.bar().requestSave();
+    REQUIRE(f.bar().mode() == PresetBar::Mode::Normal);
+    REQUIRE(f.bar().message().isEmpty());
+    CHECK(f.proc.getPluginState().activePreset == "Krumm");
+    CHECK_FALSE(f.bar().hasUnsavedChanges());
+
+    // Picking another preset loads it right away, without the discard question.
+    f.bar().requestLoad("Eins");
+    CHECK(f.bar().mode() == PresetBar::Mode::Normal);
+    CHECK(f.proc.getPluginState().activePreset == "Eins");
+}
+
 TEST_CASE("PresetBar: SAVE without an active preset asks for a name", "[PresetBar]")
 {
     BarFixture f;

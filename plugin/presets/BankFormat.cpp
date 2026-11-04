@@ -1,6 +1,10 @@
 #include "plugin/presets/BankFormat.h"
 #include <algorithm>
 #include <climits>
+#include <cmath>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 
 namespace dc {
 
@@ -9,6 +13,21 @@ namespace {
 juce::String num(double v) { return juce::String(v, 17); }
 
 bool isNumber(const juce::var& v) { return v.isDouble() || v.isInt() || v.isInt64(); }
+
+// v as a double clamped to [lo, hi] before any cast (a hostile 1e30 cast to int is undefined),
+// fallback when v is no number.
+double clampedNumber(const juce::var& v, double lo, double hi, double fallback)
+{
+    if (!isNumber(v))
+        return fallback;
+    const auto d = static_cast<double>(v);
+    return std::isnan(d) ? fallback : std::clamp(d, lo, hi);
+}
+
+int intOf(const juce::var& v, int fallback)
+{
+    return static_cast<int>(clampedNumber(v, static_cast<double>(INT_MIN), static_cast<double>(INT_MAX), fallback));
+}
 
 bool isControl(juce::juce_wchar c) { return c < 32 || c == 127; }
 
@@ -52,6 +71,74 @@ bool nestsTooDeep(const juce::String& json)
     return false;
 }
 
+// The shortest text of at most 17 significant digits that juce::JSON reads back as exactly v
+// (juce::JSON::toString keeps only 15 decimal places, so 137.0 / 700.0 came back different).
+juce::String jsonDouble(double v)
+{
+    if (!std::isfinite(v))
+        return "null"; // like juce::JSON; JSON has no inf or nan
+    juce::String text;
+    for (int digits = 15; digits <= 17; ++digits)
+    {
+        std::ostringstream s;
+        s.imbue(std::locale::classic());
+        s << std::setprecision(digits) << v;
+        text = s.str();
+        const auto back = juce::JSON::parse("[" + text + "]");
+        if (back.isArray() && back.size() == 1 && static_cast<double>(back[0]) == v)
+            break;
+    }
+    return text;
+}
+
+// juce::JSON::toString with jsonDouble for every double, laid out like juce's multi-line form.
+void writeJson(juce::String& out, const juce::var& v, int indent)
+{
+    const auto newLine = [&](int level) { out << '\n' << juce::String::repeatedString(" ", level * 2); };
+    if (v.isDouble())
+        out << jsonDouble(static_cast<double>(v));
+    else if (const auto* arr = v.getArray())
+    {
+        if (arr->isEmpty())
+        {
+            out << "[]";
+            return;
+        }
+        out << '[';
+        for (int i = 0; i < arr->size(); ++i)
+        {
+            newLine(indent + 1);
+            writeJson(out, (*arr)[i], indent + 1);
+            if (i + 1 < arr->size())
+                out << ',';
+        }
+        newLine(indent);
+        out << ']';
+    }
+    else if (auto* obj = v.getDynamicObject())
+    {
+        const auto& props = obj->getProperties();
+        if (props.isEmpty())
+        {
+            out << "{}";
+            return;
+        }
+        out << '{';
+        for (int i = 0; i < props.size(); ++i)
+        {
+            newLine(indent + 1);
+            out << juce::JSON::toString(juce::var(props.getName(i).toString())) << ": ";
+            writeJson(out, props.getValueAt(i), indent + 1);
+            if (i + 1 < props.size())
+                out << ',';
+        }
+        newLine(indent);
+        out << '}';
+    }
+    else
+        out << juce::JSON::toString(v); // strings, ints, bools
+}
+
 juce::var loopToVar(const LoopRef& l)
 {
     auto* o = new juce::DynamicObject();
@@ -82,7 +169,7 @@ LoopRef loopFromVar(const juce::var& v)
     l.path = v["path"].toString();
     l.fileName = v["fileName"].toString();
     l.hash = v["hash"].toString();
-    l.bars = std::clamp(isNumber(v["bars"]) ? static_cast<int>(v["bars"]) : 1, 1, 1024);
+    l.bars = std::clamp(intOf(v["bars"], 1), 1, 1024);
     std::vector<double> raw;
     if (auto* arr = v["boundaries"].getArray())
         for (auto& b : *arr)
@@ -148,14 +235,15 @@ std::vector<RuleEntry> rulesFromVar(const juce::var& v)
             for (auto& tv : *ta)
             {
                 RuleTarget t;
-                t.region2 = isNumber(tv["region2"]) ? static_cast<int>(tv["region2"]) : 0;
-                t.weight = isNumber(tv["weight"]) ? static_cast<float>(static_cast<double>(tv["weight"])) : 0.0f;
-                t.mode = isNumber(tv["mode"]) && static_cast<int>(tv["mode"]) == 1 ? PlayMode::OneShot : PlayMode::Gate;
+                t.region2 = intOf(tv["region2"], 0);
+                // RuleSet clamps a weight to [0, 1] anyway; clamping first keeps the float cast defined.
+                t.weight = static_cast<float>(clampedNumber(tv["weight"], 0.0, 1.0, 0.0));
+                t.mode = intOf(tv["mode"], 0) == 1 ? PlayMode::OneShot : PlayMode::Gate;
                 if (!addRuleTarget(targets, t))
                     break;
             }
         }
-        const int region1 = isNumber(r["region1"]) ? static_cast<int>(r["region1"]) : -1;
+        const int region1 = intOf(r["region1"], -1);
         if (auto e = sanitizeRuleEntry(region1, std::move(targets), hadTargets))
             rules.push_back(std::move(*e));
     }
@@ -223,7 +311,9 @@ juce::String bankToJson(const Bank& bank)
     auto* root = new juce::DynamicObject();
     root->setProperty("version", bank.version);
     root->setProperty("presets", presets);
-    return juce::JSON::toString(juce::var(root), false);
+    juce::String out;
+    writeJson(out, juce::var(root), 0);
+    return out;
 }
 
 BankParseResult bankFromJson(const juce::String& json)
@@ -236,7 +326,7 @@ BankParseResult bankFromJson(const juce::String& json)
         const auto root = juce::JSON::parse(json);
         if (!root.isObject() || !isNumber(root["version"]))
             return result;
-        const int version = root["version"];
+        const int version = intOf(root["version"], 0);
         if (version > kBankVersion)
         {
             result.tooNew = true;
@@ -247,26 +337,39 @@ BankParseResult bankFromJson(const juce::String& json)
             return result;
 
         Bank bank;
-        for (auto& pv : *arr)
+        int skipped = 0;
+        for (int i = 0; i < arr->size(); ++i)
         {
+            const auto& pv = (*arr)[i];
             if (static_cast<int>(bank.presets.size()) >= kMaxPresetsPerBank)
+            {
+                skipped += arr->size() - i; // this entry and all after it
                 break;
+            }
             if (!pv.isObject())
+            {
+                ++skipped;
                 continue;
+            }
             Preset p;
             p.name = sanitizeName(pv["name"].toString(), kMaxPresetNameLength);
             if (p.name.isEmpty())
+            {
+                ++skipped;
                 continue;
+            }
             p.state.loop1 = loopFromVar(pv["loop1"]);
             p.state.loop2 = loopFromVar(pv["loop2"]);
             p.state.rules = rulesFromVar(pv["rules"]);
             bank.presets.push_back(std::move(p));
         }
         result.bank = std::move(bank);
+        result.skipped = skipped;
     }
     catch (...)
     {
         result.bank.reset();
+        result.skipped = 0;
     }
     return result;
 }

@@ -4,6 +4,7 @@
 #include <memory>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "plugin/PluginState.h"
+#include "plugin/presets/BankArchive.h"
 #include "plugin/presets/BankFormat.h"
 #include "plugin/presets/BankStore.h"
 
@@ -471,4 +472,128 @@ TEST_CASE("BankStore: loadPreset never resolves a loop path outside the bank's s
     REQUIRE(mixed.result.ok());
     CHECK(juce::File(mixed.state.loop1.path) == inside);
     checkRejected(mixed.state.loop2, inside);
+}
+
+TEST_CASE("BankStore: a bank with entries this build cannot read refuses the save and stays byte-identical")
+{
+    StoreFixture f;
+    REQUIRE(f.store.createBank("B").ok());
+    const auto a = f.wav("a.wav", 0.01f);
+    const auto b = f.wav("b.wav", 0.02f);
+
+    juce::String many = "{\"version\":1,\"presets\":[";
+    for (int i = 0; i < kMaxPresetsPerBank + 1; ++i)
+        many << (i ? "," : "") << "{\"name\":\"p" << i << "\"}";
+    many << "]}";
+    const std::vector<std::pair<const char*, juce::String>> cases {
+        { "non-object entry", "{\"version\":1,\"presets\":[{\"name\":\"p0\"},42]}" },
+        { "empty name", "{\"version\":1,\"presets\":[{\"name\":\"p0\"},{\"name\":\"\",\"future\":true}]}" },
+        { "over the preset limit", many },
+    };
+    for (auto& [what, json] : cases)
+    {
+        INFO(what);
+        REQUIRE(f.bankJson("B").replaceWithText(json));
+        juce::MemoryBlock before;
+        REQUIRE(f.bankJson("B").loadFileAsData(before));
+
+        for (bool overwrite : { false, true })
+        {
+            const auto r = f.store.savePreset("B", overwrite ? "p0" : "New", StoreFixture::state(a, b), overwrite);
+            CHECK(r.error == Error::BankHasUnreadableEntries);
+            CHECK(r.message.isNotEmpty());
+        }
+        juce::MemoryBlock after;
+        REQUIRE(f.bankJson("B").loadFileAsData(after));
+        CHECK(after == before);
+        CHECK(f.sampleCount("B") == 0);
+        CHECK_FALSE(f.bankJson("B").getSiblingFile("bank.json.tmp").exists());
+    }
+
+    // A clean bank saves as before.
+    REQUIRE(f.bankJson("B").replaceWithText("{\"version\":1,\"presets\":[{\"name\":\"p0\"}]}"));
+    REQUIRE(f.store.savePreset("B", "p0", StoreFixture::state(a, b), true).ok());
+    REQUIRE(f.store.savePreset("B", "New", StoreFixture::state(a, b), false).ok());
+    CHECK(f.presetNames("B") == std::vector<juce::String> { "p0", "New" });
+}
+
+TEST_CASE("BankStore: portableSampleName derives a name every platform accepts")
+{
+    CHECK(portableSampleName("kick.wav") == "kick.wav");
+    CHECK(portableSampleName("Kick Drum (2).wav") == "Kick Drum (2).wav");
+    CHECK(portableSampleName("take?.wav") == "take_.wav");
+    CHECK(portableSampleName("a:b.wav") == "a_b.wav");
+    CHECK(portableSampleName("a\\b*c\"d<e>f|g.wav") == "a_b_c_d_e_f_g.wav");
+    CHECK(portableSampleName("a\tb.wav") == "a_b.wav");
+    CHECK(portableSampleName("con.wav") == "_con.wav");
+    CHECK(portableSampleName("COM1.take.wav") == "_COM1.take.wav");
+    CHECK(portableSampleName("end.") == "end");
+    CHECK(portableSampleName("kick.wav ") == "kick.wav");
+    CHECK(portableSampleName("kick.wav. . ") == "kick.wav");
+    CHECK(portableSampleName("") == "sample");
+    CHECK(portableSampleName("...") == "sample");
+
+    const auto longName = portableSampleName(juce::String::repeatedString("x", 300) + ".wav");
+    CHECK(longName.length() <= kMaxSampleNameLength);
+    CHECK(longName.endsWith(".wav"));
+    CHECK(longName.startsWith("xxx"));
+
+    for (const juce::String name : { "take?.wav", "a:b.wav", "con.wav", "end.", "kick.wav ", "", "...", "nul",
+                                     "x .wav", " .wav", "lpt9. .wav" })
+    {
+        INFO("name '" << name << "'");
+        const auto portable = portableSampleName(name);
+        CHECK(isPortableFileName(portable));
+        CHECK(portable.length() <= kMaxSampleNameLength);
+    }
+}
+
+TEST_CASE("BankStore: a sample with a non-portable name is stored under a portable one")
+{
+    StoreFixture f;
+    REQUIRE(f.store.createBank("B").ok());
+    // Only POSIX file systems allow such a name; on Windows the file cannot be created.
+    const auto odd = f.loops.getChildFile("take?.wav");
+    if (!odd.create().wasOk() || !odd.existsAsFile())
+    {
+        SUCCEED("file system does not allow '?' in a file name");
+        return;
+    }
+    f.wav(odd, 0.01f);
+    PluginState s;
+    s.loop1 = StoreFixture::ref(odd);
+    REQUIRE(f.store.savePreset("B", "P", s, false).ok());
+    CHECK(f.storedPreset("B", "P").state.loop1.path == "samples/take_.wav");
+    const auto loaded = f.store.loadPreset("B", "P");
+    REQUIRE(loaded.result.ok());
+    CHECK(juce::File(loaded.state.loop1.path).existsAsFile());
+}
+
+TEST_CASE("BankStore: reusing a sample keeps its spelling on disk, so export agrees")
+{
+    StoreFixture f;
+    REQUIRE(f.store.createBank("B").ok());
+    const auto onDisk = f.wav(f.samples("B").getChildFile("Kick.wav"), 0.01f);
+    const auto source = f.wav("kick.wav", 0.01f);
+    REQUIRE(hashFile(onDisk) == hashFile(source));
+
+    PluginState s;
+    s.loop1 = StoreFixture::ref(source);
+    REQUIRE(f.store.savePreset("B", "P", s, false).ok());
+    CHECK(f.storedPreset("B", "P").state.loop1.path == "samples/Kick.wav");
+    CHECK(f.storedPreset("B", "P").state.loop1.fileName == "Kick.wav");
+    CHECK(f.sampleCount("B") == 1);
+
+    // Other content under the same name in another spelling counts as taken, on every file system.
+    const auto other = f.wav(f.dir.getChildFile("two").getChildFile("KICK.wav"), 0.03f);
+    PluginState s2;
+    s2.loop1 = StoreFixture::ref(other);
+    REQUIRE(f.store.savePreset("B", "Q", s2, false).ok());
+    CHECK(f.storedPreset("B", "Q").state.loop1.path == "samples/KICK (2).wav");
+    CHECK(f.sampleCount("B") == 2);
+
+    const auto zip = f.dir.getChildFile("B.zip");
+    const auto r = exportBank(f.store, "B", zip);
+    CHECK(r.message == "");
+    CHECK(r.ok());
 }

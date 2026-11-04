@@ -16,6 +16,7 @@ struct ArchiveLimits
 };
 
 // Writes <bank>/bank.json and the samples the presets use as <bank>/samples/<name> into zipFile.
+// A bank folder name that bankNameProblem rejects aborts first (InvalidName, with that message).
 // Every used sample is checked first: a missing one (or a stored path that is not
 // "samples/<name>") aborts with SampleMissing naming it; a name import would reject (not
 // isPortableFileName, spelled differently from the file on disk, or two packed names differing
@@ -24,9 +25,12 @@ struct ArchiveLimits
 BankStore::Result exportBank(const BankStore& store, const juce::String& bank, const juce::File& zipFile);
 
 // Imports a zip from someone else (hostile input). Before anything is created in store.root(),
-// every entry is checked: exactly one top folder with a valid bank name, only <top>/bank.json and
-// files <top>/samples/<name> (plus folder entries for both), no "..", ".", empty parts, absolute
-// paths, drive letters, backslashes, symlinks, unsafe or duplicate file names, at most
+// every entry is checked: exactly one top folder with a valid bank name (a "__MACOSX" tree does
+// not count), only <top>/bank.json and files <top>/samples/<name> are unpacked (plus folder
+// entries for both); other files directly in <top>, the "__MACOSX" tree and "._*" files are
+// skipped, any other folder is refused. For every entry, skipped or not: no "..", ".", empty
+// parts, absolute paths, drive letters, backslashes, symlinks or unsafe names; no case-insensitive
+// duplicates among the unpacked files; at most
 // limits.maxEntries entries, limits.maxBytes declared bytes in all and limits.maxBankJsonBytes
 // for bank.json (ArchiveInvalid, ArchiveTooLarge).
 // Then it unpacks into a temporary folder inside store.root() (an entry with more or less data

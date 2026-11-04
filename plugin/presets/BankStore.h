@@ -28,6 +28,7 @@ public:
         ArchiveInvalid,  // import: unsafe, foreign or inconsistent zip content
         ArchiveTooLarge, // import: over the entry or size limit
         SampleNameInvalid, // export: a sample name import would reject (not portable, two spellings)
+        BankHasUnreadableEntries, // save: bank.json holds entries this build skips; writing would lose them
     };
 
     struct Result
@@ -63,9 +64,12 @@ public:
     BankParseResult readBank(const juce::String& bank) const;
 
     // Re-reads bank.json, checks the name, copies the used loops into samples/ (a loop already in
-    // samples/ is used as it is; same file name with other content gets a counter, same content is
-    // reused) and replaces bank.json atomically. With overwrite an existing preset of that name
-    // (case-insensitive, first match) is replaced in place, otherwise the name must be new. A slot
+    // samples/ under a portable name is used as it is; otherwise it is copied under
+    // portableSampleName; a name taken in any spelling by other content gets a counter, same content
+    // is reused in its spelling on disk) and replaces bank.json atomically. A bank.json with entries
+    // that reading skipped is refused (BankHasUnreadableEntries): writing it would drop them. With
+    // overwrite an existing preset of that name (case-insensitive, first match) is replaced in
+    // place, otherwise the name must be new. A slot
     // with an empty path is stored empty; a used slot whose file is missing or unreadable refuses
     // the save (SampleMissing). A new name in a bank with kMaxPresetsPerBank presets is refused
     // (BankFull). On any error bank.json stays unchanged; samples already copied stay.
@@ -89,5 +93,13 @@ private:
 // bankFolder/samples); absolute paths, drive letters, backslashes, "..", and subfolders give an
 // empty File, so nothing outside the bank is read.
 juce::File storedSampleFile(const juce::File& bankFolder, const juce::String& storedPath);
+
+constexpr int kMaxSampleNameLength = 120; // characters of a sample name that saving creates
+
+// The name under which saving stores a sample called `sourceName` (Spec 3), always
+// isPortableFileName: \ / : * ? " < > | and control characters become '_', dots and spaces at the
+// end are removed, the part before the extension is shortened to fit kMaxSampleNameLength, a
+// reserved Windows name gets a leading '_', an empty result becomes "sample".
+juce::String portableSampleName(const juce::String& sourceName);
 
 } // namespace dc

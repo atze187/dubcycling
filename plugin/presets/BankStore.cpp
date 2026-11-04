@@ -30,21 +30,35 @@ bool writeAtomically(const juce::File& target, const juce::String& content)
 }
 
 // The file in samples/ that holds `source` (Spec 3): `source` itself when it already lies in
-// samples/, otherwise a copy under its name, with " (n)" when the name is taken by other content;
-// a file with the same content is reused. Empty File on a failed copy.
+// samples/ under a portable name, otherwise a copy under portableSampleName, with " (n)" when the
+// name is taken by other content; a file with the same content is reused. A name counts as taken
+// when any entry of samples/ matches it case-insensitively, and a reused file is returned in its
+// spelling on disk, so the stored path loads and exports on every file system. Empty File on a
+// failed copy.
 juce::File placeSample(const juce::File& source, const juce::String& sourceHash, const juce::File& samples)
 {
-    if (source.getParentDirectory() == samples)
+    if (source.getParentDirectory() == samples && isPortableFileName(source.getFileName()))
         return source;
-    const auto stem = source.getFileNameWithoutExtension();
-    const auto ext = source.getFileExtension();
+    const auto name = portableSampleName(source.getFileName());
+    const auto dot = name.lastIndexOfChar('.');
+    const auto stem = dot > 0 ? name.substring(0, dot) : name;
+    const auto ext = dot > 0 ? name.substring(dot) : juce::String();
+    const auto onDisk = samples.findChildFiles(juce::File::findFilesAndDirectories, false);
     for (int n = 1;; ++n)
     {
-        const auto candidate = samples.getChildFile(n == 1 ? stem + ext : stem + " (" + juce::String(n) + ")" + ext);
-        if (!candidate.exists())
-            return source.copyFileTo(candidate) ? candidate : juce::File();
-        if (candidate.existsAsFile() && hashFile(candidate) == sourceHash)
-            return candidate;
+        const auto candidate = n == 1 ? name : stem + " (" + juce::String(n) + ")" + ext;
+        bool taken = false;
+        for (auto& existing : onDisk)
+        {
+            if (!existing.getFileName().equalsIgnoreCase(candidate))
+                continue;
+            if (existing.existsAsFile() && hashFile(existing) == sourceHash)
+                return existing;
+            taken = true;
+        }
+        const auto target = samples.getChildFile(candidate);
+        if (!taken && !target.exists())
+            return source.copyFileTo(target) ? target : juce::File();
     }
 }
 
@@ -61,6 +75,36 @@ juce::File storedSampleFile(const juce::File& bankFolder, const juce::String& st
     const auto samples = bankFolder.getChildFile(kSamplesDir);
     const auto file = samples.getChildFile(name);
     return file.getParentDirectory() == samples ? file : juce::File();
+}
+
+juce::String portableSampleName(const juce::String& sourceName)
+{
+    const auto stripEnd = [](juce::String s) {
+        while (s.endsWithChar('.') || s.endsWithChar(' '))
+            s = s.dropLastCharacters(1);
+        return s;
+    };
+    juce::String clean;
+    for (auto p = sourceName.getCharPointer(); !p.isEmpty(); ++p)
+    {
+        const auto c = *p;
+        const bool bad = c < 32 || c == 127 || juce::String("\\/:*?\"<>|").containsChar(c);
+        clean += juce::String::charToString(bad ? static_cast<juce::juce_wchar>('_') : c);
+    }
+    clean = stripEnd(clean);
+
+    // One character stays free for the '_' in front of a reserved name.
+    const int limit = kMaxSampleNameLength - 1;
+    const auto dot = clean.lastIndexOfChar('.');
+    auto ext = dot > 0 ? clean.substring(dot) : juce::String();
+    if (ext.length() >= limit)
+        ext = {};
+    const auto stem = clean.substring(0, (ext.isEmpty() ? clean.length() : dot)).substring(0, limit - ext.length());
+    clean = stripEnd(stem + ext);
+
+    if (clean.isEmpty())
+        return "sample";
+    return isPortableFileName(clean) ? clean : "_" + clean; // only a reserved Windows name is left
 }
 
 BankStore::Result BankStore::checkParsed(const juce::File& bankFile, const BankParseResult& parsed)
@@ -126,6 +170,10 @@ BankStore::Result BankStore::savePreset(const juce::String& bank, const juce::St
     auto parsed = readBank(bank);
     if (auto r = checkParsed(bankFile, parsed); !r.ok())
         return r;
+    if (parsed.skipped > 0)
+        return fail(Error::BankHasUnreadableEntries,
+                    text("Die Bank enth\xc3\xa4lt Eintr\xc3\xa4ge, die dieses Plugin nicht lesen kann. "
+                         "Speichern w\xc3\xbcrde sie l\xc3\xb6schen, darum wird nicht gespeichert."));
     Bank& stored = *parsed.bank;
 
     if (const auto problem = presetNameProblem(presetName, Bank {}); problem.isNotEmpty())
