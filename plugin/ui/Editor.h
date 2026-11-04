@@ -5,7 +5,9 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
 #include "plugin/ui/LoopLane.h"
+#include "plugin/presets/BankStore.h"
 #include "plugin/ui/PanelLook.h"
+#include "plugin/ui/PresetBar.h"
 #include "plugin/ui/RulePanel.h"
 
 namespace dc::ui {
@@ -65,13 +67,15 @@ juce::String replaceConfirmMessage();
 juce::String suggestConfirmTitle(int slot);
 juce::String suggestConfirmMessage();
 
-// Edit view: Loop 1 lane on top, Loop 2 below, each with bars field, "Load..." button and slot
+// Edit view: top row with logo, preset bar and BPM (the cycle readout only when it fits);
+// Loop 1 lane on top, Loop 2 below, each with bars field, "Load..." button and slot
 // status; the combined cycle length; the rule panel for the selected Loop-1 region. A 10 Hz timer
 // polls the processor and refreshes lanes and panel; edits go through processor.applyEdit.
 class Editor final : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
-    explicit Editor(DubcyclingProcessor& proc);
+    // presetsRoot: folder of the preset banks (tests pass a temporary one).
+    explicit Editor(DubcyclingProcessor& proc, juce::File presetsRoot = BankStore::defaultRoot());
     ~Editor() override;
 
     // Selected region of Loop 1 (for the rule panel).
@@ -81,6 +85,7 @@ public:
     const LoopLane& lane(int slot) const { return lanes_[slot == 0 ? 0 : 1]; }
     LoopLane& lane(int slot) { return lanes_[slot == 0 ? 0 : 1]; }
     RulePanel& rulePanel() { return rules_; }
+    PresetBar& presetBar() { return presetBar_; }
     juce::Slider& barsField(int slot) { return bars_[slot == 0 ? 0 : 1]; }
     // Pulls state, slot status and loop data from the processor (the timer calls it).
     void refresh();
@@ -136,6 +141,8 @@ private:
 
     PanelLook look_; // declared first: destroyed after every child that uses it
     DubcyclingProcessor& proc_;
+    BankStore store_; // declared before presetBar_, which uses it
+    PresetBar presetBar_;
     LoopLane lanes_[2];
     juce::Label titles_[2];
     juce::Label status_[2];
