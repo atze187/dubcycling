@@ -43,6 +43,8 @@ public:
         PluginState state; // absolute loop paths into the bank folder
     };
 
+    static constexpr const char* kBankFileName = "bank.json"; // in each bank folder
+
     explicit BankStore(juce::File root);
 
     // Documents/Dubcycling/Presets

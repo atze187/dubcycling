@@ -16,7 +16,6 @@ constexpr int kGap = 6;
 constexpr int kMargin = 8;
 constexpr int kLogoW = 88;
 constexpr int kCycleW = 130;
-constexpr int kPresetBarW = 550; // the preset bar's width with full-size fields and room for its buttons
 
 using namespace panel;
 
@@ -625,7 +624,7 @@ void Editor::resized()
     top.removeFromRight(kGap);
     bpmCaption_.setBounds(top.removeFromRight(34));
     top.removeFromRight(kGap * 2);
-    const bool cycleFits = top.getWidth() >= kPresetBarW + kGap * 2 + kCycleW;
+    const bool cycleFits = top.getWidth() >= PresetBar::kPreferredWidth + kGap * 2 + kCycleW;
     cycle_.setVisible(cycleFits);
     if (cycleFits)
     {

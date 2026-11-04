@@ -5,7 +5,7 @@ namespace dc {
 
 namespace {
 
-const char* const kBankFile = "bank.json";
+const char* const kBankFile = BankStore::kBankFileName;
 const char* const kSamplesDir = "samples";
 
 juce::String text(const char* utf8) { return juce::String::fromUTF8(utf8); }

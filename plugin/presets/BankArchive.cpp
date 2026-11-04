@@ -6,7 +6,7 @@ namespace dc {
 
 namespace {
 
-const char* const kBankFile = "bank.json";
+const char* const kBankFile = BankStore::kBankFileName;
 const char* const kSamplesDir = "samples";
 constexpr int kCompressionLevel = 9;
 constexpr int kCopyChunk = 65536;
