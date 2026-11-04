@@ -85,15 +85,22 @@ pro Region dazukommen, werden Presets wichtiger.
    (beide Loops mit Datei, Hash, Takten, Regionsgrenzen und Beschriftungen, dazu die Regeln), nur mit relativem
    `path` (Schrägstriche `/`, relativ zum Bank-Ordner). Der Session-Zustand im Host bleibt XML wie bisher; die
    Bank bekommt einen eigenen JSON-Leser und -Schreiber (z. B. `juce::JSON`), der dieselben Bereinigungsregeln und
-   Obergrenzen wie `deserialize` in `PluginState.cpp` anwendet. Erweiterungen kommen als zusätzliche optionale
-   Felder dazu, die Version bleibt, solange alte Dateien weiter laden (wie bei den Beschriftungen). Eine Bank mit
-   unbekannter höherer Version wird mit Meldung übersprungen, nie überschrieben.
+   Obergrenzen wie `deserialize` in `PluginState.cpp` anwendet. Jede Erweiterung des Formats, die ältere
+   Versionen beim Speichern nicht erhalten könnten (neue Felder, neue Eintragsarten), erhöht `version`; eine
+   ältere Version lehnt eine solche Bank mit Meldung ab (zu neu) und schreibt sie nie. Eine Bank mit unbekannter
+   höherer Version wird mit Meldung übersprungen, nie überschrieben. Enthält eine Bank Einträge, die das Plugin
+   beim Lesen überspringt (kein Objekt, Preset ohne Namen, mehr als 1024 Presets), verweigert Speichern mit
+   Meldung, statt sie beim Zurückschreiben zu verlieren. Zahlen werden mit voller Genauigkeit geschrieben (bis zu
+   17 signifikante Stellen), damit ein gespeichertes Preset genau dem Zustand gleicht, aus dem es gespeichert
+   wurde.
 2. **Preset-Ordner:** Standard `Dokumente/Dubcycling/Presets` (`juce::File::userDocumentsDirectory`). Jeder
    Unterordner mit `bank.json` ist eine Bank.
 3. **Sample-Ablage beim Speichern:** Liegt der Loop schon in `samples` dieser Bank (z. B. nach dem Laden eines
-   Presets), wird nichts kopiert. Sonst wird er unter dem Originalnamen kopiert; gibt es den Namen schon mit
-   anderem Hash, wird ein Zähler angehängt (`name (2).wav`), bei gleichem Hash wird die vorhandene Datei
-   weiterverwendet.
+   Presets), wird nichts kopiert. Sonst wird er unter dem Originalnamen kopiert, wobei Zeichen, die nicht auf
+   allen Systemen in Dateinamen erlaubt sind, durch `_` ersetzt werden (dazu Punkte und Leerzeichen am Ende
+   entfernt, reservierte Windows-Namen mit `_` davor, Länge begrenzt); gibt es den Namen schon (in beliebiger
+   Groß-/Kleinschreibung) mit anderem Hash, wird ein Zähler angehängt (`name (2).wav`), bei gleichem Hash wird
+   die vorhandene Datei in ihrer Schreibweise auf der Platte weiterverwendet.
 4. **Speichern bei fehlendem Loop:** Ist ein Slot Missing oder Failed (Datei nicht lesbar), wird nicht gespeichert
    und das Plugin meldet es. Ist ein Slot leer, wird er als leer gespeichert.
 5. **Preset laden:** Ersetzt den kompletten Plugin-Zustand (beide Loops, Regeln) wie ein Wiederherstellen des
@@ -118,9 +125,12 @@ pro Region dazukommen, werden Presets wichtiger.
    schreiben. Zip erzeugt mit `juce::ZipFile::Builder`.
 10. **Import:** Zip per Dateidialog wählen und in den Preset-Ordner entpacken (das ist die Bedienung für "Zip in
     den Preset-Ordner entpacken"; ein von Hand entpackter Ordner funktioniert genauso). Existiert eine Bank mit
-    dem Namen schon, wird unter `Name (2)` importiert; nie überschreiben. Beim Entpacken: nur ein oberster Ordner
-    erlaubt, Einträge mit `..`, absoluten Pfaden oder Laufwerksbuchstaben werden abgelehnt (Zip-Slip), nur
-    `bank.json` und Dateien unter `samples/` werden entpackt, Größenobergrenze gegen Zip-Bomben. Entpackt wird in
+    dem Namen schon, wird unter `Name (2)` importiert; nie überschreiben. Beim Entpacken: genau ein oberster
+    Ordner (ein `__MACOSX`-Ordner zählt nicht mit), Einträge mit `..`, absoluten Pfaden oder Laufwerksbuchstaben
+    werden abgelehnt (Zip-Slip), auch wenn sie sonst übersprungen würden. Nur `bank.json` und Dateien unter
+    `samples/` werden entpackt; andere Dateien neben `bank.json` (z. B. `.DS_Store`, `Thumbs.db`,
+    `desktop.ini`), der `__MACOSX`-Ordner und `._*`-Dateien werden übersprungen, andere Unterordner abgelehnt.
+    Größenobergrenze gegen Zip-Bomben. Beim Export muss der Bank-Ordner einen gültigen Bank-Namen haben. Entpackt wird in
     einen temporären Ordner im Preset-Ordner und erst nach vollständiger Prüfung an den Zielnamen verschoben.
 11. **Atomares Schreiben:** `bank.json` wird in eine Temp-Datei geschrieben und dann ersetzt, damit ein Abbruch die
     Bank nicht beschädigt.
@@ -137,7 +147,9 @@ pro Region dazukommen, werden Presets wichtiger.
     geladen, wenn der Nutzer es in der Preset-Liste wählt. Wechselt der Nutzer die Bank, ohne ein Preset zu wählen,
     gibt es kein aktives Preset, und SAVE fragt wie SAVE AS nach einem Namen. Beim ersten Start gibt es keine Bank:
     SAVE und SAVE AS fragen dann zusätzlich nach einem Bank-Namen und legen die Bank an ("Neue Bank…" im Menü
-    bleibt der direkte Weg).
+    bleibt der direkte Weg). Die Rückfrage vor dem Laden vergleicht immer mit dem aktiven Preset (zuletzt
+    geladen oder gespeichert), auch wenn gerade eine andere Bank ausgewählt ist; die Bank-Auswahl allein ändert
+    den Vergleichsstand nicht.
 16. **Mehrere Plugin-Instanzen:** Die Bank-Logik hält keinen eigenen Zwischenspeicher. Jedes Speichern liest
     `bank.json` unmittelbar davor neu ein, ändert das eine Preset und schreibt atomar zurück. Die Preset-Liste wird
     beim Öffnen der Auswahl neu eingelesen. Gleichzeitiges Speichern in dieselbe Bank von zwei Instanzen im selben
