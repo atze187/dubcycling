@@ -22,8 +22,9 @@ Punkte stehen so, wie der Nutzer sie formuliert hat. Einschätzungen darunter si
 4. ERLEDIGT (2026-11-03; Umbenennen per Doppelklick auf den Namen in der Lane oder in der Regelzeile von Loop 2, max. 16 Zeichen; Loop-1-Name steht im Regel-Titel; AUTO (Vorschlag) lässt die Namen wie die Regeln auf ihren Indizes stehen). "die labels der regionen bearbeitbar machen"
    - Einschätzung: Pro Region ein frei benennbares Label, Standard bleibt A, B, C. Im State speichern (Versionsfeld erhöhen, Längenlimit z. B. 16 Zeichen, alte Sessions laden weiter). Labels müssen beim Hinzufügen/Entfernen von Grenzen mit ihren Regionen wandern, wie die Regeln (`remapRulesForBoundaryEdit`). Sie erscheinen in der Lane und in den Regelzeilen. Bearbeiten nicht per Doppelklick in die Lane (der fügt Grenzen hinzu/entfernt sie), sondern per Doppelklick auf das Label-Feld oder im Regelpanel.
 
-5. Presets (später): "eventuell nehmen wir dann noch presets mit rein (das kann vor allem später interessant werden, wenn man auch nicht-drums-loops verwendet)"
-   - Entschieden (Nutzer, 2026-11-03): Loops bleiben im Session-State als Pfad plus Hash, kein Einbetten der Audiodaten.
+5. ERLEDIGT (2026-11-04; Banken als Ordner mit `bank.json` und `samples/`, Preset-Leiste mit BANK/PRESET/SAVE/SAVE AS/⋯, Rückfrage bei ungespeicherten Änderungen, Export und Import einer Bank als Zip; Entwurf: `docs/superpowers/specs/2026-11-04-presets-design.md`). "eventuell nehmen wir dann noch presets mit rein (das kann vor allem später interessant werden, wenn man auch nicht-drums-loops verwendet)"
+   - Bekannte Grenzen: Presets lassen sich nicht löschen oder umbenennen. Samples werden nie aus einer Bank entfernt. macOS-`__MACOSX`-Ordner in neu gezippten Banken werden beim Import abgelehnt.
+   - Entschieden (Nutzer, 2026-11-03): Loops bleiben im Session-State als Pfad plus Hash, kein Einbetten der Audiodaten. Die Samples eines Presets liegen in der Bank unter `samples/`.
    - Einschätzung: Preset = Regionsgrenzen, Regeln, Labels und Takte ohne Audiodatei, vermutlich als Datei neben dem Loop oder in einem Preset-Ordner. Passt zu den Region-Labels (Punkt 4) und zum Vorschlag-Algorithmus für Nicht-Drum-Loops.
 
 6. Effekte pro Region (ursprünglicher Plan, noch nicht gebaut)

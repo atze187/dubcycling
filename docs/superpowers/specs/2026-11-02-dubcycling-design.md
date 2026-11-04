@@ -17,7 +17,7 @@ Der Reiz liegt darin, dass ein Loop-Paar bei jedem Durchlauf ein bisschen anders
 - Effekte direkt auf den Regionen (Details später).
 - Ein Stereo-Ausgang.
 - Start und Stopp folgen dem Host-Transport.
-- Zustand wird in der DAW-Session gespeichert.
+- Zustand wird in der DAW-Session gespeichert. Presets und Banken (Stand 2026-11-04) ergänzen das, siehe `2026-11-04-presets-design.md`.
 
 ## Nicht-Ziele (vorerst)
 
@@ -86,6 +86,7 @@ Der ursprüngliche Wunsch nannte außerdem Effekt-Slots auf einzelnen Regionen o
 - Der Zustand liegt im Plugin-State der DAW-Session (die DAW legt ihn in der Projektdatei ab).
 - Die Loops werden dort nur als Referenz gespeichert: Dateipfad, Dateiname und Prüfsumme.
 - Regionen, Regeln und Effekt-Einstellungen sind im Plugin-State und gehen nicht verloren, wenn eine Audiodatei fehlt.
+- Presets: Eine Bank ist ein Ordner mit `bank.json` und `samples/`. Ein Preset hält Regionen, Regeln, Labels, Takte und die Sample-Verweise der Bank. Die Preset-Leiste (BANK, PRESET, SAVE, SAVE AS, ⋯ mit Export und Import als Zip) lädt und speichert sie, bei ungespeicherten Änderungen fragt sie zurück. Die Session speichert weiter Pfad und Prüfsumme der Loops. Einzelheiten: `2026-11-04-presets-design.md`.
 - Ist ein Pfad ungültig, sucht das Plugin den Loop selbst (zum Beispiel im Ordner der Session oder per Dateiname und Prüfsumme). Findet es ihn nicht, meldet es „Datei fehlt“, und der Nutzer ordnet neu zu.
 
 ## Technik (Entscheidung des Autors)
@@ -120,7 +121,7 @@ Nicht geprüft: ob dubgefahren schon Transienten-Erkennung oder Tempo-Analyse en
 - Wie der Zufall realisiert wird (Zufallsquelle, ob reproduzierbar).
 - Wie Übergänge an Regionsgrenzen geglättet werden (Fades gegen Knackser).
 - Wie viele Regionen pro Loop maximal.
-- Aufbau des Plugin-States und der Versionierung.
+- Aufbau des Plugin-States und der Versionierung (der State führt seit den Presets zusätzlich die aktive Bank und das aktive Preset).
 - Genaue Gestaltung der Oberfläche innerhalb der Skizze.
 
 ## Abspiellogik (Präzisierungen des Autors)
