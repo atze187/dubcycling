@@ -52,6 +52,17 @@ struct PluginState
     juce::String activeBank, activePreset;
 };
 
+// Shared sanitizing steps of deserialize (also used by the bank file format).
+// Boundaries re-added through RegionMap::addBoundary (invalid dropped, sorted, spaced).
+std::vector<double> sanitizeBoundaries(const std::vector<double>& raw);
+// Stores one custom label; false = kMaxLabelEntries reached, the caller stops. Invalid ones are skipped.
+bool addLabelEntry(LoopRef& loop, int& kept, int region, const juce::String& text);
+// Appends one target; false = kMaxRuleTargets reached, the caller stops. Negative region2 is skipped.
+bool addRuleTarget(std::vector<RuleTarget>& targets, const RuleTarget& t);
+// Weights through RuleSet::setTargets; nullopt for region1 outside 0..kMaxRegion1-1, or when the
+// result is empty and the source entry had no targets at all (hadTargets = false).
+std::optional<RuleEntry> sanitizeRuleEntry(int region1, std::vector<RuleTarget> targets, bool hadTargets);
+
 juce::MemoryBlock serialize(const PluginState&);
 
 // nullopt for empty, damaged or unknown-version data; never throws. The result is sanitized:

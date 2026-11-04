@@ -56,28 +56,58 @@ LoopRef loopFromTree(const juce::ValueTree& t)
     l.fileName = t.getProperty("fileName").toString();
     l.hash = t.getProperty("hash").toString();
     l.bars = std::clamp(static_cast<int>(t.getProperty("bars", 1)), 1, 1024);
-    RegionMap map;
-    for (double b : splitDoubles(t.getProperty("boundaries").toString()))
-        map.addBoundary(b);
-    l.boundaries = map.boundaries;
+    l.boundaries = sanitizeBoundaries(splitDoubles(t.getProperty("boundaries").toString()));
     int kept = 0;
     for (auto n : t.getChildWithName("Labels"))
-    {
-        if (kept >= kMaxLabelEntries)
+        if (!addLabelEntry(l, kept, n.getProperty("region", -1), n.getProperty("text").toString()))
             break;
-        const int region = n.getProperty("region", -1);
-        const auto text = sanitizeLabel(n.getProperty("text").toString());
-        if (region < 0 || region >= kMaxRegion1 || text.isEmpty())
-            continue;
-        if (l.labels.size() <= static_cast<std::size_t>(region))
-            l.labels.resize(static_cast<std::size_t>(region) + 1);
-        l.labels[static_cast<std::size_t>(region)] = text;
-        ++kept;
-    }
     return l;
 }
 
 } // namespace
+
+std::vector<double> sanitizeBoundaries(const std::vector<double>& raw)
+{
+    RegionMap map;
+    for (double b : raw)
+        map.addBoundary(b);
+    return map.boundaries;
+}
+
+bool addLabelEntry(LoopRef& loop, int& kept, int region, const juce::String& text)
+{
+    if (kept >= kMaxLabelEntries)
+        return false;
+    const auto clean = sanitizeLabel(text);
+    if (region < 0 || region >= kMaxRegion1 || clean.isEmpty())
+        return true;
+    if (loop.labels.size() <= static_cast<std::size_t>(region))
+        loop.labels.resize(static_cast<std::size_t>(region) + 1);
+    loop.labels[static_cast<std::size_t>(region)] = clean;
+    ++kept;
+    return true;
+}
+
+bool addRuleTarget(std::vector<RuleTarget>& targets, const RuleTarget& t)
+{
+    if (targets.size() >= static_cast<std::size_t>(kMaxRuleTargets))
+        return false;
+    if (t.region2 >= 0)
+        targets.push_back(t);
+    return true;
+}
+
+std::optional<RuleEntry> sanitizeRuleEntry(int region1, std::vector<RuleTarget> targets, bool hadTargets)
+{
+    if (region1 < 0 || region1 >= kMaxRegion1)
+        return std::nullopt; // RuleSet ignores such an entry anyway
+    RuleSet tmp; // sanitizes weights
+    tmp.setTargets(region1, std::move(targets));
+    auto sanitized = tmp.targets(region1);
+    if (sanitized.empty() && !hadTargets)
+        return std::nullopt;
+    return RuleEntry { region1, std::move(sanitized) };
+}
 
 juce::String sanitizeLabel(const juce::String& text)
 {
@@ -153,28 +183,18 @@ std::optional<PluginState> deserialize(const void* data, std::size_t size)
         {
             if (s.rules.size() >= static_cast<std::size_t>(kMaxRuleEntries))
                 break; // the rest is dropped
-            const int region1 = r.getProperty("region1", -1);
-            if (region1 < 0 || region1 >= kMaxRegion1)
-                continue; // RuleSet ignores such an entry anyway
             std::vector<RuleTarget> targets;
             for (auto tt : r)
             {
-                if (targets.size() >= static_cast<std::size_t>(kMaxRuleTargets))
-                    break;
                 RuleTarget t;
                 t.region2 = tt.getProperty("region2", 0);
-                if (t.region2 < 0)
-                    continue;
                 t.weight = static_cast<float>(tt.getProperty("weight").toString().getDoubleValue());
                 t.mode = static_cast<int>(tt.getProperty("mode", 0)) == 1 ? PlayMode::OneShot : PlayMode::Gate;
-                targets.push_back(t);
+                if (!addRuleTarget(targets, t))
+                    break;
             }
-            RuleSet tmp; // sanitizes weights; ignores an absurd region1
-            tmp.setTargets(region1, std::move(targets));
-            auto sanitized = tmp.targets(region1);
-            if (sanitized.empty() && !r.getNumChildren())
-                continue;
-            s.rules.push_back({ region1, std::move(sanitized) });
+            if (auto e = sanitizeRuleEntry(r.getProperty("region1", -1), std::move(targets), r.getNumChildren() > 0))
+                s.rules.push_back(std::move(*e));
         }
         return s;
     }
