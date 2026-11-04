@@ -5,7 +5,8 @@ add_library(dc_plugin_shared STATIC
     PluginState.h PluginState.cpp
     FileRelink.h FileRelink.cpp
     SlotTracker.h SlotTracker.cpp
-    presets/BankFormat.h presets/BankFormat.cpp)
+    presets/BankFormat.h presets/BankFormat.cpp
+    presets/BankStore.h presets/BankStore.cpp)
 target_include_directories(dc_plugin_shared PUBLIC ${PROJECT_SOURCE_DIR})
 # JUCE's own MP3 decoder where the OS provides none (Windows: Windows Media, macOS: CoreAudio).
 # The spec requires WAV, MP3, FLAC, AIFF on every platform.
