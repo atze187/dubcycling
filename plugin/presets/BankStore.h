@@ -25,6 +25,8 @@ public:
         CopyFailed,
         WriteFailed,
         BankFull, // kMaxPresetsPerBank reached, no new preset
+        ArchiveInvalid,  // import: unsafe, foreign or inconsistent zip content
+        ArchiveTooLarge, // import: over the entry or size limit
     };
 
     struct Result
@@ -72,8 +74,17 @@ public:
     // the slot ends up Missing instead of reading a file outside the bank.
     LoadedPreset loadPreset(const juce::String& bank, const juce::String& presetName) const;
 
+    // Error for a bank.json that is missing (BankMissing), too new (BankTooNew) or damaged
+    // (BankUnreadable); None when parsed holds a bank.
+    static Result checkParsed(const juce::File& bankFile, const BankParseResult& parsed);
+
 private:
     juce::File rootDir;
 };
+
+// The file a stored loop path names in bankFolder: only "samples/<name>" resolves (into
+// bankFolder/samples); absolute paths, drive letters, backslashes, "..", and subfolders give an
+// empty File, so nothing outside the bank is read.
+juce::File storedSampleFile(const juce::File& bankFolder, const juce::String& storedPath);
 
 } // namespace dc

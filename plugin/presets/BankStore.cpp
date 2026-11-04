@@ -29,20 +29,6 @@ bool writeAtomically(const juce::File& target, const juce::String& content)
     return true;
 }
 
-// Error result for a bank that could not be read; None when parsed has a bank.
-BankStore::Result checkParsed(const juce::File& bankFile, const BankParseResult& parsed)
-{
-    if (!bankFile.existsAsFile())
-        return fail(BankStore::Error::BankMissing, text("Die Bank gibt es nicht."));
-    if (parsed.tooNew)
-        return fail(BankStore::Error::BankTooNew,
-                    text("Die Bank stammt aus einer neueren Version von Dubcycling und wird nicht ver\xc3\xa4ndert."));
-    if (!parsed.bank)
-        return fail(BankStore::Error::BankUnreadable,
-                    text("Die Bank-Datei ist besch\xc3\xa4" "digt und kann nicht gelesen werden."));
-    return {};
-}
-
 // The file in samples/ that holds `source` (Spec 3): `source` itself when it already lies in
 // samples/, otherwise a copy under its name, with " (n)" when the name is taken by other content;
 // a file with the same content is reused. Empty File on a failed copy.
@@ -62,21 +48,32 @@ juce::File placeSample(const juce::File& source, const juce::String& sourceHash,
     }
 }
 
-// Absolute path of a stored "samples/<name>" inside `samples`; empty for anything else (absolute
-// paths, drive letters, backslashes, "..", subfolders), so nothing outside the bank is read.
-juce::String resolveSamplePath(const juce::String& stored, const juce::File& samples)
+} // namespace
+
+juce::File storedSampleFile(const juce::File& bankFolder, const juce::String& storedPath)
 {
     const juce::String prefix = juce::String(kSamplesDir) + "/";
-    if (!stored.startsWith(prefix))
+    if (!storedPath.startsWith(prefix))
         return {};
-    const auto name = stored.substring(prefix.length());
+    const auto name = storedPath.substring(prefix.length());
     if (name.isEmpty() || name == "." || name == ".." || name.containsAnyOf("/\\:"))
         return {};
+    const auto samples = bankFolder.getChildFile(kSamplesDir);
     const auto file = samples.getChildFile(name);
-    return file.getParentDirectory() == samples ? file.getFullPathName() : juce::String();
+    return file.getParentDirectory() == samples ? file : juce::File();
 }
 
-} // namespace
+BankStore::Result BankStore::checkParsed(const juce::File& bankFile, const BankParseResult& parsed)
+{
+    if (!bankFile.existsAsFile())
+        return fail(Error::BankMissing, text("Die Bank gibt es nicht."));
+    if (parsed.tooNew)
+        return fail(Error::BankTooNew,
+                    text("Die Bank stammt aus einer neueren Version von Dubcycling und wird nicht ver\xc3\xa4ndert."));
+    if (!parsed.bank)
+        return fail(Error::BankUnreadable, text("Die Bank-Datei ist besch\xc3\xa4" "digt und kann nicht gelesen werden."));
+    return {};
+}
 
 BankStore::BankStore(juce::File root) : rootDir(std::move(root)) {}
 
@@ -208,7 +205,7 @@ BankStore::LoadedPreset BankStore::loadPreset(const juce::String& bank, const ju
 
     loaded.state = found->state;
     for (LoopRef* l : { &loaded.state.loop1, &loaded.state.loop2 })
-        l->path = resolveSamplePath(l->path, dir.getChildFile(kSamplesDir));
+        l->path = storedSampleFile(dir, l->path).getFullPathName(); // empty when not "samples/<name>"
     loaded.state.activeBank = bank;
     loaded.state.activePreset = found->name;
     return loaded;

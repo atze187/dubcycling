@@ -34,6 +34,11 @@ juce::String presetNameProblem(const juce::String& name, const Bank& bank);
 // aux, nul, com1-9, lpt1-9, also with an extension), already in existingBanks (case-insensitive).
 juce::String bankNameProblem(const juce::String& name, const juce::StringArray& existingBanks);
 
+// True for a single file or folder name that is safe on every platform: not empty, not "." or
+// "..", none of \ / : * ? " < > | or control characters, no '.' or ' ' at the end, no reserved
+// Windows name. No length limit.
+bool isPortableFileName(const juce::String& name);
+
 juce::String bankToJson(const Bank& bank);
 
 struct BankParseResult

@@ -168,6 +168,16 @@ juce::String bankNameProblem(const juce::String& name, const juce::StringArray& 
     return {};
 }
 
+bool isPortableFileName(const juce::String& name)
+{
+    if (name.isEmpty() || name.endsWithChar('.') || name.endsWithChar(' ')) // also "." and ".."
+        return false;
+    for (auto p = name.getCharPointer(); !p.isEmpty(); ++p)
+        if (isControl(*p) || juce::String("\\/:*?\"<>|").containsChar(*p))
+            return false;
+    return !isReservedWindowsName(name);
+}
+
 juce::String bankToJson(const Bank& bank)
 {
     juce::Array<juce::var> presets;
