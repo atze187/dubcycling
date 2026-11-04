@@ -22,6 +22,36 @@ bool isReservedWindowsName(const juce::String& name)
     return false;
 }
 
+// True when [ and { nest deeper than kMaxJsonDepth outside string literals. juce::JSON::parse
+// recurses once per level, so a hostile file of "[[[[..." would overflow the stack. Strings are
+// tracked like the JUCE parser does it: '"' or '\'' quotes, a backslash escapes the next character.
+bool nestsTooDeep(const juce::String& json)
+{
+    int depth = 0;
+    juce::juce_wchar quote = 0;
+    bool escaped = false;
+    for (auto p = json.getCharPointer(); !p.isEmpty(); ++p)
+    {
+        const auto c = *p;
+        if (quote != 0)
+        {
+            if (escaped)
+                escaped = false;
+            else if (c == '\\')
+                escaped = true;
+            else if (c == quote)
+                quote = 0;
+        }
+        else if (c == '"' || c == '\'')
+            quote = c;
+        else if ((c == '[' || c == '{') && ++depth > kMaxJsonDepth)
+            return true;
+        else if (c == ']' || c == '}')
+            --depth; // may go below 0 on damaged input, which the parser rejects anyway
+    }
+    return false;
+}
+
 juce::var loopToVar(const LoopRef& l)
 {
     auto* o = new juce::DynamicObject();
@@ -199,6 +229,8 @@ juce::String bankToJson(const Bank& bank)
 BankParseResult bankFromJson(const juce::String& json)
 {
     BankParseResult result;
+    if (nestsTooDeep(json))
+        return result;
     try
     {
         const auto root = juce::JSON::parse(json);

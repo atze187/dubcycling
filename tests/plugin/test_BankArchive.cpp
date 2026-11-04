@@ -187,6 +187,46 @@ TEST_CASE("Archive: export with a missing sample fails and writes no zip")
     }
 }
 
+TEST_CASE("Archive: export refuses sample names that import would reject")
+{
+    ArchiveFixture f;
+    f.makeBank();
+    const auto target = f.zip("Dub.zip");
+    auto bank = f.store.readBank("Dub").bank;
+    REQUIRE(bank.has_value());
+    const auto samples = f.store.bankDir("Dub").getChildFile("samples");
+
+    SECTION("not portable")
+    {
+        // Such files cannot be created on Windows (con.wav would even open the console device),
+        // so only the stored path names them: the name is refused before the file is looked up.
+        for (const juce::String name : { "take?.wav", "con.wav", "end." })
+        {
+            INFO("name " << name);
+            bank->presets[0].state.loop1.path = "samples/" + name;
+            REQUIRE(f.store.bankDir("Dub").getChildFile("bank.json").replaceWithText(bankToJson(*bank)));
+            const auto r = exportBank(f.store, "Dub", target);
+            CHECK(r.error == Error::SampleNameInvalid);
+            CHECK(r.message.contains(name));
+            CHECK_FALSE(target.exists());
+            CHECK(f.dir.getNumberOfChildFiles(juce::File::findFiles) == 0);
+        }
+    }
+    SECTION("two spellings of one name")
+    {
+        // On a case-insensitive file system A.wav is a.wav; elsewhere it is a second file.
+        if (!samples.getChildFile("A.wav").exists())
+            REQUIRE(samples.getChildFile("a.wav").copyFileTo(samples.getChildFile("A.wav")));
+        bank->presets[1].state.loop1.path = "samples/A.wav";
+        REQUIRE(f.store.bankDir("Dub").getChildFile("bank.json").replaceWithText(bankToJson(*bank)));
+        const auto r = exportBank(f.store, "Dub", target);
+        CHECK(r.error == Error::SampleNameInvalid);
+        CHECK(r.message.contains("A.wav"));
+        CHECK_FALSE(target.exists());
+        CHECK(f.dir.getNumberOfChildFiles(juce::File::findFiles) == 0);
+    }
+}
+
 TEST_CASE("Archive: export then import into another root gives a working bank")
 {
     ArchiveFixture f;
@@ -363,6 +403,24 @@ TEST_CASE("Archive: a zip over the entry or size limit is rejected")
         CHECK(r.message.isNotEmpty());
         CHECK_FALSE(f.store.root().exists());
         REQUIRE(importBank(f.store, zipFile, imported, { kMaxArchiveEntries, total }).ok());
+    }
+    SECTION("bank.json has its own size limit")
+    {
+        CHECK(kMaxBankJsonBytes == juce::int64(4) * 1024 * 1024);
+        const auto bigJson = "{\"version\": 1, \"presets\": [], \"pad\": \"" + juce::String::repeatedString("x", 2000) + "\"}";
+        const auto zipFile = handZip(f.zip("bigjson.zip"), { { "A/bank.json", bigJson } });
+        const auto size = static_cast<juce::int64>(bigJson.getNumBytesAsUTF8());
+        const auto r = importBank(f.store, zipFile, imported, { kMaxArchiveEntries, kMaxArchiveBytes, size - 1 });
+        CHECK(r.error == Error::ArchiveTooLarge);
+        CHECK(r.message.contains("bank.json"));
+        CHECK_FALSE(f.store.root().exists());
+        REQUIRE(importBank(f.store, zipFile, imported, { kMaxArchiveEntries, kMaxArchiveBytes, size }).ok());
+    }
+    SECTION("a deeply nested bank.json under the size limit is damaged, not a crash")
+    {
+        const auto zipFile = handZip(f.zip("deep.zip"), { { "A/bank.json", juce::String::repeatedString("[", 100000) } });
+        CHECK(importBank(f.store, zipFile, imported).error == Error::BankUnreadable);
+        CHECK(f.store.root().getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 0);
     }
     SECTION("a declared size over the default limit")
     {

@@ -74,6 +74,29 @@ TEST_CASE("BankFormat: damaged json gives no bank")
     CHECK_FALSE(bankFromJson("{\"version\": 1, \"presets\": []}").tooNew);
 }
 
+TEST_CASE("BankFormat: json nested deeper than kMaxJsonDepth gives no bank without crashing")
+{
+    // A hostile bank.json: the JSON parser recurses per level, this must not reach it.
+    const auto deep = juce::String::repeatedString("[", 100000);
+    const auto r = bankFromJson(deep);
+    CHECK_FALSE(r.bank.has_value());
+    CHECK_FALSE(r.tooNew);
+    const auto deepInside = "{\"version\": 1, \"presets\": [], \"x\": " + juce::String::repeatedString("{\"a\":", 100000) + "}";
+    CHECK_FALSE(bankFromJson(deepInside).bank.has_value());
+    const auto justOver = "{\"version\": 1, \"presets\": [], \"x\": " + juce::String::repeatedString("[", kMaxJsonDepth)
+                          + juce::String::repeatedString("]", kMaxJsonDepth) + "}";
+    CHECK_FALSE(bankFromJson(justOver).bank.has_value());
+
+    // At the limit, and brackets inside strings (also after an escaped quote) do not count.
+    const auto atLimit = "{\"version\": 1, \"presets\": [], \"x\": " + juce::String::repeatedString("[", kMaxJsonDepth - 1)
+                         + juce::String::repeatedString("]", kMaxJsonDepth - 1) + "}";
+    CHECK(bankFromJson(atLimit).bank.has_value());
+    const auto inString = "{\"version\": 1, \"presets\": [{\"name\": \"\\\"" + juce::String::repeatedString("[", 1000) + "\"}]}";
+    const auto parsed = bankFromJson(inString);
+    REQUIRE(parsed.bank.has_value());
+    CHECK(parsed.bank->presets.size() == 1);
+}
+
 TEST_CASE("BankFormat: a newer version is flagged tooNew")
 {
     const auto r = bankFromJson("{\"version\": 2, \"presets\": []}");

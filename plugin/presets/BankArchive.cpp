@@ -77,7 +77,13 @@ BankStore::Result planImport(const juce::ZipFile& zip, const ArchiveLimits& limi
         if (isFolder && (parts.isEmpty() || parts == juce::StringArray { kSamplesDir }))
             continue;
         if (!isFolder && parts == juce::StringArray { kBankFile })
+        {
+            if (entry.uncompressedSize > limits.maxBankJsonBytes)
+                return fail(BankStore::Error::ArchiveTooLarge,
+                            text("Die bank.json in der Zip-Datei ist zu gro\xc3\x9f (h\xc3\xb6" "chstens ")
+                                + juce::String(limits.maxBankJsonBytes / 1024) + " KB).");
             relative = kBankFile;
+        }
         else if (!isFolder && parts.size() == 2 && parts[0] == kSamplesDir)
             relative = juce::String(kSamplesDir) + "/" + parts[1];
         else
@@ -161,23 +167,35 @@ BankStore::Result exportBank(const BankStore& store, const juce::String& bank, c
     if (auto r = BankStore::checkParsed(bankFile, parsed); !r.ok())
         return r;
 
-    // Check every used sample before writing anything.
-    juce::Array<juce::File> samples;
+    // Check every used sample before writing anything, with the rules import applies: a portable
+    // name, spelled exactly as on disk, and no two packed names that differ only in case.
+    const auto samplesDir = dir.getChildFile(kSamplesDir);
+    juce::StringArray onDisk;
+    for (auto& file : samplesDir.findChildFiles(juce::File::findFiles, false))
+        onDisk.add(file.getFileName());
+    juce::StringArray packed;
     for (auto& preset : parsed.bank->presets)
         for (const LoopRef* loop : { &preset.state.loop1, &preset.state.loop2 })
         {
             if (loop->path.isEmpty())
                 continue;
             const auto sample = storedSampleFile(dir, loop->path);
+            const auto name = sample.getFileName();
+            if (sample != juce::File() && !isPortableFileName(name))
+                return fail(BankStore::Error::SampleNameInvalid,
+                            text("Der Name der Loop-Datei ist nicht auf allen Systemen g\xc3\xbcltig: ") + loop->path);
             if (!sample.existsAsFile())
                 return fail(BankStore::Error::SampleMissing, text("Die Loop-Datei fehlt in der Bank: ") + loop->path);
-            samples.addIfNotAlreadyThere(sample);
+            if (!onDisk.contains(name) || (!packed.contains(name) && packed.contains(name, true)))
+                return fail(BankStore::Error::SampleNameInvalid,
+                            text("Die Loop-Datei ist in der Bank unterschiedlich geschrieben: ") + loop->path);
+            packed.addIfNotAlreadyThere(name);
         }
 
     juce::ZipFile::Builder builder;
     builder.addFile(bankFile, kCompressionLevel, bank + "/" + kBankFile);
-    for (auto& sample : samples)
-        builder.addFile(sample, kCompressionLevel, bank + "/" + kSamplesDir + "/" + sample.getFileName());
+    for (auto& name : packed)
+        builder.addFile(samplesDir.getChildFile(name), kCompressionLevel, bank + "/" + kSamplesDir + "/" + name);
 
     // Written next to zipFile and moved over it when complete; the destructor removes it otherwise.
     juce::TemporaryFile temp(zipFile);

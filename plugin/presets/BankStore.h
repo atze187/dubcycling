@@ -27,6 +27,7 @@ public:
         BankFull, // kMaxPresetsPerBank reached, no new preset
         ArchiveInvalid,  // import: unsafe, foreign or inconsistent zip content
         ArchiveTooLarge, // import: over the entry or size limit
+        SampleNameInvalid, // export: a sample name import would reject (not portable, two spellings)
     };
 
     struct Result

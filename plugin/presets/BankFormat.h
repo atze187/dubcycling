@@ -10,6 +10,7 @@ constexpr int kBankVersion = 1;
 constexpr int kMaxPresetNameLength = 32;
 constexpr int kMaxBankNameLength = 64;
 constexpr int kMaxPresetsPerBank = 1024;
+constexpr int kMaxJsonDepth = 64; // deeper nesting of [ and { is treated as damaged (parser recursion)
 
 // One preset: the session state without audio. state.loopN.path is relative to the bank folder
 // (with '/'); activeBank and activePreset are unused.
@@ -48,7 +49,8 @@ struct BankParseResult
 };
 
 // Never throws. The loaded presets are sanitized like a loaded session state (see deserialize);
-// at most kMaxPresetsPerBank presets are kept, presets without a name are dropped.
+// at most kMaxPresetsPerBank presets are kept, presets without a name are dropped. JSON nested
+// deeper than kMaxJsonDepth counts as damaged (checked before parsing, the parser recurses).
 BankParseResult bankFromJson(const juce::String& json);
 
 // Canonical text of everything that makes a preset sound the way it does: hash, bars, boundaries
