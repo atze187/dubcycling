@@ -390,3 +390,85 @@ TEST_CASE("BankStore: save re-reads bank.json right before writing")
     REQUIRE(f.store.savePreset("B", "Mine Too", StoreFixture::state(a, b), false).ok());
     CHECK(f.presetNames("B") == std::vector<juce::String> { "Mine", "Theirs", "Mine Too" });
 }
+
+TEST_CASE("BankStore: a full bank refuses a new preset but still allows an overwrite")
+{
+    StoreFixture f;
+    REQUIRE(f.store.createBank("B").ok());
+    Bank full;
+    for (int i = 0; i < kMaxPresetsPerBank; ++i)
+        full.presets.push_back({ "P" + juce::String(i), {} });
+    REQUIRE(f.bankJson("B").replaceWithText(bankToJson(full)));
+    const auto a = f.wav("a.wav", 0.01f);
+    const auto b = f.wav("b.wav", 0.02f);
+
+    juce::MemoryBlock before;
+    REQUIRE(f.bankJson("B").loadFileAsData(before));
+    const auto refused = f.store.savePreset("B", "New", StoreFixture::state(a, b), false);
+    CHECK(refused.error == Error::BankFull);
+    CHECK(refused.message.isNotEmpty());
+    CHECK(f.store.savePreset("B", "New", StoreFixture::state(a, b), true).error == Error::BankFull);
+    juce::MemoryBlock after;
+    REQUIRE(f.bankJson("B").loadFileAsData(after));
+    CHECK(after == before);
+    CHECK(f.sampleCount("B") == 0);
+
+    REQUIRE(f.store.savePreset("B", "P5", StoreFixture::state(a, b), true).ok());
+    const auto names = f.presetNames("B");
+    REQUIRE(names.size() == static_cast<std::size_t>(kMaxPresetsPerBank));
+    CHECK(names[5] == "P5");
+    CHECK(f.storedPreset("B", "P5").state.loop1.path == "samples/a.wav");
+}
+
+TEST_CASE("BankStore: loadPreset never resolves a loop path outside the bank's samples")
+{
+    StoreFixture f;
+    REQUIRE(f.store.createBank("B").ok());
+    // Files that a hostile bank.json points at; they exist, but must not become the loop path.
+    const auto besideBank = f.wav(f.store.root().getChildFile("x.wav"), 0.01f);
+    const auto elsewhere = f.wav("outside.wav", 0.02f);
+    const auto inside = f.wav(f.samples("B").getChildFile("in.wav"), 0.03f);
+
+    auto loop = [](const juce::String& path, const juce::File& file) {
+        LoopRef l;
+        l.path = path;
+        l.fileName = file.getFileName();
+        l.hash = hashFile(file);
+        l.bars = 2;
+        return l;
+    };
+    Bank bank;
+    bank.presets.push_back({ "Up", {} });
+    bank.presets.back().state.loop1 = loop("../x.wav", besideBank);
+    bank.presets.back().state.loop2 = loop(elsewhere.getFullPathName(), elsewhere);
+    bank.presets.push_back({ "Through", {} });
+    bank.presets.back().state.loop1 = loop("samples/../../x.wav", besideBank);
+    bank.presets.back().state.loop2 = loop("samples\\..\\..\\x.wav", besideBank);
+    bank.presets.push_back({ "Mixed", {} });
+    bank.presets.back().state.loop1 = loop("samples/in.wav", inside);
+    bank.presets.back().state.loop2 = loop("samples/sub/in.wav", inside);
+    REQUIRE(f.bankJson("B").replaceWithText(bankToJson(bank)));
+
+    auto checkRejected = [&](const LoopRef& l, const juce::File& target) {
+        CHECK(l.path.isEmpty());
+        CHECK(l.path != target.getFullPathName());
+        CHECK(l.fileName == target.getFileName());
+        CHECK(l.hash == hashFile(target));
+        CHECK(l.bars == 2);
+    };
+
+    const auto up = f.store.loadPreset("B", "Up");
+    REQUIRE(up.result.ok());
+    checkRejected(up.state.loop1, besideBank);
+    checkRejected(up.state.loop2, elsewhere);
+
+    const auto through = f.store.loadPreset("B", "Through");
+    REQUIRE(through.result.ok());
+    checkRejected(through.state.loop1, besideBank);
+    checkRejected(through.state.loop2, besideBank);
+
+    const auto mixed = f.store.loadPreset("B", "Mixed");
+    REQUIRE(mixed.result.ok());
+    CHECK(juce::File(mixed.state.loop1.path) == inside);
+    checkRejected(mixed.state.loop2, inside);
+}

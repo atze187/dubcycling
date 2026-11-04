@@ -24,6 +24,7 @@ public:
         SampleMissing,
         CopyFailed,
         WriteFailed,
+        BankFull, // kMaxPresetsPerBank reached, no new preset
     };
 
     struct Result
@@ -61,11 +62,14 @@ public:
     // reused) and replaces bank.json atomically. With overwrite an existing preset of that name
     // (case-insensitive, first match) is replaced in place, otherwise the name must be new. A slot
     // with an empty path is stored empty; a used slot whose file is missing or unreadable refuses
-    // the save (SampleMissing). On any error bank.json stays unchanged; samples already copied stay.
+    // the save (SampleMissing). A new name in a bank with kMaxPresetsPerBank presets is refused
+    // (BankFull). On any error bank.json stays unchanged; samples already copied stay.
     Result savePreset(const juce::String& bank, const juce::String& presetName, const PluginState& current, bool overwrite);
 
     // First preset whose name matches case-insensitively. activeBank/activePreset are set to the
-    // bank and the stored preset name.
+    // bank and the stored preset name. Only stored paths of the form "samples/<name>" are resolved
+    // (into this bank's samples/); any other path becomes empty while file name and hash stay, so
+    // the slot ends up Missing instead of reading a file outside the bank.
     LoadedPreset loadPreset(const juce::String& bank, const juce::String& presetName) const;
 
 private:

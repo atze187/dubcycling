@@ -62,6 +62,20 @@ juce::File placeSample(const juce::File& source, const juce::String& sourceHash,
     }
 }
 
+// Absolute path of a stored "samples/<name>" inside `samples`; empty for anything else (absolute
+// paths, drive letters, backslashes, "..", subfolders), so nothing outside the bank is read.
+juce::String resolveSamplePath(const juce::String& stored, const juce::File& samples)
+{
+    const juce::String prefix = juce::String(kSamplesDir) + "/";
+    if (!stored.startsWith(prefix))
+        return {};
+    const auto name = stored.substring(prefix.length());
+    if (name.isEmpty() || name == "." || name == ".." || name.containsAnyOf("/\\:"))
+        return {};
+    const auto file = samples.getChildFile(name);
+    return file.getParentDirectory() == samples ? file.getFullPathName() : juce::String();
+}
+
 } // namespace
 
 BankStore::BankStore(juce::File root) : rootDir(std::move(root)) {}
@@ -124,6 +138,9 @@ BankStore::Result BankStore::savePreset(const juce::String& bank, const juce::St
                                  [&](const Preset& p) { return p.name.equalsIgnoreCase(name); });
     if (existing != stored.presets.end() && !overwrite)
         return fail(Error::NameTaken, presetNameProblem(name, stored));
+    if (existing == stored.presets.end() && stored.presets.size() >= static_cast<std::size_t>(kMaxPresetsPerBank))
+        return fail(Error::BankFull, text("Die Bank ist voll (h\xc3\xb6" "chstens ") + juce::String(kMaxPresetsPerBank)
+                                         + " Presets).");
 
     // Check every used slot before copying anything.
     const LoopRef* loops[] = { &current.loop1, &current.loop2 };
@@ -191,8 +208,7 @@ BankStore::LoadedPreset BankStore::loadPreset(const juce::String& bank, const ju
 
     loaded.state = found->state;
     for (LoopRef* l : { &loaded.state.loop1, &loaded.state.loop2 })
-        if (l->path.isNotEmpty())
-            l->path = dir.getChildFile(l->path).getFullPathName();
+        l->path = resolveSamplePath(l->path, dir.getChildFile(kSamplesDir));
     loaded.state.activeBank = bank;
     loaded.state.activePreset = found->name;
     return loaded;
