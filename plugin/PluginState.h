@@ -19,6 +19,11 @@ constexpr int kMaxLabelEntries = 1024; // custom labels kept per loop when loadi
 // Trimmed, control characters removed, cut to kMaxLabelLength characters. Empty = "no custom label".
 juce::String sanitizeLabel(const juce::String& text);
 
+constexpr int kMaxNameStoredLength = 64; // characters of a stored bank or preset name
+
+// Trimmed, control characters removed, cut to maxLength characters.
+juce::String sanitizeName(const juce::String& text, int maxLength);
+
 // Reference to a loop file (never the audio itself) plus its region boundaries.
 struct LoopRef
 {
@@ -42,7 +47,21 @@ struct PluginState
     int version = kStateVersion;
     LoopRef loop1, loop2;
     std::vector<RuleEntry> rules;
+    // Names of the bank and preset last loaded or saved; empty = none. Optional in the stored
+    // state (only written when not empty), so kStateVersion stays 1.
+    juce::String activeBank, activePreset;
 };
+
+// Shared sanitizing steps of deserialize (also used by the bank file format).
+// Boundaries re-added through RegionMap::addBoundary (invalid dropped, sorted, spaced).
+std::vector<double> sanitizeBoundaries(const std::vector<double>& raw);
+// Stores one custom label; false = kMaxLabelEntries reached, the caller stops. Invalid ones are skipped.
+bool addLabelEntry(LoopRef& loop, int& kept, int region, const juce::String& text);
+// Appends one target; false = kMaxRuleTargets reached, the caller stops. Negative region2 is skipped.
+bool addRuleTarget(std::vector<RuleTarget>& targets, const RuleTarget& t);
+// Weights through RuleSet::setTargets; nullopt for region1 outside 0..kMaxRegion1-1, or when the
+// result is empty and the source entry had no targets at all (hadTargets = false).
+std::optional<RuleEntry> sanitizeRuleEntry(int region1, std::vector<RuleTarget> targets, bool hadTargets);
 
 juce::MemoryBlock serialize(const PluginState&);
 

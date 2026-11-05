@@ -22,7 +22,11 @@ target_sources(dc_plugin_tests PRIVATE
     plugin/test_Editor.cpp
     plugin/test_RulePanel.cpp
     plugin/test_Processor.cpp
-    plugin/test_SlotTracker.cpp)
+    plugin/test_SlotTracker.cpp
+    plugin/test_BankFormat.cpp
+    plugin/test_BankStore.cpp
+    plugin/test_BankArchive.cpp
+    plugin/test_PresetBar.cpp)
 # dc_plugin_ui bringt Processor und Editor als Quellen mit (die Tests instanziieren den Editor).
 target_link_libraries(dc_plugin_tests PRIVATE dc_plugin_shared dc_plugin_ui Catch2::Catch2WithMain)
 target_compile_definitions(dc_plugin_tests PRIVATE

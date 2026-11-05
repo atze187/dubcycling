@@ -76,12 +76,14 @@ public:
 
     std::function<void(const RegionMap&)> onRegionsChanged;
     std::function<void(int)> onRegionSelected;
-    // A click on a region (not on a boundary): audition it. Fires together with onRegionSelected.
+    // A right-click on a region: audition it (selects and moves nothing). Left clicks stay silent.
     std::function<void(int)> onRegionPreview;
     std::function<void(const juce::File&)> onFileDropped;
 
     // Click: grabs the nearest boundary within the hit tolerance, otherwise selects the region under x.
     void pressAt(float x);
+    // Right-click: fires onRegionPreview for the region under x (a boundary counts as the region it lies in).
+    void auditionAt(float x);
     // Moves a grabbed boundary (clamped by RegionMap::moveBoundary), keeping the offset between
     // cursor and boundary from the press. Only a local preview: nothing is published while dragging.
     void dragTo(float x);
@@ -93,7 +95,13 @@ public:
     void doubleClickAt(float x, float y);
 
     void paint(juce::Graphics& g) override;
-    void mouseDown(const juce::MouseEvent& e) override { pressAt(e.position.x); }
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu())
+            auditionAt(e.position.x);
+        else
+            pressAt(e.position.x);
+    }
     void mouseDrag(const juce::MouseEvent& e) override { dragTo(e.position.x); }
     void mouseUp(const juce::MouseEvent&) override { release(); }
     void mouseDoubleClick(const juce::MouseEvent& e) override { doubleClickAt(e.position.x, e.position.y); }

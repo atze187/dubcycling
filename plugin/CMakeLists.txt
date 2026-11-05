@@ -4,7 +4,10 @@ add_library(dc_plugin_shared STATIC
     HostTransport.h HostTransport.cpp
     PluginState.h PluginState.cpp
     FileRelink.h FileRelink.cpp
-    SlotTracker.h SlotTracker.cpp)
+    SlotTracker.h SlotTracker.cpp
+    presets/BankFormat.h presets/BankFormat.cpp
+    presets/BankStore.h presets/BankStore.cpp
+    presets/BankArchive.h presets/BankArchive.cpp)
 target_include_directories(dc_plugin_shared PUBLIC ${PROJECT_SOURCE_DIR})
 # JUCE's own MP3 decoder where the OS provides none (Windows: Windows Media, macOS: CoreAudio).
 # The spec requires WAV, MP3, FLAC, AIFF on every platform.
@@ -36,6 +39,8 @@ target_sources(dc_plugin_ui INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/LoopLane.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/RulePanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/RulePanel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/PresetBar.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/PresetBar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/Editor.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/Editor.cpp)
 target_include_directories(dc_plugin_ui INTERFACE ${PROJECT_SOURCE_DIR})
@@ -53,13 +58,15 @@ juce_add_plugin(Dubcycling
     PLUGIN_CODE Dcyc
     FORMATS VST3
     PRODUCT_NAME "Dubcycling"
-    IS_SYNTH FALSE
-    NEEDS_MIDI_INPUT FALSE
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
-    VST3_CATEGORIES Fx)
+    # No audio input: the plugin generates audio from its own loops, so it is an instrument
+    # (an "Fx" without an input bus is refused by Ableton).
+    VST3_CATEGORIES Instrument)
 
 target_include_directories(Dubcycling PRIVATE ${PROJECT_SOURCE_DIR})
 target_compile_definitions(Dubcycling PUBLIC

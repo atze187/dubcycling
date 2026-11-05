@@ -164,6 +164,22 @@ void DubcyclingProcessor::setStateInformation(const void* data, int size) {
     // damaged or unknown state: keep what we have
 }
 
+void DubcyclingProcessor::restoreState(const PluginState& s) {
+    PluginState clean = s;
+    for (LoopRef* ref : { &clean.loop1, &clean.loop2 }) {
+        const int cut = std::max(ref->fileName.lastIndexOfChar('/'), ref->fileName.lastIndexOfChar('\\'));
+        if (cut >= 0)
+            ref->fileName = ref->fileName.substring(cut + 1);
+    }
+    applyState(clean);
+}
+
+void DubcyclingProcessor::setActivePreset(const juce::String& bank, const juce::String& preset) {
+    const juce::ScopedLock sl(stateLock_);
+    state_.activeBank = bank;
+    state_.activePreset = preset;
+}
+
 void DubcyclingProcessor::applyEdit(const PluginState& edited) {
     const auto block = serialize(edited);
     const auto clean = deserialize(block.getData(), block.getSize());

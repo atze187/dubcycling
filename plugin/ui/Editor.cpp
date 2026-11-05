@@ -1,6 +1,7 @@
 #include "plugin/ui/Editor.h"
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include "engine/LoopTiming.h"
 #include "engine/TransientDetector.h"
 #include "plugin/ui/PanelLook.h"
@@ -13,6 +14,8 @@ constexpr int kHeaderH = 26;
 constexpr int kTopH = 24;
 constexpr int kGap = 6;
 constexpr int kMargin = 8;
+constexpr int kLogoW = 88;
+constexpr int kCycleW = 130;
 
 using namespace panel;
 
@@ -150,9 +153,11 @@ std::vector<juce::String> remapLabelsForBoundaryEdit(std::vector<juce::String> l
     return labels;
 }
 
-Editor::Editor(DubcyclingProcessor& proc) : juce::AudioProcessorEditor(proc), proc_(proc)
+Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
+    : juce::AudioProcessorEditor(proc), proc_(proc), store_(std::move(presetsRoot)), presetBar_(proc, store_)
 {
     setLookAndFeel(&look_);
+    addAndMakeVisible(presetBar_);
 
     logo_.setText("DUBCYCLING", juce::dontSendNotification);
     logo_.setFont(mono(12.0f, true));
@@ -315,6 +320,7 @@ void Editor::refresh()
     updateRules(st);
     cycle_.setText("Zyklus: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Takte",
                    juce::dontSendNotification);
+    presetBar_.refresh();
 }
 
 void Editor::updatePlayheads()
@@ -609,13 +615,23 @@ void Editor::resized()
 {
     auto area = getLocalBounds().reduced(kMargin);
 
+    // Top row: logo, preset bar, BPM on the right. The cycle readout sits left of BPM only when the
+    // preset bar keeps its full width; otherwise it is hidden (cycleText() still has the text).
     auto top = area.removeFromTop(kTopH);
-    cycle_.setBounds(top.removeFromRight(130));
-    top.removeFromRight(kGap * 2);
+    logo_.setBounds(top.removeFromLeft(kLogoW));
+    top.removeFromLeft(kGap * 2);
     bpm_.setBounds(top.removeFromRight(52));
     top.removeFromRight(kGap);
     bpmCaption_.setBounds(top.removeFromRight(34));
-    logo_.setBounds(top);
+    top.removeFromRight(kGap * 2);
+    const bool cycleFits = top.getWidth() >= PresetBar::kPreferredWidth + kGap * 2 + kCycleW;
+    cycle_.setVisible(cycleFits);
+    if (cycleFits)
+    {
+        cycle_.setBounds(top.removeFromRight(kCycleW));
+        top.removeFromRight(kGap * 2);
+    }
+    presetBar_.setBounds(top);
     area.removeFromTop(kGap + 3);
 
     // Lanes and the rule panel share what is left: the rule panel gets about a third, the rest goes

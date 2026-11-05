@@ -239,3 +239,45 @@ TEST_CASE("PluginState sanitizes labels after load and drops absurd ones", "[Plu
     CHECK(r->loop1.labels[1] == "1234567890123456");
     CHECK(r->loop1.labels[2] == "Hat");
 }
+
+TEST_CASE("State: active bank and preset survive a round trip", "[PluginState][presets]")
+{
+    auto s = sample();
+    s.activeBank = "Drums";
+    s.activePreset = "Break 1";
+    const auto block = serialize(s);
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    CHECK(r->activeBank == "Drums");
+    CHECK(r->activePreset == "Break 1");
+}
+
+TEST_CASE("State: a state without active preset fields loads with both empty", "[PluginState][presets]")
+{
+    const auto block = serialize(sample());
+    CHECK(block.toString().contains("activeBank") == false);
+    CHECK(block.toString().contains("activePreset") == false);
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    CHECK(r->version == 1);
+    CHECK(r->activeBank.isEmpty());
+    CHECK(r->activePreset.isEmpty());
+}
+
+TEST_CASE("State: active names are sanitized", "[PluginState][presets][hardening]")
+{
+    const juce::String longName(std::string(100, 'x'));
+    const juce::String xml = "<DubcyclingState version=\"1\" activeBank=\"Dr&#7;ums\" activePreset=\"" + longName
+                           + "\"><Loop1 bars=\"1\"/><Loop2 bars=\"1\"/></DubcyclingState>";
+    const auto utf8 = xml.toRawUTF8();
+    const auto r = deserialize(utf8, std::strlen(utf8));
+    REQUIRE(r.has_value());
+    CHECK(r->activeBank == "Drums");
+    CHECK(r->activePreset == juce::String(std::string(64, 'x')));
+}
+
+TEST_CASE("sanitizeName drops control characters, trims and cuts", "[PluginState][presets]")
+{
+    CHECK(sanitizeName(juce::String("  a") + juce::String::charToString(9) + "b  ", 16) == "ab");
+    CHECK(sanitizeName("abcdef", 3) == "abc");
+}
