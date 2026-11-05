@@ -7,6 +7,8 @@
 #include <vector>
 #include "engine/fx/Bitcrush.h"
 #include "engine/fx/Filter.h"
+#include "engine/fx/Flanger.h"
+#include "engine/fx/Reverb.h"
 
 using namespace dc;
 using namespace dc::fx;
@@ -73,6 +75,39 @@ inline double filterGainDb(const FxParams& p, double freq)
     const double inRms = tailRms(l);
     processBlocks(f, l, r, 256);
     return dbOf(tailRms(l) / inRms);
+}
+
+inline FxParams flangerParams(double rate, double depth, double fb, double mix)
+{
+    FxParams p;
+    p.set(FxParam::FlangerRate, rate);
+    p.set(FxParam::FlangerDepth, depth);
+    p.set(FxParam::FlangerFeedback, fb);
+    p.set(FxParam::FlangerMix, mix);
+    return p;
+}
+
+inline FxParams reverbParams(double mix, double size, double damping)
+{
+    FxParams p;
+    p.set(FxParam::ReverbMix, mix);
+    p.set(FxParam::ReverbSize, size);
+    p.set(FxParam::ReverbDamping, damping);
+    return p;
+}
+
+inline double energy(const std::vector<float>& v, size_t from, size_t to)
+{
+    double s = 0;
+    for (size_t i = from; i < to && i < v.size(); ++i) s += double(v[i]) * v[i];
+    return s;
+}
+
+inline double peakAbs(const std::vector<float>& v, size_t from, size_t to)
+{
+    double m = 0;
+    for (size_t i = from; i < to && i < v.size(); ++i) m = std::max(m, double(std::abs(v[i])));
+    return m;
 }
 
 } // namespace fxtest
@@ -237,6 +272,45 @@ TEST_CASE("Fx units: block sizes 1, 7 and 4096 give the same result", "[FxUnits]
         }
         return l;
     };
+
+    auto runFlanger = [&](int block) {
+        Flanger u;
+        u.prepare(kSr);
+        u.setParams(flangerParams(2.0, 0.8, 0.6, 0.7));
+        auto l = l0, r = r0;
+        for (int pos = 0; pos < n; pos += 4096)
+        {
+            if (pos == 8192) u.setParams(flangerParams(0.5, 0.3, -0.5, 0.4));
+            const int len = std::min(4096, n - pos);
+            for (int q = 0; q < len; q += block)
+                u.process(l.data() + pos + q, r.data() + pos + q, std::min(block, len - q));
+        }
+        return l;
+    };
+    auto runReverb = [&](int block) {
+        Reverb u;
+        u.prepare(kSr);
+        u.setParams(reverbParams(0.6, 0.8, 0.3));
+        auto l = l0, r = r0;
+        for (int pos = 0; pos < n; pos += 4096)
+        {
+            if (pos == 8192) u.setParams(reverbParams(0.2, 0.2, 0.9));
+            const int len = std::min(4096, n - pos);
+            for (int q = 0; q < len; q += block)
+                u.process(l.data() + pos + q, r.data() + pos + q, std::min(block, len - q));
+        }
+        return l;
+    };
+
+    const auto fl1 = runFlanger(1), fl7 = runFlanger(7), fl4096 = runFlanger(4096);
+    const auto rv1 = runReverb(1), rv7 = runReverb(7), rv4096 = runReverb(4096);
+    for (int i = 0; i < n; ++i)
+    {
+        REQUIRE(std::abs(fl1[size_t(i)] - fl7[size_t(i)]) < 1e-5f);
+        REQUIRE(std::abs(fl1[size_t(i)] - fl4096[size_t(i)]) < 1e-5f);
+        REQUIRE(std::abs(rv1[size_t(i)] - rv7[size_t(i)]) < 1e-5f);
+        REQUIRE(std::abs(rv1[size_t(i)] - rv4096[size_t(i)]) < 1e-5f);
+    }
 
     const auto b1 = runBitcrush(1), b7 = runBitcrush(7), b4096 = runBitcrush(4096);
     const auto f1 = runFilter(1), f7 = runFilter(7), f4096 = runFilter(4096);
@@ -459,5 +533,335 @@ TEST_CASE("Fx units: NaN and infinity in the input give finite output and recove
         }
         for (int i = 300; i < n; ++i)
             REQUIRE(std::abs(l[size_t(i)] - clean[size_t(i)]) < 1e-3f);
+    }
+}
+
+// ---- Flanger and Reverb ----
+
+TEST_CASE("Flanger: mix 0 outputs silence", "[FxUnits]")
+{
+    Flanger f;
+    f.prepare(kSr);
+    f.setParams(flangerParams(1.0, 1.0, 0.9, 0.0));
+    auto l = noise(5000, 20), r = noise(5000, 21);
+    processBlocks(f, l, r, 128);
+    for (size_t i = 0; i < l.size(); ++i)
+    {
+        REQUIRE(l[i] == 0.0f);
+        REQUIRE(r[i] == 0.0f);
+    }
+}
+
+TEST_CASE("Flanger: feedback 0.9 decays to below -80 dB within 20 seconds after the input stops", "[FxUnits]")
+{
+    for (double fb : {0.9, -0.9})
+    {
+        Flanger f;
+        f.prepare(kSr);
+        f.setParams(flangerParams(1.0, 0.5, fb, 1.0));
+        auto l = noise(48000, 22), r = noise(48000, 23);
+        processBlocks(f, l, r, 512);
+        const int n = 21 * 48000;
+        std::vector<float> sl(size_t(n), 0.0f), sr(size_t(n), 0.0f);
+        processBlocks(f, sl, sr, 512);
+        CHECK(peakAbs(sl, 0, 4800) > 1e-3); // it does ring first
+        CHECK(peakAbs(sl, 20 * 48000, size_t(n)) < 1e-4);
+        CHECK(peakAbs(sr, 20 * 48000, size_t(n)) < 1e-4);
+    }
+}
+
+TEST_CASE("Flanger: output stays finite and under 20 for full-scale noise at depth 1, feedback +-0.9", "[FxUnits]")
+{
+    for (double fb : {0.9, -0.9})
+        for (double rate : {0.05, 5.0})
+        {
+            Flanger f;
+            f.prepare(kSr);
+            f.setParams(flangerParams(rate, 1.0, fb, 1.0));
+            auto l = noise(5 * 48000, 24), r = noise(5 * 48000, 25);
+            processBlocks(f, l, r, 512);
+            for (size_t i = 0; i < l.size(); ++i)
+            {
+                REQUIRE(std::isfinite(l[i]));
+                REQUIRE(std::abs(l[i]) < 20.0f);
+                REQUIRE(std::isfinite(r[i]));
+                REQUIRE(std::abs(r[i]) < 20.0f);
+            }
+        }
+}
+
+TEST_CASE("Flanger: without feedback the output is the input delayed by 0.1 to 7 ms", "[FxUnits]")
+{
+    Flanger f;
+    f.prepare(kSr);
+    f.setParams(flangerParams(1.0, 1.0, 0.0, 1.0));
+    auto l = sine(48000, 440.0), r = l;
+    const double inRms = tailRms(l);
+    processBlocks(f, l, r, 256);
+    CHECK(std::abs(dbOf(tailRms(l) / inRms)) < 1.0);
+
+    Flanger g;
+    g.prepare(kSr);
+    g.setParams(flangerParams(1.0, 1.0, 0.0, 1.0));
+    std::vector<float> il(4800, 0.0f), ir(4800, 0.0f);
+    il[10] = 1.0f;
+    processBlocks(g, il, ir, 256);
+    size_t at = 0;
+    for (size_t i = 0; i < il.size(); ++i)
+        if (std::abs(il[i]) > std::abs(il[at])) at = i;
+    CHECK(at >= 10 + 4);   // >= 0.1 ms
+    CHECK(at <= 10 + 337); // <= 7 ms
+}
+
+TEST_CASE("Flanger: the right channel is processed independently of the left", "[FxUnits]")
+{
+    Flanger f;
+    f.prepare(kSr);
+    f.setParams(flangerParams(1.0, 0.7, 0.5, 1.0));
+    std::vector<float> l(4800, 0.0f);
+    auto r = noise(4800, 26);
+    processBlocks(f, l, r, 100);
+    for (float x : l) REQUIRE(x == 0.0f);
+    CHECK(energy(r, 0, r.size()) > 1.0);
+}
+
+TEST_CASE("Flanger: the LFO keeps running during silence and across reset", "[FxUnits]")
+{
+    // An impulse is delayed by the instantaneous LFO delay. Two impulses fed at different times
+    // (0.1 s of silence apart, at 2 Hz the LFO has advanced 0.2 cycles) must see different delays.
+    auto delayOfImpulse = [](Flanger& f) {
+        std::vector<float> a(2000, 0.0f), b(2000, 0.0f);
+        a[0] = 1.0f;
+        f.process(a.data(), b.data(), 2000);
+        size_t at = 0;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (std::abs(a[i]) > std::abs(a[at])) at = i;
+        return at;
+    };
+    Flanger f;
+    f.prepare(kSr);
+    f.setParams(flangerParams(2.0, 1.0, 0.0, 1.0));
+    const size_t first = delayOfImpulse(f);
+    std::vector<float> s1(2800, 0.0f), s2(2800, 0.0f);
+    f.process(s1.data(), s2.data(), 2800); // 2000 + 2800 = 0.1 s
+    const size_t second = delayOfImpulse(f);
+    CHECK(first != second);
+    f.reset();
+    std::vector<float> s3(2800, 0.0f), s4(2800, 0.0f);
+    f.process(s3.data(), s4.data(), 2800);
+    CHECK(delayOfImpulse(f) != first); // reset did not rewind the LFO
+}
+
+TEST_CASE("Reverb: mix 0 outputs silence", "[FxUnits]")
+{
+    Reverb v;
+    v.prepare(kSr);
+    v.setParams(reverbParams(0.0, 1.0, 0.0));
+    auto l = noise(5000, 27), r = noise(5000, 28);
+    processBlocks(v, l, r, 128);
+    for (size_t i = 0; i < l.size(); ++i)
+    {
+        REQUIRE(l[i] == 0.0f);
+        REQUIRE(r[i] == 0.0f);
+    }
+}
+
+namespace {
+std::vector<float> reverbImpulse(double size, double damping, int seconds, std::vector<float>* rightOut = nullptr)
+{
+    Reverb v;
+    v.prepare(kSr);
+    v.setParams(reverbParams(1.0, size, damping));
+    const size_t n = size_t(seconds) * 48000;
+    std::vector<float> l(n, 0.0f), r(n, 0.0f);
+    l[0] = r[0] = 1.0f;
+    processBlocks(v, l, r, 512);
+    if (rightOut) *rightOut = r;
+    return l;
+}
+}
+
+TEST_CASE("Reverb: an impulse rings and decays below -60 dB within 30 seconds at size 1, damping 0", "[FxUnits]")
+{
+    const auto l = reverbImpulse(1.0, 0.0, 30);
+    const double peak = peakAbs(l, 0, l.size());
+    CHECK(peak > 1e-3);
+    CHECK(peakAbs(l, 48000, 96000) > 1e-3 * peak); // still ringing after 1 s
+    CHECK(peakAbs(l, 29 * 48000, l.size()) < 1e-3 * peak);
+}
+
+TEST_CASE("Reverb: size 0 decays faster than size 1", "[FxUnits]")
+{
+    const auto small = reverbImpulse(0.0, 0.5, 4);
+    const auto big = reverbImpulse(1.0, 0.5, 4);
+    CHECK(energy(small, 2 * 48000, 3 * 48000) < 0.1 * energy(big, 2 * 48000, 3 * 48000));
+}
+
+TEST_CASE("Reverb: damping 1 has less energy above 8 kHz than damping 0", "[FxUnits]")
+{
+    auto hfEnergy = [](double damping) {
+        Reverb v;
+        v.prepare(kSr);
+        v.setParams(reverbParams(1.0, 0.5, damping));
+        Filter hp;
+        hp.prepare(kSr);
+        hp.setParams(filterParams(1, 8000.0, 0.0));
+        auto l = noise(48000, 29, 0.5f), r = noise(48000, 30, 0.5f);
+        processBlocks(v, l, r, 512);
+        processBlocks(hp, l, r, 512);
+        return energy(l, 24000, l.size());
+    };
+    CHECK(hfEnergy(1.0) < 0.5 * hfEnergy(0.0));
+}
+
+TEST_CASE("Reverb: full-scale noise at extreme parameters stays finite and under 20", "[FxUnits]")
+{
+    for (double size : {0.0, 1.0})
+        for (double damping : {0.0, 1.0})
+        {
+            Reverb v;
+            v.prepare(kSr);
+            v.setParams(reverbParams(1.0, size, damping));
+            auto l = noise(5 * 48000, 31), r = noise(5 * 48000, 32);
+            processBlocks(v, l, r, 512);
+            for (size_t i = 0; i < l.size(); ++i)
+            {
+                REQUIRE(std::isfinite(l[i]));
+                REQUIRE(std::abs(l[i]) < 20.0f);
+                REQUIRE(std::isfinite(r[i]));
+                REQUIRE(std::abs(r[i]) < 20.0f);
+            }
+        }
+}
+
+TEST_CASE("Reverb: the two channels are decorrelated for a mono input", "[FxUnits]")
+{
+    std::vector<float> r;
+    const auto l = reverbImpulse(0.7, 0.3, 1, &r);
+    CHECK(l != r);
+    CHECK(energy(r, 0, r.size()) > 1e-6);
+}
+
+TEST_CASE("Reverb: tailLevel is 0 after reset and positive while ringing", "[FxUnits]")
+{
+    Reverb v;
+    v.prepare(kSr);
+    Flanger f;
+    f.prepare(kSr);
+    CHECK(v.tailLevel() == 0.0f);
+    CHECK(f.tailLevel() == 0.0f);
+    v.setParams(reverbParams(0.5, 0.5, 0.5));
+    f.setParams(flangerParams(1.0, 0.5, 0.5, 0.5));
+    auto l = noise(4800, 33), r = noise(4800, 34);
+    auto l2 = l, r2 = r;
+    processBlocks(v, l, r, 256);
+    processBlocks(f, l2, r2, 256);
+    CHECK(v.tailLevel() > 0.0f);
+    CHECK(f.tailLevel() > 0.0f);
+    v.reset();
+    f.reset();
+    CHECK(v.tailLevel() == 0.0f);
+    CHECK(f.tailLevel() == 0.0f);
+
+    // The tail eventually reports empty after silence (so the chain can put the insert to sleep).
+    v.setParams(reverbParams(0.5, 0.0, 0.5));
+    l = noise(4800, 33);
+    r = noise(4800, 34);
+    processBlocks(v, l, r, 256);
+    std::vector<float> sl(10 * 48000, 0.0f), sr(10 * 48000, 0.0f);
+    processBlocks(v, sl, sr, 512);
+    CHECK(v.tailLevel() == 0.0f);
+}
+
+TEST_CASE("Fx units: prepare at 44100, 96000 and 192000 works for all four units", "[FxUnits]")
+{
+    for (double sr : {44100.0, 96000.0, 192000.0})
+    {
+        const int n = static_cast<int>(sr);
+        Bitcrush b;
+        Filter fl;
+        Flanger fg;
+        Reverb rv;
+        b.prepare(sr);
+        fl.prepare(sr);
+        fg.prepare(sr);
+        rv.prepare(sr);
+        FxParams p;
+        p.set(FxParam::BitcrushBits, 6.0);
+        p.set(FxParam::BitcrushRate, 4.0);
+        b.setParams(p);
+        fl.setParams(filterParams(0, 3000.0, 0.7));
+        fg.setParams(flangerParams(1.0, 1.0, 0.9, 1.0));
+        rv.setParams(reverbParams(1.0, 1.0, 0.0));
+        auto run = [&](auto& unit) {
+            auto l = noise(n, 35), r = noise(n, 36);
+            processBlocks(unit, l, r, 512);
+            for (size_t i = 0; i < l.size(); ++i)
+            {
+                REQUIRE(std::isfinite(l[i]));
+                REQUIRE(std::isfinite(r[i]));
+                REQUIRE(std::abs(l[i]) < 20.0f);
+            }
+        };
+        run(b);
+        run(fl);
+        run(fg);
+        run(rv);
+    }
+}
+
+TEST_CASE("Flanger and Reverb: NaN and infinity in the input give finite output and recover", "[FxUnits]")
+{
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    const int n = 12000;
+    auto bad = sine(n, 440.0), badR = bad;
+    bad[100] = nan; bad[200] = inf; badR[150] = -inf; badR[250] = nan;
+
+    {
+        Flanger f, g;
+        f.prepare(kSr);
+        g.prepare(kSr);
+        f.setParams(flangerParams(1.0, 0.5, 0.5, 1.0));
+        g.setParams(flangerParams(1.0, 0.5, 0.5, 1.0));
+        auto l = bad, r = badR;
+        processBlocks(f, l, r, 128);
+        auto cl = sine(n, 440.0), cr = cl;
+        processBlocks(g, cl, cr, 128);
+        for (int i = 0; i < n; ++i)
+        {
+            REQUIRE(std::isfinite(l[size_t(i)]));
+            REQUIRE(std::isfinite(r[size_t(i)]));
+        }
+        for (int i = 6000; i < n; ++i)
+        {
+            REQUIRE(std::abs(l[size_t(i)] - cl[size_t(i)]) < 1e-3f);
+            REQUIRE(std::abs(r[size_t(i)] - cr[size_t(i)]) < 1e-3f);
+        }
+        CHECK(std::isfinite(f.tailLevel()));
+    }
+    {
+        Reverb v;
+        v.prepare(kSr);
+        v.setParams(reverbParams(1.0, 1.0, 0.0));
+        auto l = bad, r = badR;
+        processBlocks(v, l, r, 128);
+        std::vector<float> sl(48000, 0.0f), sr(48000, 0.0f);
+        processBlocks(v, sl, sr, 128);
+        for (int i = 0; i < n; ++i)
+        {
+            REQUIRE(std::isfinite(l[size_t(i)]));
+            REQUIRE(std::isfinite(r[size_t(i)]));
+        }
+        for (size_t i = 0; i < sl.size(); ++i)
+        {
+            REQUIRE(std::isfinite(sl[i]));
+            REQUIRE(std::abs(sl[i]) < 20.0f);
+        }
+        CHECK(std::isfinite(v.tailLevel()));
+        // State is not stuck: the unit still produces output for clean input afterwards.
+        auto cl = sine(4800, 440.0), cr = cl;
+        processBlocks(v, cl, cr, 128);
+        CHECK(energy(cl, 0, cl.size()) > 1e-6);
     }
 }
