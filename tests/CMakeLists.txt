@@ -22,6 +22,7 @@ target_sources(dc_plugin_tests PRIVATE
     plugin/test_PluginState.cpp
     plugin/test_FileRelink.cpp
     plugin/test_LoopLane.cpp
+    plugin/test_FxStrip.cpp
     plugin/test_Editor.cpp
     plugin/test_RulePanel.cpp
     plugin/test_Processor.cpp

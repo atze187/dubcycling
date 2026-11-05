@@ -37,6 +37,8 @@ target_sources(dc_plugin_ui INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PanelLook.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/LoopLane.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/LoopLane.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/FxStrip.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/FxStrip.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/RulePanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/RulePanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PresetBar.h
