@@ -32,8 +32,10 @@ Status: edit view, audio engine and presets implemented. The plugin has stereo o
   only whether an insert is on. The switches sit in the strip under the Loop-2 lane (one marker per region and
   insert) and in the panel (select a region to see its switches). Toggling the switch of the region that sounds
   is heard immediately. Reverb and Flanger tails ring out when a region ends or the host stops. Effects apply to
-  Loop 2 only; Loop 1 is dry. 1-bit Bitcrush has three levels (-1, 0, +1). Presets and projects store the effect
-  settings. The bank format is now `bank.json` version 2; older plugin versions refuse banks saved with the new one.
+  Loop 2 only; Loop 1 is dry. 1-bit Bitcrush has three levels (-1, 0, +1): material peaking below half scale
+  (-6 dBFS) becomes silent. Presets and projects store the effect settings. A project saved with effects and
+  re-saved by an older plugin version loses its effect settings (older versions ignore the Fx data). The bank
+  format is now `bank.json` version 2; older plugin versions refuse banks saved with the new one.
 
 ### Known limitations
 
