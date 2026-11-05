@@ -6,6 +6,7 @@ add_library(dc_engine STATIC
     RegionMap.h RegionMap.cpp
     TransientDetector.h TransientDetector.cpp
     RuleSet.h RuleSet.cpp
+    FxSettings.h FxSettings.cpp
     Sequencer.h Sequencer.cpp
     FxSlot.h Engine.h Engine.cpp)
 target_include_directories(dc_engine PUBLIC ${PROJECT_SOURCE_DIR})
