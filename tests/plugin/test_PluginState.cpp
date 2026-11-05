@@ -404,6 +404,25 @@ TEST_CASE("State: fx numbers survive a round trip under a decimal-comma locale",
     CHECK(r->fx.params.get(FxParam::ReverbMix) == s.fx.params.get(FxParam::ReverbMix));
 }
 
+TEST_CASE("State: fx number text forms", "[PluginState][fx][hardening]")
+{
+    const float def = sanitizeFxParam(FxParam::ReverbMix, fxParamInfo(FxParam::ReverbMix).def);
+    const auto mixOf = [](const juce::String& text) {
+        const auto r = loadXml(fxDoc("<Fx reverb.mix=\"" + text + "\"/>"));
+        REQUIRE(r.has_value());
+        return r->fx.params.get(FxParam::ReverbMix);
+    };
+    CHECK(mixOf("1e-1") == sanitizeFxParam(FxParam::ReverbMix, 0.1));
+    CHECK(mixOf("+0.5") == sanitizeFxParam(FxParam::ReverbMix, 0.5));
+    CHECK(mixOf(" 0.5 ") == sanitizeFxParam(FxParam::ReverbMix, 0.5));
+    CHECK(mixOf("-0.0") == 0.0f);
+    for (const char* bad : { "0.5abc", "", "1e999", "-1e999", "inf", "nan", "+", "++0.5", "0,5", "0.5 1", "abc" })
+    {
+        CAPTURE(bad);
+        CHECK(mixOf(bad) == def);
+    }
+}
+
 TEST_CASE("State: surplus switch entries beyond the Loop-2 region count are dropped", "[PluginState][fx][hardening]")
 {
     const auto r = loadXml(fxDoc("<Fx><Switches><Switch region=\"2\" mask=\"1\"/><Switch region=\"7\" mask=\"1\"/></Switches></Fx>",

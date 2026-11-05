@@ -1,8 +1,9 @@
 #include "plugin/PluginState.h"
 #include <algorithm>
-#include <charconv>
 #include <cmath>
-#include <system_error>
+#include <locale>
+#include <sstream>
+#include <string>
 #include <juce_cryptography/juce_cryptography.h>
 #include "engine/RegionMap.h"
 
@@ -71,16 +72,18 @@ LoopRef loopFromTree(const juce::ValueTree& t)
 // independent: num() always writes '.', whatever decimal point a host set with setlocale.
 double parseFxNumber(const juce::String& text)
 {
+    // A classic-locale stream (std::from_chars for double is missing in Apple libc++ before macOS 13.3).
     const auto t = text.trim().toStdString();
-    const char* first = t.data();
-    const char* last = t.data() + t.size();
-    if (first != last && *first == '+')
-        ++first; // strtod accepted it, from_chars does not
-    if (first == last)
+    if (t.empty())
         return std::nan("");
+    std::istringstream in(t);
+    in.imbue(std::locale::classic());
+    in >> std::noskipws;
     double v = 0.0;
-    const auto [ptr, ec] = std::from_chars(first, last, v);
-    return ec == std::errc {} && ptr == last ? v : std::nan("");
+    in >> v; // accepts an optional sign; out of range, "inf" or "nan" text set failbit
+    if (in.fail() || in.peek() != std::char_traits<char>::eof())
+        return std::nan(""); // garbage, out of range or trailing characters
+    return v;
 }
 
 juce::ValueTree fxToTree(const FxSettings& fx)
