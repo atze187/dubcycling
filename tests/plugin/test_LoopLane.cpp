@@ -443,22 +443,23 @@ TEST_CASE("LoopLane: a double-click on empty lane still adds a boundary and name
     CHECK_FALSE(empty.beginLabelEdit(0));
 }
 
-TEST_CASE("LoopLane: a click on a region auditions it, grabbing a boundary does not", "[LoopLane][preview]")
+TEST_CASE("LoopLane: a right-click auditions a region, a left click and a drag stay silent", "[LoopLane][preview]")
 {
     LaneFixture f;
     f.lane.setRegions(regions({ 0.5 }));
     std::vector<int> previews;
     f.lane.onRegionPreview = [&](int r) { previews.push_back(r); };
 
-    f.lane.pressAt(750.0f);
+    f.lane.pressAt(750.0f); // left click: selects, no sound
     f.lane.release();
-    f.lane.pressAt(250.0f);
+    f.lane.pressAt(500.0f); // grabbing a boundary: no sound either
     f.lane.release();
-    CHECK(previews == std::vector<int> { 1, 0 });
+    CHECK(previews.empty());
 
-    f.lane.pressAt(500.0f); // on the boundary: a drag starts
-    f.lane.release();
-    CHECK(previews.size() == 2);
+    f.lane.auditionAt(750.0f);
+    f.lane.auditionAt(250.0f);
+    CHECK(previews == std::vector<int> { 1, 0 });
+    CHECK(f.lane.regions().boundaries == std::vector<double> { 0.5 }); // nothing moved
 }
 
 TEST_CASE("LoopLane: active region and teaser are clamped to what exists", "[LoopLane][teaser]")

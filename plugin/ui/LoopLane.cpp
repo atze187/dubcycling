@@ -265,8 +265,13 @@ void LoopLane::pressAt(float x)
     repaint();
     if (onRegionSelected)
         onRegionSelected(selected_);
-    if (onRegionPreview)
-        onRegionPreview(selected_);
+}
+
+void LoopLane::auditionAt(float x)
+{
+    if (!interactive() || !onRegionPreview)
+        return;
+    onRegionPreview(regions_.regionAt(std::clamp(phaseAt(x), 0.0, std::nextafter(1.0, 0.0))));
 }
 
 void LoopLane::dragTo(float x)
