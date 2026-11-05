@@ -37,6 +37,86 @@ void Engine::prepare(double sampleRate, int maxBlock)
     resetPlayback();
     resetPreview();
     previewReq_.store(-1, std::memory_order_relaxed);
+
+    // Effects: bus and chain sized for maxBlock (no bus without a block size: Loop 2 then stays dry).
+    busL_.assign(static_cast<size_t>(maxBlock_), 0.0f);
+    busR_.assign(static_cast<size_t>(maxBlock_), 0.0f);
+    mask_ = sliceMask_ = 0;
+    maskOwner_ = MaskOwner::None;
+    maskChangeCount_ = 0;
+    busFrame_ = 0;
+    chain_.setMask(0);
+    chain_.prepare(outRate_, std::max(1, maxBlock_)); // resets every insert
+    fxActive_.store(false, std::memory_order_relaxed);
+}
+
+void Engine::setTargetMask(std::uint8_t mask)
+{
+    if (mask == mask_)
+        return;
+    mask_ = mask;
+    if (maskChangeCount_ < kMaxMaskChanges)
+        maskChanges_[static_cast<size_t>(maskChangeCount_++)] = { busFrame_, mask };
+    else
+        maskChanges_[kMaxMaskChanges - 1].mask = mask; // overflow: the latest state wins
+}
+
+void Engine::refreshMask(const Model& m)
+{
+    if (maskOwner_ == MaskOwner::Voice && voice_.state == Voice::State::Playing)
+        setTargetMask(m.fx.maskFor(voice_.region2));
+    else if (maskOwner_ == MaskOwner::Preview && preview_.slot == 1 && preview_.voice.state != Voice::State::Idle)
+        setTargetMask(m.fx.maskFor(preview_.voice.region2));
+}
+
+void Engine::releasePreviewMask()
+{
+    if (maskOwner_ != MaskOwner::Preview)
+        return;
+    for (const PreviewVoice* pv : { &preview_, &previewTail_ })
+        if (pv->slot == 1 && pv->voice.state != Voice::State::Idle)
+            return; // a Loop-2 audition still sounds
+    if (voice_.state == Voice::State::Playing && current_ != nullptr && current_->model)
+    {
+        maskOwner_ = MaskOwner::Voice;
+        setTargetMask(current_->model->fx.maskFor(voice_.region2));
+    }
+    else
+    {
+        maskOwner_ = MaskOwner::None;
+        setTargetMask(0);
+    }
+}
+
+void Engine::runChain(float* l, float* r, int n)
+{
+    float* bl = busL_.data();
+    float* br = busR_.data();
+    if (maskChangeCount_ > 0 || sliceMask_ != 0 || chain_.anyActive())
+    {
+        std::uint8_t cur = sliceMask_;
+        int from = 0;
+        for (int k = 0; k < maskChangeCount_; ++k)
+        {
+            const MaskChange& c = maskChanges_[static_cast<size_t>(k)];
+            const int to = std::clamp(c.frame, from, n);
+            if (to > from)
+            {
+                chain_.setMask(cur);
+                chain_.process(bl + from, br + from, to - from);
+                from = to;
+            }
+            cur = c.mask;
+        }
+        chain_.setMask(cur);
+        if (n > from)
+            chain_.process(bl + from, br + from, n - from);
+    }
+    for (int i = 0; i < n; ++i)
+    {
+        l[i] += bl[i];
+        r[i] += br[i];
+    }
 }
 
 void Engine::resetPreview()
@@ -104,6 +184,12 @@ void Engine::startPreview(int slot, int region)
     v.gr.start(v.lo, 1.0, grainLen_);
     preview_.slot = slot;
     preview_.dataId = slot == 0 ? current_->data1Id : current_->data2Id;
+    if (slot == 1)
+    {
+        // A Loop-2 audition takes the switches of its region (also for a voice that plays meanwhile).
+        maskOwner_ = MaskOwner::Preview;
+        setTargetMask(m.fx.maskFor(region));
+    }
 }
 
 void Engine::mixPreviewVoice(PreviewVoice& pv, const Model& m, float* l, float* r, int n)
@@ -131,12 +217,13 @@ void Engine::mixPreviewVoice(PreviewVoice& pv, const Model& m, float* l, float* 
         stepVoice(pv.voice, *d, gf, adv, l[i], r[i]);
 }
 
-void Engine::mixPreview(float* l, float* r, int n)
+void Engine::mixPreview(float* l, float* r, float* busL, float* busR, int n)
 {
-    if (current_ == nullptr || !current_->model)
-        return;
-    mixPreviewVoice(previewTail_, *current_->model, l, r, n);
-    mixPreviewVoice(preview_, *current_->model, l, r, n);
+    if (current_ != nullptr && current_->model)
+        for (PreviewVoice* pv : { &previewTail_, &preview_ })
+            mixPreviewVoice(*pv, *current_->model, pv->slot == 1 ? busL : l, pv->slot == 1 ? busR : r, n);
+    busFrame_ = n; // an audition that ended in this slice hands the switches back from the next one
+    releasePreviewMask();
 }
 
 void Engine::setModel(std::shared_ptr<const Model> model)
@@ -217,6 +304,12 @@ void Engine::resetPlayback(bool keepLoop1)
     }
     if (current_ != nullptr && !keepLoop1)
         current_->reader1->reset();
+    // The voice is gone: its switches close (tails ring out; the chain is not flushed here).
+    if (maskOwner_ == MaskOwner::Voice)
+    {
+        maskOwner_ = MaskOwner::None;
+        setTargetMask(0);
+    }
 }
 
 void Engine::adoptSwap(const Model& m, double beats1)
@@ -250,6 +343,8 @@ void Engine::adoptSwap(const Model& m, double beats1)
         requestStop();
         sequencer_.onVoiceEnded();
     }
+    // A switch toggled in the editor acts on the sounding region at once.
+    refreshMask(m);
 }
 
 void Engine::startVoice(const Model& m, int region2, PlayMode mode)
@@ -264,6 +359,11 @@ void Engine::startVoice(const Model& m, int region2, PlayMode mode)
         v.state = Voice::State::Idle;
         v.gain = 0.0f;
         sequencer_.onVoiceEnded();
+        if (maskOwner_ == MaskOwner::Voice)
+        {
+            maskOwner_ = MaskOwner::None;
+            setTargetMask(0);
+        }
         return;
     }
     v.lo = lo01 * len;
@@ -276,6 +376,9 @@ void Engine::startVoice(const Model& m, int region2, PlayMode mode)
     v.fadeLeft = fadeLen_; // fade in
     v.gl.start(v.lo, 1.0, grainLen_);
     v.gr.start(v.lo, 1.0, grainLen_);
+    // The new voice takes the switches of its region from this frame on (the cancelled tail too).
+    maskOwner_ = MaskOwner::Voice;
+    setTargetMask(m.fx.maskFor(region2));
 }
 
 void Engine::beginFadeOut(Voice& v) const
@@ -304,6 +407,13 @@ void Engine::requestStop()
     voice_.endedByItself = false;
     if (voice_.state == Voice::State::Playing)
         beginFadeOut(voice_);
+    // Silence or a Gate end: the inputs close, the tails ring out. A Loop-2 audition that took the
+    // switches keeps them until it ends.
+    if (maskOwner_ == MaskOwner::Voice)
+    {
+        maskOwner_ = MaskOwner::None;
+        setTargetMask(0);
+    }
 }
 
 bool Engine::stepVoice(Voice& v, const StereoData& d, GrainFrame gf, double adv, float& outL, float& outR) const
@@ -397,6 +507,28 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
 {
     if (n <= 0 || l == nullptr || r == nullptr)
         return;
+    // Blocks larger than prepared are processed in consecutive slices that fit the bus.
+    const int slice = busL_.empty() ? n : static_cast<int>(busL_.size());
+    const double ppqStep = std::isfinite(t.bpm) ? t.bpm / (60.0 * outRate_) : 0.0;
+    for (int pos = 0; pos < n; pos += slice)
+    {
+        TransportInfo ts = t;
+        if (pos > 0)
+            ts.ppq = t.ppq + pos * ppqStep;
+        processSlice(ts, l + pos, r + pos, std::min(slice, n - pos));
+    }
+}
+
+void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
+{
+    // Loop 2 goes into the bus; without one (not prepared) straight into the output, dry.
+    const bool useBus = !busL_.empty();
+    float* const bl = useBus ? busL_.data() : l;
+    float* const br = useBus ? busR_.data() : r;
+    maskChangeCount_ = 0;
+    sliceMask_ = mask_;
+    busFrame_ = 0;
+
     const long long blockStart = frameCounter_;
     frameCounter_ += n;
 
@@ -424,7 +556,15 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
         if (running_ && loop1Same && loop2Same)
             swapPending_ = true; // seamless: adopted below once the block's timing is known
         else
+        {
             resetPlayback(running_ && loop1Same); // hard restart, the next valid frame is a fresh entry
+            // Other loop data or bars (a preset load, a replaced file): no old tail into the new setup.
+            // A model edit while stopped (same data) keeps the tails.
+            if (!(loop1Same && loop2Same))
+                chain_.flush();
+            else if (rt != nullptr && rt->model)
+                refreshMask(*rt->model); // e.g. a switch toggled during an audition while stopped
+        }
     }
 
     // Audition: independent of the transport, so it is handled before the validity checks.
@@ -440,11 +580,20 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     const double ppqStep = std::isfinite(t.bpm) ? t.bpm / (60.0 * outRate_) : 0.0;
     if (m == nullptr || !validTransport(t) || !std::isfinite(ppqStep) || !(ppqStep > 0.0))
     {
+        // Nothing plays but the audition; the chain keeps running so its tails ring out.
         std::fill(l, l + n, 0.0f);
         std::fill(r, r + n, 0.0f);
+        if (useBus)
+        {
+            std::fill(bl, bl + n, 0.0f);
+            std::fill(br, br + n, 0.0f);
+        }
         if (running_)
             resetPlayback();
-        mixPreview(l, r, n);
+        mixPreview(l, r, bl, br, n);
+        if (m != nullptr)
+            chain_.setParams(m->fx.params);
+        finishSlice(l, r, n, useBus);
         publishPlayhead(-1.0f, -1.0f, -1);
         return;
     }
@@ -460,6 +609,11 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     const double phase1 = std::fmod(t.ppq, beats1) / beats1;
     const double step1 = sourceStep(framesOf(d1), beats1, t.bpm, outRate_);
     current_->reader1->render(l, r, n, phase1, ppqStep / beats1, step1);
+    if (useBus)
+    {
+        std::fill(bl, bl + n, 0.0f);
+        std::fill(br, br + n, 0.0f);
+    }
 
     // Loop 2: one voice, region entries detected per sample (sample-accurate boundaries).
     const StereoData* d2 = m->loop2.data.get();
@@ -494,6 +648,7 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     double lastPhase1 = phase1;
     for (int i = 0; i < n; ++i)
     {
+        busFrame_ = i; // switch changes from voice starts and stops apply from this frame
         // Never step backwards inside continuous playback (host rounding at block starts).
         const double ppq = std::max(t.ppq + i * ppqStep, lastPpq_);
         lastPpq_ = ppq;
@@ -555,13 +710,15 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
             continue;
         }
         if (tail_.state != Voice::State::Idle)
-            stepVoice(tail_, *d2, gf, adv2, l[i], r[i]);
-        if (voice_.state != Voice::State::Idle && stepVoice(voice_, *d2, gf, adv2, l[i], r[i]))
+            stepVoice(tail_, *d2, gf, adv2, bl[i], br[i]);
+        if (voice_.state != Voice::State::Idle && stepVoice(voice_, *d2, gf, adv2, bl[i], br[i]))
             sequencer_.onVoiceEnded(); // one-shot finished by itself
     }
 
     expectedPpq_ = t.ppq + n * ppqStep;
-    mixPreview(l, r, n);
+    mixPreview(l, r, bl, br, n);
+    chain_.setParams(m->fx.params);
+    finishSlice(l, r, n, useBus);
 
     int teaser = kNoTeaser;
     float eta = 0.0f;
@@ -577,7 +734,13 @@ void Engine::process(const TransportInfo& t, float* l, float* r, int n)
     publishPlayhead(static_cast<float>(std::clamp(lastPhase1, 0.0, 1.0)),
                     voiceShown ? static_cast<float>(std::clamp((voice_.lo + voice_.elapsed) / len2, 0.0, 1.0)) : -1.0f,
                     voiceShown ? voice_.region2 : -1, teaser, eta);
+}
 
+void Engine::finishSlice(float* l, float* r, int n, bool useBus)
+{
+    if (useBus)
+        runChain(l, r, n);
+    fxActive_.store(chain_.anyActive(), std::memory_order_relaxed);
     // Final safety: never hand non-finite samples to the host.
     for (int i = 0; i < n; ++i)
     {

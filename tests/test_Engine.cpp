@@ -12,7 +12,6 @@
 #include <thread>
 #include <vector>
 #include "engine/Engine.h"
-#include "engine/FxSlot.h"
 
 // --- Allocation counter -------------------------------------------------------------------------
 // Replaces the global operator new/delete for this test executable. It only counts while
@@ -836,15 +835,6 @@ TEST_CASE("Engine process does not allocate", "[Engine]")
     REQUIRE(gAllocCount.load() == 0);
 }
 
-TEST_CASE("FxSlot default is a no-op", "[Engine]")
-{
-    dc::FxSlot fx;
-    float l[2] = { 0.5f, -0.5f }, r[2] = { 0.25f, -0.25f };
-    fx.process(l, r, 2);
-    REQUIRE(l[0] == 0.5f);
-    REQUIRE(r[1] == -0.25f);
-}
-
 namespace {
 // Renders in 512-frame blocks from ppq 0; right before the block at `swapAt` publishes every model in
 // `next` in order (the audio thread only ever sees the last one).
@@ -1181,4 +1171,396 @@ TEST_CASE("Engine: a host that wraps without splitting the block does not draw t
         block(ppq); // 0.2 s of normal playback
     block(0.0);     // jump back to a region start, but long after the last entry: a real jump
     CHECK(draws == 4);
+}
+
+// --- Effects (insert chain on Loop 2) -----------------------------------------------------------
+
+namespace {
+// Deterministic white noise in [-amp, amp].
+float noiseAt(int i, float amp = 0.5f)
+{
+    std::uint32_t x = static_cast<std::uint32_t>(i) * 2654435761u + 12345u;
+    x ^= x >> 13;
+    x *= 0x5bd1e995u;
+    x ^= x >> 15;
+    return amp * (static_cast<float>(x & 0xffffffu) / static_cast<float>(0xffffff) * 2.0f - 1.0f);
+}
+
+// Both channels equal (the reverb feeds on L + R; the inverted right channel of makeData would cancel).
+std::shared_ptr<const dc::StereoData> makeMono(int frames, const std::function<float(int)>& gen)
+{
+    auto d = std::make_shared<dc::StereoData>();
+    d->sampleRate = kRate;
+    d->left.resize(static_cast<size_t>(frames));
+    d->right.resize(static_cast<size_t>(frames));
+    for (int i = 0; i < frames; ++i)
+        d->left[static_cast<size_t>(i)] = d->right[static_cast<size_t>(i)] = gen(i);
+    return d;
+}
+
+// Energy above about 2 kHz over [from, to): two cascaded 2nd-order high-passes at 2 kHz.
+double hfEnergy(const std::vector<float>& v, size_t from, size_t to)
+{
+    const double w0 = 2.0 * std::numbers::pi * 2000.0 / kRate;
+    const double cw = std::cos(w0), alpha = std::sin(w0) / (2.0 * 0.70710678);
+    const double a0 = 1.0 + alpha;
+    const double b0 = (1.0 + cw) / 2.0 / a0, b1 = -(1.0 + cw) / a0, b2 = b0;
+    const double a1 = -2.0 * cw / a0, a2 = (1.0 - alpha) / a0;
+    double s[2][4] = {};
+    double e = 0.0;
+    for (size_t i = 0; i < to && i < v.size(); ++i)
+    {
+        double x = v[i];
+        for (auto& st : s)
+        {
+            const double y = b0 * x + b1 * st[0] + b2 * st[1] - a1 * st[2] - a2 * st[3];
+            st[1] = st[0];
+            st[0] = x;
+            st[3] = st[2];
+            st[2] = y;
+            x = y;
+        }
+        if (i >= from)
+            e += x * x;
+    }
+    return e;
+}
+
+float peakOf(const std::vector<float>& v, size_t from, size_t to)
+{
+    float m = 0.0f;
+    for (size_t i = from; i < to && i < v.size(); ++i)
+        m = std::max(m, std::abs(v[i]));
+    return m;
+}
+
+float maxNeighbourStep(const std::vector<float>& v, size_t from, size_t to)
+{
+    float m = 0.0f;
+    for (size_t i = std::max<size_t>(from, 1); i < to && i < v.size(); ++i)
+        m = std::max(m, std::abs(v[i] - v[i - 1]));
+    return m;
+}
+
+bool allFinite(const Out& o)
+{
+    const auto fin = [](float x) { return std::isfinite(x); };
+    return std::all_of(o.l.begin(), o.l.end(), fin) && std::all_of(o.r.begin(), o.r.end(), fin);
+}
+
+float maxDiff(const Out& a, const Out& b, size_t from, size_t to)
+{
+    float m = 0.0f;
+    for (size_t i = from; i < to; ++i)
+        m = std::max({ m, std::abs(a.l[i] - b.l[i]), std::abs(a.r[i] - b.r[i]) });
+    return m;
+}
+
+void setAll(dc::FxSettings& fx, int regionCount, std::uint8_t mask)
+{
+    for (int k = 0; k < regionCount; ++k)
+        for (int i = 0; i < dc::kFxInserts; ++i)
+            fx.setSwitch(k, static_cast<dc::FxInsert>(i), (mask >> i) & 1);
+}
+
+// Loop 2 = mono noise, one region, played as a Gate from frame 0 (Loop 1 is silent, one region).
+std::shared_ptr<dc::Model> noiseModel()
+{
+    auto m = baseModel();
+    m->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i); });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    return m;
+}
+
+Out runEngine(std::shared_ptr<const dc::Model> m, int frames, int block = 512)
+{
+    dc::Engine e;
+    prepared(e);
+    e.setModel(std::move(m));
+    return run(e, 0.0, frames, block);
+}
+} // namespace
+
+TEST_CASE("Engine fx: with all switches off the output equals the old behavior", "[Engine][fx]")
+{
+    auto m = baseModel();
+    m->loop1.data = makeData(kBar, [](int i) { return sineAt(i, 220.0, 0.25f); });
+    m->loop1.regions = regions({ 0.25, 0.5, 0.75 });
+    m->loop2.data = makeData(kBar, [](int i) { return noiseAt(i, 0.3f); });
+    m->loop2.regions = regions({ 0.25, 0.5, 0.75 });
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::Gate } });
+    m->rules.setTargets(1, { { 2, 1.0f, dc::PlayMode::OneShot } });
+    m->rules.setTargets(3, { { 0, 1.0f, dc::PlayMode::Gate } });
+    auto withFx = std::make_shared<dc::Model>(*m);
+    withFx->fx.params.set(dc::FxParam::FilterCutoff, 100.0);
+    withFx->fx.params.set(dc::FxParam::ReverbMix, 1.0);
+    withFx->fx.switches.assign(4, 0); // entries present, all off
+    auto only1 = std::make_shared<dc::Model>(*m);
+    only1->rules = dc::RuleSet {};
+    auto only2 = std::make_shared<dc::Model>(*m);
+    only2->loop1.data = nullptr;
+
+    const int frames = 2 * kBar;
+    const Out a = runEngine(m, frames, 700);
+    const Out b = runEngine(withFx, frames, 700);
+    CHECK(maxDiff(a, b, 0, frames) <= 1e-5f);
+    // Old behavior: Loop 1 and Loop 2 summed.
+    const Out l1 = runEngine(only1, frames, 700);
+    const Out l2 = runEngine(only2, frames, 700);
+    float dev = 0.0f;
+    for (size_t i = 0; i < static_cast<size_t>(frames); ++i)
+        dev = std::max({ dev, std::abs(b.l[i] - (l1.l[i] + l2.l[i])), std::abs(b.r[i] - (l1.r[i] + l2.r[i])) });
+    CHECK(dev <= 1e-5f);
+    CHECK(peakOf(l2.l, 0, frames) > 0.1f); // Loop 2 really played
+}
+
+TEST_CASE("Engine fx: a region with the filter on sounds different from the same region with it off", "[Engine][fx]")
+{
+    auto dry = noiseModel();
+    auto wet = std::make_shared<dc::Model>(*dry);
+    wet->fx.setSwitch(0, dc::FxInsert::Filter, true);
+    wet->fx.params.set(dc::FxParam::FilterType, 0.0);
+    wet->fx.params.set(dc::FxParam::FilterCutoff, 200.0);
+    const Out a = runEngine(dry, kBar);
+    const Out b = runEngine(wet, kBar);
+    const double eDry = hfEnergy(a.l, 4800, kBar);
+    const double eWet = hfEnergy(b.l, 4800, kBar);
+    REQUIRE(eDry > 0.0);
+    CHECK(10.0 * std::log10(eWet / eDry) <= -20.0);
+}
+
+TEST_CASE("Engine fx: loop 1 stays dry", "[Engine][fx]")
+{
+    auto m = baseModel();
+    m->loop1.data = makeMono(kBar, [](int i) { return noiseAt(i); });
+    m->loop1.regions = regions({ 0.5 });
+    m->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i + 7); });
+    m->loop2.regions = regions({ 0.5 });
+    // No rules: Loop 2 is silent.
+    auto wet = std::make_shared<dc::Model>(*m);
+    setAll(wet->fx, 2, 0x0f);
+    wet->fx.params.set(dc::FxParam::FilterCutoff, 100.0);
+    const Out a = runEngine(m, kBar);
+    const Out b = runEngine(wet, kBar);
+    CHECK(peakOf(a.l, 0, kBar) > 0.1f);
+    CHECK(maxDiff(a, b, 0, kBar) == 0.0f);
+}
+
+TEST_CASE("Engine fx: switches follow the region that started last", "[Engine][fx]")
+{
+    auto dry = baseModel();
+    dry->loop1.regions = regions({ 0.5 });
+    dry->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i); });
+    dry->loop2.regions = regions({ 0.5 }); // A = 0, B = 1
+    dry->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    dry->rules.setTargets(1, { { 1, 1.0f, dc::PlayMode::Gate } });
+    auto wet = std::make_shared<dc::Model>(*dry);
+    wet->fx.setSwitch(0, dc::FxInsert::Filter, true);
+    wet->fx.params.set(dc::FxParam::FilterCutoff, 200.0);
+    const Out a = runEngine(dry, kBar, 700);
+    const Out b = runEngine(wet, kBar, 700);
+    CHECK(10.0 * std::log10(hfEnergy(b.l, 4800, 48000) / hfEnergy(a.l, 4800, 48000)) <= -20.0);
+    // In B (from frame 48000) dry again once the crossfade and the 5 ms switch ramp are over.
+    CHECK(maxDiff(a, b, 48000 + 960, kBar) <= 1e-5f);
+}
+
+TEST_CASE("Engine fx: stopping with silence turns the inputs off and the reverb rings out", "[Engine][fx]")
+{
+    auto m = baseModel();
+    m->loop1.bars = 4;
+    m->loop1.regions = regions({ 0.125 }); // region 0 = frames [0, 48000), region 1 = the rest (7 s)
+    m->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i); });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    m->rules.setTargets(1, { { 0, 0.5f, dc::PlayMode::Gate } }); // 0.9 lands in the silence remainder
+    m->fx.setSwitch(0, dc::FxInsert::Reverb, true);
+    m->fx.params.set(dc::FxParam::ReverbMix, 1.0);
+    dc::Engine e;
+    prepared(e);
+    e.setRandom([] { return 0.9f; });
+    e.setModel(m);
+    const int frames = 7 * 48000;
+    const Out o = run(e, 0.0, frames);
+    REQUIRE(e.playhead().region2 == -1); // silence was drawn
+    const size_t stop = 48000 + kFade;
+    CHECK(peakOf(o.l, stop, stop + 4800) > 1e-3f);       // the tail still sounds after the stop
+    CHECK(peakOf(o.l, frames - 48000, frames) < 0.5e-3f); // later below -60 dB (input amplitude 0.5)
+    CHECK(!e.fxActive());
+    CHECK(allZero(o.l, frames - 4800, frames));
+}
+
+TEST_CASE("Engine fx: a stopped transport lets the reverb ring out", "[Engine][fx]")
+{
+    auto m = noiseModel();
+    m->fx.setSwitch(0, dc::FxInsert::Reverb, true);
+    m->fx.params.set(dc::FxParam::ReverbMix, 1.0);
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    run(e, 0.0, 48000);
+    REQUIRE(e.fxActive());
+    const Out o = runStopped(e, 6 * 48000);
+    CHECK(peakOf(o.l, 0, 512) > 1e-3f); // not cut
+    CHECK(peakOf(o.l, 4800, 9600) > 1e-4f);
+    CHECK(allZero(o.l, o.l.size() - 48000, o.l.size())); // rang out completely
+    CHECK(allZero(o.r, o.r.size() - 48000, o.r.size()));
+    CHECK(!e.fxActive());
+}
+
+TEST_CASE("Engine fx: audition of a Loop-2 region uses its switches, also while stopped", "[Engine][fx][preview]")
+{
+    auto dry = previewModel();
+    dry->loop1.data = makeMono(kBar, [](int i) { return noiseAt(i + 3); });
+    dry->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i); });
+    auto wet = std::make_shared<dc::Model>(*dry);
+    wet->fx.setSwitch(1, dc::FxInsert::Filter, true);
+    wet->fx.params.set(dc::FxParam::FilterCutoff, 200.0);
+    auto all = std::make_shared<dc::Model>(*dry);
+    setAll(all->fx, 4, 0x0f);
+
+    const auto audition = [](std::shared_ptr<const dc::Model> m, int slot, int region) {
+        dc::Engine e;
+        prepared(e);
+        e.setModel(std::move(m));
+        e.requestPreview(slot, region);
+        return runStopped(e, 24000);
+    };
+    const Out a = audition(dry, 1, 1);
+    const Out b = audition(wet, 1, 1);
+    REQUIRE(hfEnergy(a.l, 2400, 22000) > 0.0);
+    CHECK(10.0 * std::log10(hfEnergy(b.l, 2400, 22000) / hfEnergy(a.l, 2400, 22000)) <= -20.0);
+    // Loop-1 audition: dry, whatever the Loop-2 switches say.
+    const Out c = audition(dry, 0, 1);
+    const Out d = audition(all, 0, 1);
+    CHECK(peakOf(c.l, 0, 24000) > 0.1f);
+    CHECK(maxDiff(c, d, 0, 24000) <= 1e-5f);
+}
+
+TEST_CASE("Engine fx: toggling the sounding region's switch in a seamless swap takes effect without a click", "[Engine][fx][swap]")
+{
+    auto m = baseModel();
+    m->loop2.data = makeMono(kBar, [](int i) { return sineAt(i, 220.0, 0.5f); });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    m->fx.params.set(dc::FxParam::FilterCutoff, 60.0);
+    m->fx.params.set(dc::FxParam::FilterResonance, 0.0);
+    auto on = std::make_shared<dc::Model>(*m); // same data and bars: seamless
+    on->fx.setSwitch(0, dc::FxInsert::Filter, true);
+    on->fx.setSwitch(0, dc::FxInsert::Flanger, true);
+
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    const Out o = runSwap(e, kSwapAt + 24000, kSwapAt, on);
+    CHECK(maxNeighbourStep(o.l, kFade, o.l.size()) < 0.3f);
+    CHECK(maxNeighbourStep(o.r, kFade, o.r.size()) < 0.3f);
+    // It took effect on the running voice: the low-pass at 60 Hz pulls the 220 Hz sine down.
+    CHECK(peakOf(o.l, kSwapAt - 4800, kSwapAt) > 0.45f);
+    CHECK(peakOf(o.l, kSwapAt + 12000, kSwapAt + 24000) < 0.35f);
+}
+
+TEST_CASE("Engine fx: a hard model restart flushes the tail", "[Engine][fx][swap]")
+{
+    auto m = noiseModel();
+    m->fx.setSwitch(0, dc::FxInsert::Reverb, true);
+    m->fx.params.set(dc::FxParam::ReverbMix, 1.0);
+    m->fx.params.set(dc::FxParam::ReverbSize, 1.0);
+    auto other = baseModel(); // another Loop-2 data object, no rules: nothing plays after the swap
+    other->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i); });
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    const Out o = runSwap(e, kSwapAt + 48000, kSwapAt, other);
+    CHECK(peakOf(o.l, kSwapAt, kSwapAt + 480) > 1e-3f); // fades, no hard cut
+    CHECK(allZero(o.l, kSwapAt + 2880, o.l.size()));    // 60 ms later: nothing left
+    CHECK(allZero(o.r, kSwapAt + 2880, o.r.size()));
+    CHECK(!e.fxActive());
+}
+
+TEST_CASE("Engine fx: process with more frames than prepared, and with single frames, works and stays finite", "[Engine][fx]")
+{
+    auto m = noiseModel();
+    m->loop1.data = makeData(kBar, [](int i) { return sineAt(i, 220.0, 0.25f); });
+    m->loop1.regions = regions({ 0.005 }); // an entry (new voice) inside the first 1000 frames
+    m->rules.setTargets(1, { { 0, 1.0f, dc::PlayMode::OneShot } });
+    setAll(m->fx, 1, 0x0f);
+    const auto make = [&](dc::Engine& e) {
+        e.prepare(kRate, 64);
+        e.setRandom([] { return 0.5f; });
+        e.setModel(m);
+    };
+    dc::Engine a, b;
+    make(a);
+    make(b);
+    const Out big = run(a, 0.0, 1000, 1000);
+    const Out ref = run(b, 0.0, 1000, 64);
+    CHECK(allFinite(big));
+    CHECK(maxDiff(big, ref, 0, 1000) <= 1e-4f);
+    CHECK(peakOf(big.l, 0, 1000) > 0.01f);
+
+    const Out single = run(a, 1000 * kStep, 1000, 1);
+    const Out singleRef = run(b, 1000 * kStep, 1000, 64);
+    CHECK(allFinite(single));
+    CHECK(maxDiff(single, singleRef, 0, 1000) <= 1e-4f);
+    CHECK(peakOf(single.l, 0, 1000) > 0.01f);
+}
+
+TEST_CASE("Engine fx: switching mid-block (rule start inside a block) is finite and bounded", "[Engine][fx]")
+{
+    // 64 Loop-1 regions alternating between a Loop-2 region with all inserts and one without: in one
+    // 96000-frame block that is more switch changes than the per-block list holds.
+    std::vector<double> bounds;
+    for (int k = 1; k < 64; ++k)
+        bounds.push_back(k / 64.0);
+    auto m = baseModel();
+    m->loop1.regions = regions(bounds);
+    m->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i); });
+    m->loop2.regions = regions({ 0.5 });
+    for (int k = 0; k < 64; ++k)
+        m->rules.setTargets(k, { { k % 2, 1.0f, dc::PlayMode::Gate } });
+    setAll(m->fx, 1, 0x0f);
+    m->fx.params.set(dc::FxParam::ReverbMix, 1.0);
+    m->fx.params.set(dc::FxParam::FlangerFeedback, 0.9);
+
+    for (int block : { 700, kBar })
+    {
+        dc::Engine e;
+        e.prepare(kRate, kBar);
+        e.setRandom([] { return 0.5f; });
+        e.setModel(m);
+        Out o;
+        o.l.assign(3 * kBar, 0.0f);
+        o.r.assign(3 * kBar, 0.0f);
+        gAllocCount = 0;
+        gCountAllocs = true;
+        double ppq = 0.0;
+        for (int pos = 0; pos < 3 * kBar; pos += block)
+        {
+            const int n = std::min(block, 3 * kBar - pos);
+            e.process(dc::TransportInfo { true, ppq, kBpm, 4, 4 }, o.l.data() + pos, o.r.data() + pos, n);
+            ppq += n * kStep;
+        }
+        gCountAllocs = false;
+        CHECK(gAllocCount.load() == 0);
+        CHECK(allFinite(o));
+        CHECK(peakOf(o.l, 0, o.l.size()) < 4.0f);
+        CHECK(peakOf(o.r, 0, o.r.size()) < 4.0f);
+        CHECK(peakOf(o.l, 0, o.l.size()) > 0.1f);
+    }
+}
+
+TEST_CASE("Engine fx: extreme parameters stay finite", "[Engine][fx]")
+{
+    for (bool atMax : { false, true })
+    {
+        auto m = noiseModel();
+        m->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i, 1.0f); });
+        setAll(m->fx, 1, 0x0f);
+        for (int p = 0; p < dc::kFxParamCount; ++p)
+        {
+            const auto& info = dc::fxParamInfo(static_cast<dc::FxParam>(p));
+            m->fx.params.set(static_cast<dc::FxParam>(p), atMax ? info.max : info.min);
+        }
+        const Out o = runEngine(m, 10 * 48000);
+        CHECK(allFinite(o));
+        CHECK(peakOf(o.l, 0, o.l.size()) < 16.0f);
+    }
 }

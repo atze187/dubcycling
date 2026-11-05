@@ -11,7 +11,7 @@ add_library(dc_engine STATIC
     fx/Flanger.h fx/Flanger.cpp fx/Reverb.h fx/Reverb.cpp
     fx/FxChain.h fx/FxChain.cpp
     Sequencer.h Sequencer.cpp
-    FxSlot.h Engine.h Engine.cpp)
+    Engine.h Engine.cpp)
 target_include_directories(dc_engine PUBLIC ${PROJECT_SOURCE_DIR})
 target_compile_features(dc_engine PUBLIC cxx_std_20)
 if(MSVC)

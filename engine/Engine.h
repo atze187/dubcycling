@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -7,12 +8,14 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+#include "engine/FxSettings.h"
 #include "engine/GrainStretch.h"
 #include "engine/LoopReader.h"
 #include "engine/RegionMap.h"
 #include "engine/RuleSet.h"
 #include "engine/Sequencer.h"
 #include "engine/StereoData.h"
+#include "engine/fx/FxChain.h"
 
 namespace dc {
 
@@ -38,6 +41,7 @@ struct Model
 {
     LoopSlot loop1, loop2;
     RuleSet rules;
+    FxSettings fx; // insert parameters and switches per Loop-2 region
 };
 
 // Audio core: Loop 1 phase-locked to the host, Loop 2 as one region voice driven by the Sequencer.
@@ -55,6 +59,13 @@ struct Model
 // as new. Any other model change
 // is a hard restart of Loop 2 and the Sequencer (the next frame is a fresh entry draw); Loop 1
 // restarts too unless its data pointer and bars are unchanged.
+//
+// Effects: Loop 2 (voice, cancelled voice's tail, Loop-2 audition) is rendered into a bus, sent
+// through the insert chain and added to the output; Loop 1 and its audition stay dry. The switch
+// mask follows what started last: a Loop-2 voice (its region's switches), a Loop-2 audition (the
+// auditioned region's switches, for as long as it plays) or a stop (0). A seamless swap re-reads
+// the switches of what sounds. Transport stop, jumps and invalid transport let the tails ring out;
+// a hard restart with other loop data or bars fades the chain out (flush).
 class Engine
 {
 public:
@@ -124,6 +135,10 @@ public:
     // Frees models the audio thread no longer uses. Called by setModel(); may also be called
     // periodically from a non-audio thread to release memory sooner.
     void releaseRetired();
+
+    // True while an insert of the chain is switched on or still rings out (as of the end of the last
+    // processed block). Any thread.
+    bool fxActive() const { return fxActive_.load(std::memory_order_relaxed); }
 
 private:
     // A published model plus the Loop-1 reader bound to its data. Built off the audio thread
@@ -209,7 +224,8 @@ private:
     void startPreview(int slot, int region);
     void resetPreview();
     void dropStalePreviews();
-    void mixPreview(float* l, float* r, int n);
+    // Loop-1 audition into l/r, Loop-2 audition into busL/busR.
+    void mixPreview(float* l, float* r, float* busL, float* busR, int n);
     void mixPreviewVoice(PreviewVoice& pv, const Model& m, float* l, float* r, int n);
 
     std::atomic<int> previewReq_ { -1 }; // (slot << 16) | region, or -1
@@ -264,6 +280,38 @@ private:
     double lastLo1_ = 0.0, lastHi1_ = 0.0; // phase bounds of lastRegion1_ (= Gate trigger while a Gate runs)
     long long lastCycle1_ = 0;
     bool swapPending_ = false; // a seamless swap waits for adoptSwap (needs the block's time signature)
+
+    // Effects (audio thread). One slice is at most busL_.size() frames (process() splits larger
+    // blocks); without prepare() the bus is empty and Loop 2 goes straight to the output, dry.
+    void processSlice(const TransportInfo& t, float* l, float* r, int n);
+    // Runs the chain over bus [0, n) in segments between the recorded mask changes (skipped while
+    // nothing is switched on or rings out) and adds the bus to l/r.
+    void runChain(float* l, float* r, int n);
+    // End of a slice: chain (with a bus), fxActive, non-finite guard on the sum.
+    void finishSlice(float* l, float* r, int n, bool useBus);
+    // Sets the target switch mask from frame busFrame_ of the current slice on.
+    void setTargetMask(std::uint8_t mask);
+    // After a seamless model change: the switches of what sounds, read from the new model.
+    void refreshMask(const Model& m);
+    // The audition owned the switches and no Loop-2 audition plays any more: back to the voice.
+    void releasePreviewMask();
+
+    enum class MaskOwner { None, Voice, Preview };
+    struct MaskChange
+    {
+        int frame = 0;
+        std::uint8_t mask = 0;
+    };
+    static constexpr int kMaxMaskChanges = 32; // per slice; on overflow the last change keeps the latest mask
+    fx::FxChain chain_;
+    std::vector<float> busL_, busR_;
+    std::uint8_t mask_ = 0;      // current target mask
+    std::uint8_t sliceMask_ = 0; // target mask at the start of the current slice
+    MaskOwner maskOwner_ = MaskOwner::None;
+    std::array<MaskChange, kMaxMaskChanges> maskChanges_ {};
+    int maskChangeCount_ = 0;
+    int busFrame_ = 0; // frame of the current slice that mask changes are recorded at
+    std::atomic<bool> fxActive_ { false };
 };
 
 } // namespace dc
