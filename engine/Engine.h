@@ -66,6 +66,12 @@ struct Model
 // auditioned region's switches, for as long as it plays) or a stop (0). A seamless swap re-reads
 // the switches of what sounds. Transport stop, jumps and invalid transport let the tails ring out;
 // a hard restart with other loop data or bars fades the chain out (flush).
+//
+// Mix: a Loop-2 voice plays at mixGains(mix).loop2 of the target that started it (before the bus,
+// so before the inserts; a cancelled voice's tail keeps its level), and Loop 1 (playback only, not
+// its audition) is scaled by mixGains(mix).loop1 of voice_ while it plays, else 1. Both levels ramp
+// over kMixRampMs. Auditions ignore the mix. A seamless swap re-reads the mix of the sounding voice
+// if its Loop-2 region and the Loop-1 region that started it kept their bounds.
 class Engine
 {
 public:
@@ -183,15 +189,35 @@ private:
         int fadeLeft = 0;        // frames left in the current fade (in or out); integer so fades end exactly
         float fadeDelta = 0.0f;  // fade-out gain decrement per frame
         bool endedByItself = false; // one-shot end fade (report onVoiceEnded when it completes)
+        // Mix of the target that started it (audition: 0.5). level2 is the Loop-2 level it renders
+        // with, ramped towards mixGains(mix).loop2 (exactly 1 at the centre). mixRegion1 and its
+        // 0..1 bounds name the Loop-1 region that started it (for the re-read on a seamless swap).
+        float mix = 0.5f;
+        float level2 = 1.0f;
+        int mixRegion1 = -1;
+        double mixLo1 = 0.0, mixHi1 = 0.0;
         GrainStretch gl, gr;
     };
+
+    // Linear per-sample ramp of a gain towards a target, kMixRampMs for a full 0..1 swing. It lands
+    // exactly on the target, so a centre mix stays at exactly 1 (bit-identical output).
+    static constexpr double kMixRampMs = 7.0;
+    static float rampTowards(float value, float target, float step)
+    {
+        const float d = target - value;
+        return d > step ? value + step : (d < -step ? value - step : target);
+    }
 
     // keepLoop1: Loop 1 is unchanged by a swap, its reader keeps running.
     void resetPlayback(bool keepLoop1 = false);
     // Seamless swap to m (same data and bars), on the first valid block after the swap.
     void adoptSwap(const Model& m, double beats1);
-    void startVoice(const Model& m, int region2, PlayMode mode);
-    void requestStart(const Model& m, int region2, PlayMode mode);
+    void startVoice(const Model& m, const Sequencer::Command& c);
+    void requestStart(const Model& m, const Sequencer::Command& c);
+    // True if region2 of m still names the stretch of Loop 2 that v plays (same bounds).
+    static bool sameRegion2(const Model& m, const Voice& v);
+    // After a seamless model change: the mix of the sounding target, read from the new model.
+    void refreshMix(const Model& m);
     void requestStop();
     void beginFadeOut(Voice& v) const;
     // Renders one frame of v (added to outL/outR) and advances it. True if it ended by itself.
@@ -273,6 +299,8 @@ private:
     double outRate_ = 44100.0;
     int grainLen_ = 1764;
     int fadeLen_ = 220;
+    float mixStep_ = static_cast<float>(1.0 / (kMixRampMs * 0.001 * 44100.0)); // gain change per frame
+    float gain1_ = 1.0f; // Loop-1 level from the mix of the playing voice (ramped)
     bool running_ = false; // false: next valid frame is a fresh start (entry draw)
     double expectedPpq_ = 0.0;
     double lastPpq_ = 0.0;

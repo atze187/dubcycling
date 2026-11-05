@@ -1686,3 +1686,233 @@ TEST_CASE("Engine fx: extreme parameters stay finite", "[Engine][fx]")
         CHECK(peakOf(o.l, 0, o.l.size()) < 16.0f);
     }
 }
+
+// --- Mix between Loop 1 and the playing Loop-2 region --------------------------------------------
+
+namespace {
+// Loop 1 = constant 0.2 with regions [0, .5) and [.5, 1), Loop 2 = constant 0.3 (one region). Loop-1
+// region 0 starts Loop-2 region 0 as a Gate with `mix`; region 1 has no rule (the Gate ends at 48000).
+std::shared_ptr<dc::Model> mixModel(float mix)
+{
+    auto m = baseModel();
+    m->loop1.data = regionData(kBar, { 0.2f });
+    m->loop1.regions = regions({ 0.5 });
+    m->loop2.data = regionData(kBar, { 0.3f });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate, mix } });
+    return m;
+}
+
+// Frames well inside the voice (after its fade-in and the Loop-1 ramp) and well after its end.
+constexpr size_t kInVoice = 1000;
+constexpr size_t kVoiceEnd = 48000 - kFade;
+constexpr size_t kAfterVoice = 48000 + 1500;
+} // namespace
+
+TEST_CASE("Engine mix: the default mix keeps both loops at full level", "[Engine][mix]")
+{
+    auto m = baseModel();
+    m->loop1.data = makeData(kBar, [](int i) { return sineAt(i, 220.0, 0.25f); });
+    m->loop1.regions = regions({ 0.25, 0.5, 0.75 });
+    m->loop2.data = makeData(kBar, [](int i) { return noiseAt(i, 0.3f); });
+    m->loop2.regions = regions({ 0.25, 0.5, 0.75 });
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::Gate } });
+    m->rules.setTargets(1, { { 2, 1.0f, dc::PlayMode::OneShot } });
+    m->rules.setTargets(3, { { 0, 1.0f, dc::PlayMode::Gate } });
+    auto centre = std::make_shared<dc::Model>(*m);
+    centre->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::Gate, 0.5f } });
+    centre->rules.setTargets(1, { { 2, 1.0f, dc::PlayMode::OneShot, 0.5f } });
+    centre->rules.setTargets(3, { { 0, 1.0f, dc::PlayMode::Gate, 0.5f } });
+    auto only1 = std::make_shared<dc::Model>(*m);
+    only1->rules = dc::RuleSet {};
+    auto only2 = std::make_shared<dc::Model>(*m);
+    only2->loop1.data = nullptr;
+
+    const int frames = 2 * kBar;
+    const Out a = runEngine(m, frames, 700);
+    const Out b = runEngine(centre, frames, 700);
+    CHECK(maxDiff(a, b, 0, frames) == 0.0f);
+    const Out l1 = runEngine(only1, frames, 700);
+    const Out l2 = runEngine(only2, frames, 700);
+    float dev = 0.0f;
+    for (size_t i = 0; i < static_cast<size_t>(frames); ++i)
+        dev = std::max({ dev, std::abs(a.l[i] - (l1.l[i] + l2.l[i])), std::abs(a.r[i] - (l1.r[i] + l2.r[i])) });
+    CHECK(dev <= 1e-5f);
+    CHECK(peakOf(l2.l, 0, frames) > 0.1f);
+}
+
+TEST_CASE("Engine mix: mix 1 plays only loop 2 while the region sounds", "[Engine][mix]")
+{
+    const Out o = runEngine(mixModel(1.0f), kBar, 700);
+    CHECK(maxDev(o.l, kInVoice, kVoiceEnd, 0.3f) < kTol);
+    CHECK(maxDev(o.r, kInVoice, kVoiceEnd, -0.3f) < kTol);
+    CHECK(maxDev(o.l, kAfterVoice, kBar, 0.2f) < kTol); // Loop 1 back at full level
+}
+
+TEST_CASE("Engine mix: mix 0 silences the loop 2 region and keeps loop 1", "[Engine][mix]")
+{
+    const Out o = runEngine(mixModel(0.0f), kBar, 700);
+    CHECK(maxDev(o.l, 0, kBar, 0.2f) < kTol);
+    CHECK(maxDev(o.r, 0, kBar, -0.2f) < kTol);
+}
+
+TEST_CASE("Engine mix: mix 0.25 halves loop 2 and keeps loop 1, 0.75 halves loop 1", "[Engine][mix]")
+{
+    const Out a = runEngine(mixModel(0.25f), kBar, 700);
+    CHECK(maxDev(a.l, kInVoice, kVoiceEnd, 0.2f + 0.15f) < kTol);
+    CHECK(maxDev(a.l, kAfterVoice, kBar, 0.2f) < kTol);
+    const Out b = runEngine(mixModel(0.75f), kBar, 700);
+    CHECK(maxDev(b.l, kInVoice, kVoiceEnd, 0.1f + 0.3f) < kTol);
+    CHECK(maxDev(b.l, kAfterVoice, kBar, 0.2f) < kTol);
+}
+
+TEST_CASE("Engine mix: loop 1 returns to full level after silence is drawn", "[Engine][mix]")
+{
+    // Loop 1 = constant 0.5, Loop 2 silent: everything audible is Loop 1 times its mix gain.
+    auto m = baseModel();
+    m->loop1.data = regionData(kBar, { 0.5f });
+    m->loop1.regions = regions({ 0.5 });
+    m->loop2.data = regionData(kBar, { 0.0f });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate, 1.0f } });
+    m->rules.setTargets(1, { { 0, 0.5f, dc::PlayMode::Gate, 1.0f } }); // 0.9 lands in the silence
+    dc::Engine e;
+    prepared(e);
+    e.setRandom([] { return 0.9f; });
+    e.setModel(m);
+    const Out o = run(e, 0.0, kBar, 700);
+    REQUIRE(e.playhead().region2 == -1); // silence was drawn
+    CHECK(maxDev(o.l, kInVoice, kVoiceEnd, 0.0f) < kTol);
+    CHECK(maxDev(o.l, kAfterVoice, kBar, 0.5f) < kTol);
+    CHECK(maxNeighbourStep(o.l, 1, kBar) < 0.05f);
+    CHECK(maxNeighbourStep(o.r, 1, kBar) < 0.05f);
+}
+
+TEST_CASE("Engine mix: switching between targets with different mix does not click", "[Engine][mix]")
+{
+    // Loop 1 = 0.4 everywhere; Loop-1 region 0 plays Loop-2 region 0 with mix 1, region 1 plays Loop-2
+    // region 1 with mix 0. Both Loop-2 regions are 0.4: the sum stays 0.4 across the switch at 48000.
+    auto m = baseModel();
+    m->loop1.data = regionData(kBar, { 0.4f });
+    m->loop1.regions = regions({ 0.5 });
+    m->loop2.data = regionData(kBar, { 0.4f });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate, 1.0f } });
+    m->rules.setTargets(1, { { 1, 1.0f, dc::PlayMode::Gate, 0.0f } });
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    run(e, 0.0, 1024, 512);
+    Out o; // 48000 lies inside a block of 700
+    o.l.assign(kBar - 1024, 0.0f);
+    o.r.assign(kBar - 1024, 0.0f);
+    gAllocCount = 0;
+    gCountAllocs = true;
+    double ppq = 1024 * kStep;
+    for (int pos = 0; pos < kBar - 1024; pos += 700)
+    {
+        const int n = std::min(700, kBar - 1024 - pos);
+        e.process(dc::TransportInfo { true, ppq, kBpm, 4, 4 }, o.l.data() + pos, o.r.data() + pos, n);
+        ppq += n * kStep;
+    }
+    gCountAllocs = false;
+    CHECK(gAllocCount.load() == 0);
+    CHECK(maxNeighbourStep(o.l, 1, o.l.size()) < 0.1f);
+    CHECK(maxNeighbourStep(o.r, 1, o.r.size()) < 0.1f);
+    CHECK(maxDev(o.l, 1000, 48000 - 1024 - kFade, 0.4f) < kTol);       // only Loop 2
+    CHECK(maxDev(o.l, 48000 - 1024 + 1500, kBar - 1024, 0.4f) < kTol); // only Loop 1
+}
+
+TEST_CASE("Engine mix: the audition ignores the mix", "[Engine][mix][preview]")
+{
+    // Loop 1 = 0.05, Loop 2 = quarters 0.1 .. 0.4; Loop-1 region 0 plays Loop-2 region 3 (0.4).
+    const auto audition = [](float mix, int slot, int region) {
+        auto m = previewModel();
+        m->loop1.data = regionData(kBar, { 0.05f });
+        m->rules.setTargets(0, { { 3, 1.0f, dc::PlayMode::Gate, mix } });
+        dc::Engine e;
+        prepared(e);
+        e.setModel(m);
+        run(e, 0.0, 2048);
+        e.requestPreview(slot, region);
+        return run(e, 2048 * kStep, 2048);
+    };
+    // Mix 0: the voice is silent, the Loop-2 audition (region 1 = 0.2) plays at full level.
+    const Out a = audition(0.0f, 1, 1);
+    CHECK(maxDev(a.l, 1024, 2048, 0.05f + 0.2f) < kTol);
+    // Mix 1: Loop-1 playback is silent, the Loop-1 audition (0.05) is not damped.
+    const Out b = audition(1.0f, 0, 0);
+    CHECK(maxDev(b.l, 1024, 2048, 0.4f + 0.05f) < kTol);
+}
+
+TEST_CASE("Engine mix: an edit of the sounding target's mix is heard at once without a click", "[Engine][mix][swap]")
+{
+    auto m = baseModel();
+    m->loop1.data = regionData(kBar, { 0.25f });
+    m->loop2.data = regionData(kBar, { 0.25f });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    auto edited = std::make_shared<dc::Model>(*m); // same data and bars: seamless
+    edited->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate, 1.0f } });
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    const Out o = runSwap(e, kSwapAt + 24000, kSwapAt, edited);
+    CHECK(maxDev(o.l, kSwapAt - 4800, kSwapAt, 0.5f) < kTol);
+    CHECK(maxDev(o.l, kSwapAt + 1000, kSwapAt + 24000, 0.25f) < kTol); // Loop 1 out at once
+    CHECK(maxNeighbourStep(o.l, kFade, o.l.size()) < 0.05f);
+    CHECK(maxNeighbourStep(o.r, kFade, o.r.size()) < 0.05f);
+}
+
+TEST_CASE("Engine mix: a boundary edit before the sounding region keeps its mix", "[Engine][mix][swap]")
+{
+    // Loop 2: regions 0 [0, .25), 1 [.25, .5), 2 [.5, 1), all 0.3; the voice plays region 2 with mix 1
+    // (Loop 1 = 0.2 is out).
+    auto m = baseModel();
+    m->loop1.data = regionData(kBar, { 0.2f });
+    m->loop2.data = regionData(kBar, { 0.3f });
+    m->loop2.regions = regions({ 0.25, 0.5 });
+    m->rules.setTargets(0, { { 2, 1.0f, dc::PlayMode::Gate, 1.0f } });
+
+    SECTION("a Loop-2 boundary before it shifts the indices")
+    {
+        // The editor splits region 0: the targets move with their regions, index 2 is now [.25, .5)
+        // with mix 0 (weight 0, never drawn) and the sounding region is index 3.
+        auto split = std::make_shared<dc::Model>(*m);
+        split->loop2.regions = regions({ 0.1, 0.25, 0.5 });
+        split->rules.setTargets(0, { { 2, 0.0f, dc::PlayMode::Gate, 0.0f }, { 3, 1.0f, dc::PlayMode::Gate, 1.0f } });
+        dc::Engine e;
+        prepared(e);
+        e.setModel(m);
+        const Out o = runSwap(e, kSwapAt + 24000, kSwapAt, split);
+        REQUIRE(e.playhead().region2 == 2); // the voice keeps its index and its bounds
+        CHECK(maxDev(o.l, kSwapAt - 4800, kSwapAt + 24000, 0.3f) < kTol);
+    }
+    SECTION("the Loop-1 region that started it changed its bounds")
+    {
+        auto moved = std::make_shared<dc::Model>(*m);
+        moved->loop1.regions = regions({ 0.75 }); // region 0 is now [0, .75): another target
+        moved->rules.setTargets(0, { { 2, 1.0f, dc::PlayMode::Gate, 0.0f } });
+        dc::Engine e;
+        prepared(e);
+        e.setModel(m);
+        const Out o = runSwap(e, kSwapAt + 24000, kSwapAt, moved);
+        REQUIRE(e.playhead().region2 == 2); // the Gate kept its start edge, it plays on
+        CHECK(maxDev(o.l, kSwapAt - 4800, kSwapAt + 24000, 0.3f) < kTol);
+    }
+}
+
+TEST_CASE("Engine mix: mix values at the ends and NaN stay finite", "[Engine][mix]")
+{
+    const Out centre = runEngine(mixModel(0.5f), kBar, 700);
+    const Out nan = runEngine(mixModel(std::numeric_limits<float>::quiet_NaN()), kBar, 700);
+    const Out inf = runEngine(mixModel(std::numeric_limits<float>::infinity()), kBar, 700);
+    CHECK(maxDiff(centre, nan, 0, kBar) == 0.0f); // NaN is cleaned to the centre
+    CHECK(maxDiff(centre, inf, 0, kBar) == 0.0f);
+    CHECK(maxDiff(runEngine(mixModel(-1.0f), kBar, 700), runEngine(mixModel(0.0f), kBar, 700), 0, kBar) == 0.0f);
+    CHECK(maxDiff(runEngine(mixModel(2.0f), kBar, 700), runEngine(mixModel(1.0f), kBar, 700), 0, kBar) == 0.0f);
+    for (float mix : { 0.0f, 1.0f })
+    {
+        const Out o = runEngine(mixModel(mix), kBar, 700);
+        CHECK(allFinite(o));
+        CHECK(peakOf(o.l, 0, kBar) <= 0.5f + kTol);
+    }
+    CHECK(maxDev(centre.l, kInVoice, kVoiceEnd, 0.5f) < kTol);
+}

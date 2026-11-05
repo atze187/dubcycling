@@ -3,6 +3,7 @@
 #include <cmath>
 #include <tuple>
 #include "engine/LoopTiming.h"
+#include "engine/MixGain.h"
 
 namespace dc {
 
@@ -32,6 +33,8 @@ void Engine::prepare(double sampleRate, int maxBlock)
     outRate_ = sampleRate_;
     grainLen_ = std::max(16, static_cast<int>(std::lround(LoopReader::kGrainMs * 0.001 * outRate_)));
     fadeLen_ = std::max(1, static_cast<int>(std::lround(kCancelFadeMs * 0.001 * outRate_)));
+    mixStep_ = static_cast<float>(1.0 / std::max(1.0, kMixRampMs * 0.001 * outRate_));
+    gain1_ = 1.0f;
     for (auto& rt : owned_)
         rt->reader1->prepare(outRate_); // a shared reader is prepared more than once: harmless
     resetPlayback();
@@ -61,29 +64,53 @@ void Engine::setTargetMask(std::uint8_t mask)
         maskChanges_[kMaxMaskChanges - 1].mask = mask; // overflow: the latest state wins
 }
 
+bool Engine::sameRegion2(const Model& m, const Voice& v)
+{
+    const double len = static_cast<double>(framesOf(m.loop2.data.get()));
+    if (!(len > 0.0) || v.region2 < 0 || v.region2 >= m.loop2.regions.regionCount())
+        return false;
+    const auto [lo01, hi01] = m.loop2.regions.bounds(v.region2);
+    constexpr double kTolFrames = 0.5;
+    return std::abs(lo01 * len - v.lo) <= kTolFrames && std::abs(hi01 * len - v.hi) <= kTolFrames;
+}
+
 void Engine::refreshMask(const Model& m)
 {
     // The switches of the sounding region are re-read only if its index still names the same
     // stretch of Loop 2 (same bounds). After a boundary edit before it the indices (and the
     // remapped switch masks) shift while the voice keeps its old index: then it keeps its mask.
-    const auto sameRegion = [&m](const Voice& v) {
-        const double len = static_cast<double>(framesOf(m.loop2.data.get()));
-        if (!(len > 0.0) || v.region2 < 0 || v.region2 >= m.loop2.regions.regionCount())
-            return false;
-        const auto [lo01, hi01] = m.loop2.regions.bounds(v.region2);
-        constexpr double kTolFrames = 0.5;
-        return std::abs(lo01 * len - v.lo) <= kTolFrames && std::abs(hi01 * len - v.hi) <= kTolFrames;
-    };
     if (maskOwner_ == MaskOwner::Voice && voice_.state == Voice::State::Playing)
     {
-        if (sameRegion(voice_))
+        if (sameRegion2(m, voice_))
             setTargetMask(m.fx.maskFor(voice_.region2));
     }
     else if (maskOwner_ == MaskOwner::Preview && preview_.slot == 1 && preview_.voice.state != Voice::State::Idle)
     {
-        if (sameRegion(preview_.voice))
+        if (sameRegion2(m, preview_.voice))
             setTargetMask(m.fx.maskFor(preview_.voice.region2));
     }
+}
+
+void Engine::refreshMix(const Model& m)
+{
+    // Like refreshMask: the target that started the voice is looked up only if both its regions
+    // still name the same stretches (a boundary edit elsewhere shifts indices and the rules with
+    // them; the voice keeps its value then). The levels ramp to the new value in stepVoice and the
+    // Loop-1 gain.
+    Voice& v = voice_;
+    if (v.state != Voice::State::Playing || !sameRegion2(m, v) || v.mixRegion1 < 0
+        || v.mixRegion1 >= m.loop1.regions.regionCount())
+        return;
+    const auto [lo1, hi1] = m.loop1.regions.bounds(v.mixRegion1);
+    constexpr double kEdgeTol = 1e-9;
+    if (std::abs(lo1 - v.mixLo1) > kEdgeTol || std::abs(hi1 - v.mixHi1) > kEdgeTol)
+        return;
+    for (const RuleTarget& t : m.rules.targets(v.mixRegion1))
+        if (t.region2 == v.region2)
+        {
+            v.mix = sanitizeMix(t.mix);
+            return;
+        }
 }
 
 void Engine::releasePreviewMask()
@@ -193,6 +220,9 @@ void Engine::startPreview(int slot, int region)
     v.hi = hi01 * len;
     v.mode = PlayMode::OneShot;
     v.region2 = region;
+    v.mix = 0.5f; // the audition ignores the mix
+    v.level2 = 1.0f;
+    v.mixRegion1 = -1;
     v.elapsed = 0.0;
     v.state = Voice::State::Playing;
     v.gain = 0.0f;
@@ -316,9 +346,16 @@ void Engine::resetPlayback(bool keepLoop1)
         v->gain = 0.0f;
         v->fadeLeft = 0;
         v->endedByItself = false;
+        v->mix = 0.5f;
+        v->level2 = 1.0f;
+        v->mixRegion1 = -1;
         v->gl.reset();
         v->gr.reset();
     }
+    // Without a voice Loop 1 returns to full level: ramped while Loop 1 plays on, at once when it
+    // restarts anyway.
+    if (!keepLoop1)
+        gain1_ = 1.0f;
     if (current_ != nullptr && !keepLoop1)
         current_->reader1->reset();
     // The voice is gone: its switches close (tails ring out; the chain is not flushed here).
@@ -360,12 +397,15 @@ void Engine::adoptSwap(const Model& m, double beats1)
         requestStop();
         sequencer_.onVoiceEnded();
     }
-    // A switch toggled in the editor acts on the sounding region at once.
+    // A switch toggled or a mix moved in the editor acts on the sounding region at once.
     refreshMask(m);
+    refreshMix(m);
 }
 
-void Engine::startVoice(const Model& m, int region2, PlayMode mode)
+void Engine::startVoice(const Model& m, const Sequencer::Command& c)
 {
+    const int region2 = c.region2;
+    const PlayMode mode = c.mode;
     Voice& v = voice_;
     const double len = static_cast<double>(framesOf(m.loop2.data.get()));
     const auto [lo01, hi01] = m.loop2.regions.bounds(region2);
@@ -387,6 +427,11 @@ void Engine::startVoice(const Model& m, int region2, PlayMode mode)
     v.hi = hi01 * len;
     v.mode = mode;
     v.region2 = region2;
+    // Mix of its target; the Loop-2 level starts on it (the fade-in covers the start), Loop 1 ramps.
+    v.mix = sanitizeMix(c.mix);
+    v.level2 = mixGains(v.mix).loop2;
+    v.mixRegion1 = c.region1;
+    std::tie(v.mixLo1, v.mixHi1) = m.loop1.regions.bounds(c.region1);
     v.elapsed = 0.0;
     v.state = Voice::State::Playing;
     v.gain = 0.0f;
@@ -405,7 +450,7 @@ void Engine::beginFadeOut(Voice& v) const
     v.fadeDelta = v.gain / static_cast<float>(v.fadeLeft);
 }
 
-void Engine::requestStart(const Model& m, int region2, PlayMode mode)
+void Engine::requestStart(const Model& m, const Sequencer::Command& c)
 {
     if (voice_.state != Voice::State::Idle)
     {
@@ -416,7 +461,7 @@ void Engine::requestStart(const Model& m, int region2, PlayMode mode)
         if (tail_.state == Voice::State::Playing)
             beginFadeOut(tail_);
     }
-    startVoice(m, region2, mode);
+    startVoice(m, c);
 }
 
 void Engine::requestStop()
@@ -452,8 +497,11 @@ bool Engine::stepVoice(Voice& v, const StereoData& d, GrainFrame gf, double adv,
     const double src = v.lo + v.elapsed;
     const float yl = v.gl.process(d.left, src, grainLen_, gf);
     const float yr = v.gr.process(d.right, src, grainLen_, gf);
-    outL += v.gain * yl;
-    outR += v.gain * yr;
+    // Mix level before the bus (exactly 1 at the centre, then the product is bit-identical).
+    const float g = v.gain * v.level2;
+    outL += g * yl;
+    outR += g * yr;
+    v.level2 = rampTowards(v.level2, mixGains(v.mix).loop2, mixStep_);
 
     // Gain ramp (integer counters, so fades end exactly).
     if (v.state == Voice::State::Playing)
@@ -607,6 +655,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         }
         if (running_)
             resetPlayback();
+        gain1_ = 1.0f; // Loop 1 is silent here and restarts at full level
         mixPreview(l, r, bl, br, n);
         if (m != nullptr)
             chain_.setParams(m->fx.params);
@@ -699,7 +748,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
                     c = sequencer_.onRegion1(region, m->rules);
                 pending_.valid = false; // consumed, or for an entry that is not coming any more
                 if (c.type == Sequencer::Command::Type::Start)
-                    requestStart(*m, c.region2, c.mode);
+                    requestStart(*m, c);
                 else if (c.type == Sequencer::Command::Type::Stop)
                     requestStop();
                 else if (jumpNow)
@@ -715,6 +764,16 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         {
             requestStop();
             sequencer_.onVoiceEnded();
+        }
+
+        // Loop 1 (already in l/r; the bus and the Loop-1 audition are added later) at the level the
+        // mix of the playing voice leaves it. Without the bus Loop 2 is added to l/r after this.
+        const float target1 = voice_.state == Voice::State::Playing ? mixGains(voice_.mix).loop1 : 1.0f;
+        gain1_ = rampTowards(gain1_, target1, mixStep_);
+        if (gain1_ != 1.0f)
+        {
+            l[i] *= gain1_;
+            r[i] *= gain1_;
         }
 
         if (adv2 <= 0.0)
