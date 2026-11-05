@@ -6,7 +6,8 @@
 
 namespace dc {
 
-constexpr int kBankVersion = 1;
+// 2 adds the per-preset "fx" object; version 1 files are still read (default fx).
+constexpr int kBankVersion = 2;
 constexpr int kMaxPresetNameLength = 32;
 constexpr int kMaxBankNameLength = 64;
 constexpr int kMaxPresetsPerBank = 1024;
@@ -59,7 +60,7 @@ struct BankParseResult
 BankParseResult bankFromJson(const juce::String& json);
 
 // Canonical text of everything that makes a preset sound the way it does: hash, bars, boundaries
-// and labels of both loops plus the rules. Without paths, file names and the active fields.
+// and labels of both loops plus the rules and, unless default, the effect settings. Without paths, file names and the active fields.
 juce::String presetFingerprint(const PluginState& state);
 
 } // namespace dc
