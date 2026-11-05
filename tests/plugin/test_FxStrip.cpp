@@ -65,6 +65,19 @@ TEST_CASE("FxStrip: a click on a marker reports region and insert, a click outsi
     CHECK(f.toggled.size() == 1);
 }
 
+TEST_CASE("FxStrip: a strip that is not live has no markers and ignores clicks")
+{
+    StripFixture f;
+    const auto b = f.strip.markerBounds(1, FxInsert::Flanger);
+    f.strip.setLive(false);
+    CHECK(f.strip.markerBounds(1, FxInsert::Flanger).isEmpty());
+    f.strip.toggleAt(b.getCentreX(), b.getCentreY());
+    CHECK(f.toggled.empty());
+    f.strip.setLive(true);
+    f.strip.toggleAt(b.getCentreX(), b.getCentreY());
+    CHECK(f.toggled.size() == 1);
+}
+
 TEST_CASE("FxStrip: markers show the switch state")
 {
     StripFixture f;

@@ -32,6 +32,14 @@ void FxStrip::setRegions(const RegionMap& regions)
     repaint();
 }
 
+void FxStrip::setLive(bool live)
+{
+    if (live == live_)
+        return;
+    live_ = live;
+    repaint();
+}
+
 void FxStrip::setSwitches(const std::vector<std::uint8_t>& masks)
 {
     if (masks == switches_)
@@ -61,7 +69,7 @@ bool FxStrip::markerOn(int region, FxInsert insert) const
 
 float FxStrip::markerWidth(int region) const
 {
-    if (region < 0 || region >= regions_.regionCount())
+    if (region < 0 || region >= count())
         return 0.0f;
     const auto [lo, hi] = regions_.bounds(region);
     const float w = xFor(hi) - xFor(lo);
@@ -70,12 +78,12 @@ float FxStrip::markerWidth(int region) const
 
 bool FxStrip::isCollective(int region) const
 {
-    return region >= 0 && region < regions_.regionCount() && markerWidth(region) < kMinMarker;
+    return region >= 0 && region < count() && markerWidth(region) < kMinMarker;
 }
 
 juce::Rectangle<float> FxStrip::markerBounds(int region, FxInsert insert) const
 {
-    if (region < 0 || region >= regions_.regionCount() || isCollective(region))
+    if (region < 0 || region >= count() || isCollective(region))
         return {};
     const float mw = markerWidth(region);
     const float x0 = xFor(regions_.bounds(region).first) + kInset;
@@ -108,7 +116,7 @@ bool FxStrip::markerAt(float x, float y, int& region, FxInsert& insert) const
 {
     if (y < 0.0f || y >= static_cast<float>(getHeight()))
         return false;
-    for (int r = 0; r < regions_.regionCount(); ++r)
+    for (int r = 0; r < count(); ++r)
     {
         if (isCollective(r))
             continue;
@@ -140,14 +148,14 @@ void FxStrip::paint(juce::Graphics& g)
     g.setColour(panel::kWave);
     g.fillRect(bounds);
 
-    if (selected_ >= 0 && selected_ < regions_.regionCount())
+    if (selected_ >= 0 && selected_ < count())
     {
         const auto [lo, hi] = regions_.bounds(selected_);
         g.setColour(panel::kAccent.withAlpha(0.14f));
         g.fillRect(juce::Rectangle<float>(xFor(lo), 0.0f, xFor(hi) - xFor(lo), bounds.getHeight()));
     }
 
-    for (int r = 0; r < regions_.regionCount(); ++r)
+    for (int r = 0; r < count(); ++r)
     {
         if (isCollective(r))
         {

@@ -24,6 +24,9 @@ public:
     void setRegions(const RegionMap& regions);
     void setSwitches(const std::vector<std::uint8_t>& masks);
     void setSelectedRegion(int region);
+    // Not live (no Loop-2 data): no markers, no selection, clicks report nothing.
+    void setLive(bool live);
+    bool isLive() const { return live_; }
 
     std::function<void(int region, FxInsert insert)> onToggled;
 
@@ -52,8 +55,10 @@ private:
     float xFor(double phase) const { return static_cast<float>(phase * getWidth()); }
     float markerWidth(int region) const;
     std::uint8_t maskOf(int region) const;
+    int count() const { return live_ ? regions_.regionCount() : 0; } // regions with markers
 
     RegionMap regions_;
+    bool live_ = true;
     std::vector<std::uint8_t> switches_;
     int selected_ = 0;
 

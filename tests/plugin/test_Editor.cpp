@@ -862,6 +862,34 @@ TEST_CASE("Editor: a click on a strip marker toggles that switch in the processo
     CHECK_FALSE(f.editor->fxPanel().switchOn(FxInsert::Flanger));
 }
 
+TEST_CASE("Editor: without Loop-2 data the insert switches are disabled and the strip ignores clicks", "[editor][fx]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, f.wav("a.wav"), 1);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    REQUIRE(f.proc.getSlotStatus(1) == Status::Empty);
+    auto& strip = f.editor->fxStrip();
+    auto& panel = f.editor->fxPanel();
+    for (int i = 0; i < dc::kFxInserts; ++i)
+        CHECK_FALSE(panel.switchEnabled(static_cast<FxInsert>(i)));
+    CHECK(strip.markerBounds(0, FxInsert::Flanger).isEmpty());
+    const float y = 0.5f * static_cast<float>(strip.getHeight());
+    for (float x = 0.5f; x < static_cast<float>(strip.getWidth()); x += 2.0f)
+        strip.toggleAt(x, y);
+    CHECK(f.proc.getPluginState().fx.switches.empty());
+
+    f.proc.replaceLoop(1, f.wav("b.wav"), 1);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    REQUIRE(f.proc.getSlotStatus(1) == Status::Loaded);
+    CHECK(panel.switchEnabled(FxInsert::Flanger));
+    const auto c = strip.markerBounds(0, FxInsert::Flanger).getCentre();
+    REQUIRE(!strip.markerBounds(0, FxInsert::Flanger).isEmpty());
+    strip.toggleAt(c.x, c.y);
+    CHECK(f.proc.getPluginState().fx.switchOn(0, FxInsert::Flanger));
+}
+
 TEST_CASE("Editor: the panel switch toggles the selected Loop-2 region", "[editor][fx]")
 {
     EditorFixture f;

@@ -396,10 +396,14 @@ void Editor::updateFx(const PluginState& st)
 {
     const auto& regions = lanes_[1].regions();
     const int selected = lanes_[1].selectedRegion();
+    // Without Loop-2 data there is nothing to switch (as in updateRules): panel switches disabled,
+    // strip empty.
+    const bool loop2 = proc_.getSlotStatus(1) == DubcyclingProcessor::SlotStatus::Loaded;
     fxStrip_.setRegions(regions);
     fxStrip_.setSwitches(st.fx.switches);
     fxStrip_.setSelectedRegion(selected);
-    fxPanel_.setContext(selected, regions.regionCount(), st.loop2.labels, st.fx);
+    fxStrip_.setLive(loop2);
+    fxPanel_.setContext(selected, loop2 ? regions.regionCount() : 0, st.loop2.labels, st.fx);
 }
 
 void Editor::switchEdited(int region2, FxInsert insert, bool on)
