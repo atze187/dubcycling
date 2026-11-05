@@ -40,6 +40,8 @@ void Bitcrush::process(float* l, float* r, int n)
     };
     for (int i = 0; i < n; ++i)
     {
+        if (!std::isfinite(l[i])) l[i] = 0.0f;
+        if (!std::isfinite(r[i])) r[i] = 0.0f;
         if (counter_ >= hold_) counter_ = 0;
         if (counter_ == 0)
         {

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <random>
 #include <set>
 #include <vector>
@@ -245,5 +246,218 @@ TEST_CASE("Fx units: block sizes 1, 7 and 4096 give the same result", "[FxUnits]
         REQUIRE(std::abs(b1[size_t(i)] - b4096[size_t(i)]) < 1e-6f);
         REQUIRE(std::abs(f1[size_t(i)] - f7[size_t(i)]) < 1e-6f);
         REQUIRE(std::abs(f1[size_t(i)] - f4096[size_t(i)]) < 1e-6f);
+    }
+}
+
+// ---- Fix round 1: right channel, sample rates, smoothing, silence, bad input ----
+
+TEST_CASE("Fx units: the right channel is processed independently of the left", "[FxUnits]")
+{
+    // Filter: L low frequency, R high frequency.
+    for (int type = 0; type < 2; ++type)
+    {
+        Filter f;
+        f.prepare(kSr);
+        f.setParams(filterParams(type, 1000.0, 0.0));
+        auto l = sine(48000, 100.0), r = sine(48000, 10000.0);
+        const double inL = tailRms(l), inR = tailRms(r);
+        processBlocks(f, l, r, 256);
+        const double gL = dbOf(tailRms(l) / inL), gR = dbOf(tailRms(r) / inR);
+        if (type == 0) { CHECK(std::abs(gL) < 1.0); CHECK(gR < -20.0); }
+        else           { CHECK(gL < -20.0);         CHECK(std::abs(gR) < 1.0); }
+    }
+
+    // Bitcrush: R is crushed on its own (rate 8 hold, 1 bit) and differs from L.
+    Bitcrush b;
+    b.prepare(kSr);
+    FxParams p;
+    p.set(FxParam::BitcrushBits, 1.0);
+    p.set(FxParam::BitcrushRate, 8.0);
+    p.set(FxParam::BitcrushMix, 1.0);
+    b.setParams(p);
+    auto l = sine(4800, 440.0, 1.0f), r = noise(4800, 9);
+    const auto r0 = r;
+    processBlocks(b, l, r, 53);
+    std::set<float> values(r.begin(), r.end());
+    CHECK(values.size() == 2);
+    for (size_t i = 0; i < r.size(); ++i)
+    {
+        CHECK(r[i] == r[i - i % 8]);
+        CHECK(r[i] == (r0[i - i % 8] < 0.0f ? -0.5f : 0.5f));
+    }
+    CHECK(l != r);
+}
+
+TEST_CASE("Filter: stays finite and keeps its response at 44.1, 96 and 192 kHz", "[FxUnits]")
+{
+    for (double sr : {44100.0, 96000.0, 192000.0})
+    {
+        auto gainDb = [&](const FxParams& p, double freq) {
+            Filter f;
+            f.prepare(sr);
+            f.setParams(p);
+            auto l = sine(static_cast<int>(sr), freq, 0.8f, sr), r = l;
+            const double inRms = tailRms(l);
+            processBlocks(f, l, r, 256);
+            for (float x : l) REQUIRE(std::isfinite(x));
+            return dbOf(tailRms(l) / inRms);
+        };
+        CHECK(gainDb(filterParams(0, 1000.0, 0.0), 10000.0) < -20.0);
+        CHECK(std::abs(gainDb(filterParams(0, 1000.0, 0.0), 100.0)) < 1.0);
+        // Cutoff 20 kHz is clamped below 0.45 * sr (19.8 kHz at 44.1 kHz): still stable, passes 100 Hz.
+        CHECK(std::abs(gainDb(filterParams(0, 20000.0, 0.5), 100.0)) < 1.0);
+        for (int type = 0; type < 3; ++type)
+        {
+            Filter f;
+            f.prepare(sr);
+            f.setParams(filterParams(type, 20000.0, 1.0));
+            auto l = noise(static_cast<int>(sr), 10), r = noise(static_cast<int>(sr), 11);
+            processBlocks(f, l, r, 512);
+            for (size_t i = 0; i < l.size(); ++i)
+            {
+                REQUIRE(std::isfinite(l[i]));
+                REQUIRE(std::abs(l[i]) < 20.0f);
+            }
+        }
+    }
+}
+
+TEST_CASE("Bitcrush: block sizes agree with a mix change mid-buffer", "[FxUnits]")
+{
+    const int n = 20000;
+    const auto l0 = noise(n, 12), r0 = noise(n, 13);
+    auto run = [&](int block) {
+        Bitcrush u;
+        u.prepare(kSr);
+        FxParams p;
+        p.set(FxParam::BitcrushBits, 4.0);
+        p.set(FxParam::BitcrushRate, 3.0);
+        p.set(FxParam::BitcrushMix, 1.0);
+        u.setParams(p);
+        auto l = l0, r = r0;
+        for (int pos = 0; pos < n; pos += 4096)
+        {
+            if (pos == 8192)
+            {
+                p.set(FxParam::BitcrushMix, 0.2);
+                u.setParams(p);
+            }
+            const int len = std::min(4096, n - pos);
+            for (int q = 0; q < len; q += block)
+                u.process(l.data() + pos + q, r.data() + pos + q, std::min(block, len - q));
+        }
+        return l;
+    };
+    const auto a = run(1), b = run(7), c = run(4096);
+    for (int i = 0; i < n; ++i)
+    {
+        REQUIRE(std::abs(a[size_t(i)] - b[size_t(i)]) < 1e-6f);
+        REQUIRE(std::abs(a[size_t(i)] - c[size_t(i)]) < 1e-6f);
+    }
+}
+
+TEST_CASE("Fx units: the first setParams after prepare or reset jumps without a ramp", "[FxUnits]")
+{
+    // Bitcrush: default mix is 1, so a ramp towards 0 would alter the first samples.
+    Bitcrush b;
+    b.prepare(kSr);
+    FxParams p;
+    p.set(FxParam::BitcrushMix, 0.0);
+    for (int round = 0; round < 2; ++round)
+    {
+        b.setParams(p);
+        auto l = noise(256, 14), r = l;
+        const auto l0 = l;
+        b.process(l.data(), r.data(), 256);
+        CHECK(l == l0);
+        b.setParams(FxParams()); // a later change ramps ...
+        b.reset();               // ... but after reset it jumps again
+    }
+
+    // Filter: default cutoff is 2 kHz; a 20 kHz low pass must pass 10 kHz straight away.
+    Filter f;
+    f.prepare(kSr);
+    for (int round = 0; round < 2; ++round)
+    {
+        f.setParams(filterParams(0, 20000.0, 0.0));
+        auto l = sine(1200, 10000.0), r = l;
+        const auto in = l;
+        f.process(l.data(), r.data(), 1200);
+        std::vector<float> a(in.begin() + 200, in.end()), o(l.begin() + 200, l.end());
+        CHECK(std::abs(dbOf(tailRms(o) / tailRms(a))) < 1.5);
+        f.setParams(FxParams());
+        f.reset();
+    }
+}
+
+TEST_CASE("Filter: output decays after silence at resonance 1", "[FxUnits]")
+{
+    for (int type = 0; type < 3; ++type)
+    {
+        Filter f;
+        f.prepare(kSr);
+        f.setParams(filterParams(type, 1000.0, 1.0));
+        auto l = noise(48000, 15), r = noise(48000, 16);
+        processBlocks(f, l, r, 512);
+        std::vector<float> sl(48000, 0.0f), sr(48000, 0.0f);
+        processBlocks(f, sl, sr, 512);
+        // Within 0.5 s of silence: below -80 dB.
+        for (size_t i = 24000; i < sl.size(); ++i)
+        {
+            REQUIRE(std::abs(sl[i]) < 1e-4f);
+            REQUIRE(std::abs(sr[i]) < 1e-4f);
+        }
+    }
+}
+
+TEST_CASE("Fx units: NaN and infinity in the input give finite output and recover", "[FxUnits]")
+{
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    const int n = 6000;
+    auto bad = sine(n, 440.0), badR = bad;
+    bad[100] = nan; bad[200] = inf; badR[150] = -inf; badR[250] = nan;
+
+    {
+        Filter f;
+        f.prepare(kSr);
+        f.setParams(filterParams(0, 5000.0, 0.5));
+        auto l = bad, r = badR;
+        processBlocks(f, l, r, 128);
+        Filter g;
+        g.prepare(kSr);
+        g.setParams(filterParams(0, 5000.0, 0.5));
+        auto cl = sine(n, 440.0), cr = cl;
+        processBlocks(g, cl, cr, 128);
+        for (int i = 0; i < n; ++i)
+        {
+            REQUIRE(std::isfinite(l[size_t(i)]));
+            REQUIRE(std::isfinite(r[size_t(i)]));
+        }
+        // Recovered: matches the clean run once the disturbance has died out.
+        for (int i = 3000; i < n; ++i)
+        {
+            REQUIRE(std::abs(l[size_t(i)] - cl[size_t(i)]) < 1e-3f);
+            REQUIRE(std::abs(r[size_t(i)] - cr[size_t(i)]) < 1e-3f);
+        }
+    }
+    {
+        Bitcrush b;
+        b.prepare(kSr);
+        FxParams p;
+        p.set(FxParam::BitcrushBits, 16.0);
+        p.set(FxParam::BitcrushRate, 1.0);
+        p.set(FxParam::BitcrushMix, 0.5);
+        b.setParams(p);
+        auto l = bad, r = badR;
+        processBlocks(b, l, r, 128);
+        const auto clean = sine(n, 440.0);
+        for (int i = 0; i < n; ++i)
+        {
+            REQUIRE(std::isfinite(l[size_t(i)]));
+            REQUIRE(std::isfinite(r[size_t(i)]));
+        }
+        for (int i = 300; i < n; ++i)
+            REQUIRE(std::abs(l[size_t(i)] - clean[size_t(i)]) < 1e-3f);
     }
 }

@@ -72,12 +72,16 @@ void Filter::process(float* l, float* r, int n)
         float* ch[2] = {l + i, r + i};
         for (int c = 0; c < 2; ++c)
         {
-            const float v0 = *ch[c];
+            const float in = *ch[c];
+            const float v0 = std::isfinite(in) ? in : 0.0f;
             const float v3 = v0 - ic2_[c];
             const float v1 = a1_ * ic1_[c] + a2_ * v3;
             const float v2 = ic2_[c] + a2_ * ic1_[c] + a3_ * v3;
             ic1_[c] = 2.0f * v1 - ic1_[c];
             ic2_[c] = 2.0f * v2 - ic2_[c];
+            // Flush denormals (resonance decaying after silence).
+            if (std::abs(ic1_[c]) < 1e-20f) ic1_[c] = 0.0f;
+            if (std::abs(ic2_[c]) < 1e-20f) ic2_[c] = 0.0f;
             float out;
             switch (type_)
             {
@@ -85,7 +89,12 @@ void Filter::process(float* l, float* r, int n)
                 case 1: out = v0 - k_ * v1 - v2; break;
                 default: out = k_ * v1; break; // unity gain at the cutoff
             }
-            *ch[c] = std::isfinite(out) ? out : 0.0f;
+            if (!std::isfinite(out))
+            {
+                ic1_[c] = ic2_[c] = 0.0f; // clear a blown-up state
+                out = 0.0f;
+            }
+            *ch[c] = out;
         }
     }
 }
