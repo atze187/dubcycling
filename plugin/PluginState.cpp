@@ -1,6 +1,8 @@
 #include "plugin/PluginState.h"
 #include <algorithm>
+#include <charconv>
 #include <cmath>
+#include <system_error>
 #include <juce_cryptography/juce_cryptography.h>
 #include "engine/RegionMap.h"
 
@@ -65,15 +67,20 @@ LoopRef loopFromTree(const juce::ValueTree& t)
 }
 
 
-// Garbage text -> NaN (sanitizeFxParam turns that into the default).
+// Garbage text -> NaN (sanitizeFxParam turns that into the default, as for NaN/inf). Locale
+// independent: num() always writes '.', whatever decimal point a host set with setlocale.
 double parseFxNumber(const juce::String& text)
 {
     const auto t = text.trim().toStdString();
-    if (t.empty())
+    const char* first = t.data();
+    const char* last = t.data() + t.size();
+    if (first != last && *first == '+')
+        ++first; // strtod accepted it, from_chars does not
+    if (first == last)
         return std::nan("");
-    char* end = nullptr;
-    const double v = std::strtod(t.c_str(), &end);
-    return end == t.c_str() + t.size() ? v : std::nan("");
+    double v = 0.0;
+    const auto [ptr, ec] = std::from_chars(first, last, v);
+    return ec == std::errc {} && ptr == last ? v : std::nan("");
 }
 
 juce::ValueTree fxToTree(const FxSettings& fx)

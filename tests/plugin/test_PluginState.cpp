@@ -1,8 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <clocale>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <locale>
+#include <optional>
+#include <string>
 #include <juce_core/juce_core.h>
 #include "plugin/PluginState.h"
 
@@ -343,6 +348,60 @@ TEST_CASE("State: fx numbers are sanitized", "[PluginState][fx][hardening]")
     CHECK(r->fx.params.get(FxParam::FlangerRate) == 0.3f);
     CHECK(r->fx.maskFor(1) == 15);
     CHECK(r->fx.switches.size() == 2);
+}
+
+namespace {
+struct CommaPoint : std::numpunct<char>
+{
+    char do_decimal_point() const override { return ','; }
+};
+
+// Sets a decimal-comma locale (C locale if one is installed, and the C++ global locale), restores both.
+struct ScopedCommaLocale
+{
+    std::string oldC;
+    std::locale oldCpp;
+    bool cSet = false;
+    ScopedCommaLocale()
+    {
+        if (const char* c = std::setlocale(LC_ALL, nullptr))
+            oldC = c;
+        for (const char* name : { "de-DE", "German_Germany", "de_DE.UTF-8", "de_DE" })
+            if (std::setlocale(LC_ALL, name) != nullptr)
+            {
+                cSet = true;
+                break;
+            }
+        oldCpp = std::locale::global(std::locale(std::locale::classic(), new CommaPoint));
+    }
+    ~ScopedCommaLocale()
+    {
+        std::locale::global(oldCpp);
+        std::setlocale(LC_ALL, oldC.empty() ? "C" : oldC.c_str());
+    }
+};
+} // namespace
+
+TEST_CASE("State: fx numbers survive a round trip under a decimal-comma locale", "[PluginState][fx][locale]")
+{
+    auto s = sample();
+    s.fx.params.set(FxParam::ReverbMix, 0.37);
+    s.fx.params.set(FxParam::FilterCutoff, 1234.5);
+    s.fx.params.set(FxParam::FlangerFeedback, -0.7);
+    // Written with '.', read back while a host has switched to a decimal-comma locale (some hosts
+    // call setlocale; the C++ global locale is switched too, for a stream-based parser).
+    const auto block = serialize(s);
+    REQUIRE(block.toString().contains("0.37"));
+    std::optional<PluginState> r;
+    {
+        ScopedCommaLocale comma;
+        if (comma.cSet)
+            REQUIRE(std::strtod("0,5", nullptr) == 0.5); // the C locale really uses a comma
+        r = deserialize(block.getData(), block.getSize());
+    }
+    REQUIRE(r.has_value());
+    CHECK(r->fx.params == s.fx.params);
+    CHECK(r->fx.params.get(FxParam::ReverbMix) == s.fx.params.get(FxParam::ReverbMix));
 }
 
 TEST_CASE("State: surplus switch entries beyond the Loop-2 region count are dropped", "[PluginState][fx][hardening]")
