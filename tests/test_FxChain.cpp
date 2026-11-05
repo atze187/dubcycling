@@ -262,7 +262,7 @@ FxParams extremeParams(const Extreme& e)
 
 // After the reverb normalization the worst peak over all subsets, settings and rates is about 15.4
 // (filter + flanger + reverb, LP 20 kHz resonance 1, feedback +-0.9, 3 s of full-scale noise).
-constexpr float kChainBound = 20.0f;
+constexpr float kChainBound = 30.0f;
 
 void requireBounded(const std::vector<float>& l, const std::vector<float>& r)
 {

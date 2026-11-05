@@ -35,8 +35,8 @@ void Bitcrush::setParams(const FxParams& p)
 void Bitcrush::process(float* l, float* r, int n)
 {
     auto quantize = [this](float x) {
-        const float idx = std::clamp(std::floor(x * half_), -half_, half_ - 1.0f);
-        return (idx + 0.5f) / half_;
+        // Mid-tread: 0 maps to exactly 0 (no DC offset on silence). 1 bit gives {-1, 0, +1}.
+        return std::clamp(std::round(x * half_), -half_, half_) / half_;
     };
     for (int i = 0; i < n; ++i)
     {

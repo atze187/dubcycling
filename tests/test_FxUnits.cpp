@@ -140,7 +140,8 @@ TEST_CASE("Bitcrush: 1 bit leaves at most 2 distinct values for a sine", "[FxUni
     auto l = sine(4800, 440.0, 1.0f), r = l;
     processBlocks(b, l, r, 512);
     std::set<float> values(l.begin(), l.end());
-    CHECK(values.size() == 2);
+    CHECK(values.size() <= 3); // mid-tread at 1 bit: {-1, 0, +1}
+    CHECK(values.size() >= 2);
 }
 
 TEST_CASE("Bitcrush: bits 16 and rate 1 is nearly transparent", "[FxUnits]")
@@ -353,11 +354,11 @@ TEST_CASE("Fx units: the right channel is processed independently of the left", 
     const auto r0 = r;
     processBlocks(b, l, r, 53);
     std::set<float> values(r.begin(), r.end());
-    CHECK(values.size() == 2);
+    CHECK(values.size() <= 3);
     for (size_t i = 0; i < r.size(); ++i)
     {
         CHECK(r[i] == r[i - i % 8]);
-        CHECK(r[i] == (r0[i - i % 8] < 0.0f ? -0.5f : 0.5f));
+        CHECK(r[i] == std::round(r0[i - i % 8]));
     }
     CHECK(l != r);
 }
@@ -908,5 +909,50 @@ TEST_CASE("Flanger and Reverb: NaN and infinity in the input give finite output 
         auto cl = sine(4800, 440.0), cr = cl;
         processBlocks(v, cl, cr, 128);
         CHECK(energy(cl, 0, cl.size()) > 1e-6);
+    }
+}
+
+TEST_CASE("Bitcrush: silence stays exactly silent for every bits, rate and mix", "[FxUnits]")
+{
+    for (int bits = 1; bits <= 16; ++bits)
+        for (int rate : {1, 2, 3, 8, 64})
+            for (double mix : {0.0, 0.3, 1.0})
+            {
+                Bitcrush b;
+                b.prepare(kSr);
+                FxParams p;
+                p.set(FxParam::BitcrushBits, bits);
+                p.set(FxParam::BitcrushRate, rate);
+                p.set(FxParam::BitcrushMix, mix);
+                b.setParams(p);
+                std::vector<float> l(600, 0.0f), r(600, 0.0f);
+                processBlocks(b, l, r, 77);
+                for (size_t i = 0; i < l.size(); ++i)
+                {
+                    REQUIRE(l[i] == 0.0f);
+                    REQUIRE(r[i] == 0.0f);
+                }
+            }
+}
+
+TEST_CASE("Bitcrush: a small DC input stays bounded", "[FxUnits]")
+{
+    for (int bits : {1, 4, 16})
+    {
+        Bitcrush b;
+        b.prepare(kSr);
+        FxParams p;
+        p.set(FxParam::BitcrushBits, bits);
+        p.set(FxParam::BitcrushRate, 4.0);
+        p.set(FxParam::BitcrushMix, 1.0);
+        b.setParams(p);
+        std::vector<float> l(600, 0.01f), r(600, -0.01f);
+        processBlocks(b, l, r, 100);
+        const float step = 1.0f / std::exp2(float(bits) - 1.0f);
+        for (size_t i = 0; i < l.size(); ++i)
+        {
+            REQUIRE(std::abs(l[i]) <= 0.01f + step);
+            REQUIRE(std::abs(r[i]) <= 0.01f + step);
+        }
     }
 }
