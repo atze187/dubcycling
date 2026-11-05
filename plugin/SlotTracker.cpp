@@ -72,6 +72,8 @@ bool SlotTracker::apply(const LoopLoadResult& r, PluginState& state)
             next.hash = r.hash;
         ref = std::move(next);
         state.rules.clear(); // their region indices no longer mean anything
+        if (r.slot == 1)
+            state.fx.switches.clear(); // per-region switches follow the Loop-2 regions; the knobs stay
         s.status = SlotStatus::Loaded;
         s.data = r.data;
         s.error = {};

@@ -69,6 +69,7 @@ void DubcyclingProcessor::publish() {
         }
         for (const auto& e : state_.rules)
             m->rules.setTargets(e.region1, e.targets);
+        m->fx = state_.fx;
     }
     setModel(std::move(m));
 }
@@ -195,6 +196,7 @@ void DubcyclingProcessor::applyEdit(const PluginState& edited) {
             dst.labels = src.labels;
         }
         state_.rules = clean->rules;
+        state_.fx = clean->fx;
     }
     publish();
 }

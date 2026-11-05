@@ -281,3 +281,85 @@ TEST_CASE("sanitizeName drops control characters, trims and cuts", "[PluginState
     CHECK(sanitizeName(juce::String("  a") + juce::String::charToString(9) + "b  ", 16) == "ab");
     CHECK(sanitizeName("abcdef", 3) == "abc");
 }
+
+namespace {
+std::optional<PluginState> loadXml(const juce::String& xml)
+{
+    const auto utf8 = xml.toRawUTF8();
+    return deserialize(utf8, std::strlen(utf8));
+}
+juce::String fxDoc(const juce::String& fxXml, const juce::String& loop2 = "<Loop2 bars=\"1\"/>")
+{
+    return "<DubcyclingState version=\"1\"><Loop1 bars=\"1\"/>" + loop2 + fxXml + "</DubcyclingState>";
+}
+}
+
+TEST_CASE("State: fx settings survive a round trip", "[PluginState][fx]")
+{
+    auto s = sample();
+    s.loop2.boundaries = { 0.25, 0.5, 0.75 };
+    s.fx.params.set(FxParam::ReverbMix, 0.123456789012345);
+    s.fx.params.set(FxParam::FilterType, 2);
+    s.fx.params.set(FxParam::FilterCutoff, 1234.5);
+    s.fx.params.set(FxParam::FlangerFeedback, -0.7);
+    s.fx.setSwitch(0, FxInsert::Filter, true);
+    s.fx.setSwitch(3, FxInsert::Bitcrush, true);
+    s.fx.setSwitch(3, FxInsert::Reverb, true);
+    const auto block = serialize(s);
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    CHECK(r->fx == s.fx);
+    CHECK(r->fx.maskFor(0) == 2);
+    CHECK(r->fx.maskFor(3) == 9);
+}
+
+TEST_CASE("State: a state without fx loads with defaults and everything off", "[PluginState][fx]")
+{
+    const auto r = loadXml(fxDoc(""));
+    REQUIRE(r.has_value());
+    CHECK(r->fx == FxSettings {});
+    CHECK(r->fx.switches.empty());
+}
+
+TEST_CASE("State: default fx writes no Fx element", "[PluginState][fx]")
+{
+    const auto text = serialize(sample()).toString();
+    CHECK_FALSE(text.contains("Fx"));
+    auto s = sample();
+    s.fx.params.set(FxParam::ReverbMix, 0.9);
+    CHECK(serialize(s).toString().contains("<Fx"));
+}
+
+TEST_CASE("State: fx numbers are sanitized", "[PluginState][fx][hardening]")
+{
+    const auto r = loadXml(fxDoc("<Fx reverb.mix=\"nan\" filter.cutoff=\"1e99\" bitcrush.bits=\"abc\" flanger.rate=\"inf\">"
+                                 "<Switches><Switch region=\"-1\" mask=\"3\"/><Switch region=\"99999\" mask=\"3\"/>"
+                                 "<Switch region=\"1\" mask=\"255\"/></Switches></Fx>",
+                                 "<Loop2 bars=\"1\" boundaries=\"0.5\"/>"));
+    REQUIRE(r.has_value());
+    CHECK(r->fx.params.get(FxParam::ReverbMix) == sanitizeFxParam(FxParam::ReverbMix, fxParamInfo(FxParam::ReverbMix).def));
+    CHECK(r->fx.params.get(FxParam::FilterCutoff) == 20000.0f);
+    CHECK(r->fx.params.get(FxParam::BitcrushBits) == 8.0f);
+    CHECK(r->fx.params.get(FxParam::FlangerRate) == 0.3f);
+    CHECK(r->fx.maskFor(1) == 15);
+    CHECK(r->fx.switches.size() == 2);
+}
+
+TEST_CASE("State: surplus switch entries beyond the Loop-2 region count are dropped", "[PluginState][fx][hardening]")
+{
+    const auto r = loadXml(fxDoc("<Fx><Switches><Switch region=\"2\" mask=\"1\"/><Switch region=\"7\" mask=\"1\"/></Switches></Fx>",
+                                 "<Loop2 bars=\"1\" boundaries=\"0.3,0.6\"/>"));
+    REQUIRE(r.has_value());
+    CHECK(r->loop2.boundaries.size() == 2);
+    CHECK(r->fx.maskFor(2) == 1);
+    CHECK(r->fx.maskFor(7) == 0);
+    CHECK(r->fx.switches.size() == 3);
+}
+
+TEST_CASE("sanitizeFx clamps, masks and trims", "[PluginState][fx]")
+{
+    FxSettings f;
+    f.switches = { 255, 0, 1, 0, 0, 7 };
+    const auto out = sanitizeFx(f, 3);
+    CHECK(out.switches == std::vector<std::uint8_t> { 15, 0, 1 });
+}
