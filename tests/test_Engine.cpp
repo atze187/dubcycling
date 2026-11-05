@@ -1176,6 +1176,8 @@ TEST_CASE("Engine: a host that wraps without splitting the block does not draw t
 // --- Effects (insert chain on Loop 2) -----------------------------------------------------------
 
 namespace {
+constexpr std::uint8_t fxBit(dc::FxInsert i) { return static_cast<std::uint8_t>(1u << static_cast<int>(i)); }
+
 // Deterministic white noise in [-amp, amp].
 float noiseAt(int i, float amp = 0.5f)
 {
@@ -1256,7 +1258,7 @@ float maxDiff(const Out& a, const Out& b, size_t from, size_t to)
     return m;
 }
 
-void setAll(dc::FxSettings& fx, int regionCount, std::uint8_t mask)
+void setAll(dc::FxSettings& fx, int regionCount, int mask)
 {
     for (int k = 0; k < regionCount; ++k)
         for (int i = 0; i < dc::kFxInserts; ++i)
@@ -1334,14 +1336,24 @@ TEST_CASE("Engine fx: loop 1 stays dry", "[Engine][fx]")
     auto m = baseModel();
     m->loop1.data = makeMono(kBar, [](int i) { return noiseAt(i); });
     m->loop1.regions = regions({ 0.5 });
-    m->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i + 7); });
+    // Loop 2 plays a silent buffer as a Gate, so its region's switches really open the inserts while
+    // only Loop 1 is audible. Filter, Flanger and Reverb are linear (silence in, silence out); a Loop 1
+    // routed through the chain would come out low-passed at 100 Hz. (Bitcrush is left out: it turns
+    // a silent bus into a DC offset of half a step.)
+    m->loop2.data = makeMono(kBar, [](int) { return 0.0f; });
     m->loop2.regions = regions({ 0.5 });
-    // No rules: Loop 2 is silent.
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    m->rules.setTargets(1, { { 0, 1.0f, dc::PlayMode::Gate } });
     auto wet = std::make_shared<dc::Model>(*m);
-    setAll(wet->fx, 2, 0x0f);
+    setAll(wet->fx, 2, fxBit(dc::FxInsert::Filter) | fxBit(dc::FxInsert::Flanger) | fxBit(dc::FxInsert::Reverb));
     wet->fx.params.set(dc::FxParam::FilterCutoff, 100.0);
+    wet->fx.params.set(dc::FxParam::ReverbMix, 1.0);
     const Out a = runEngine(m, kBar);
-    const Out b = runEngine(wet, kBar);
+    dc::Engine e;
+    prepared(e);
+    e.setModel(wet);
+    const Out b = run(e, 0.0, kBar);
+    CHECK(e.fxActive()); // the inserts are switched on
     CHECK(peakOf(a.l, 0, kBar) > 0.1f);
     CHECK(maxDiff(a, b, 0, kBar) == 0.0f);
 }
@@ -1428,11 +1440,73 @@ TEST_CASE("Engine fx: audition of a Loop-2 region uses its switches, also while 
     const Out b = audition(wet, 1, 1);
     REQUIRE(hfEnergy(a.l, 2400, 22000) > 0.0);
     CHECK(10.0 * std::log10(hfEnergy(b.l, 2400, 22000) / hfEnergy(a.l, 2400, 22000)) <= -20.0);
-    // Loop-1 audition: dry, whatever the Loop-2 switches say.
-    const Out c = audition(dry, 0, 1);
-    const Out d = audition(all, 0, 1);
+    // Loop-1 audition: dry, also while the inserts are open. A silent Loop-2 Gate voice opens them
+    // (linear inserts only, see "loop 1 stays dry"); audible are Loop-1 playback and the Loop-1
+    // audition, both of which must stay dry.
+    auto open = previewModel();
+    open->loop1.data = makeMono(kBar, [](int i) { return noiseAt(i + 3); });
+    open->loop2.data = makeMono(kBar, [](int) { return 0.0f; });
+    open->loop2.regions = dc::RegionMap {};
+    open->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    open->rules.setTargets(1, { { 0, 1.0f, dc::PlayMode::Gate } });
+    auto openWet = std::make_shared<dc::Model>(*open);
+    setAll(openWet->fx, 1, fxBit(dc::FxInsert::Filter) | fxBit(dc::FxInsert::Flanger) | fxBit(dc::FxInsert::Reverb));
+    openWet->fx.params.set(dc::FxParam::FilterCutoff, 100.0);
+    openWet->fx.params.set(dc::FxParam::ReverbMix, 1.0);
+    const auto auditionWhilePlaying = [](std::shared_ptr<const dc::Model> m, bool& active) {
+        dc::Engine e;
+        prepared(e);
+        e.setModel(std::move(m));
+        run(e, 0.0, 4800); // the Loop-2 voice started, its switches are open
+        e.requestPreview(0, 1);
+        Out o = run(e, 4800 * kStep, 24000);
+        active = e.fxActive();
+        return o;
+    };
+    bool activeDry = false, activeWet = false;
+    const Out c = auditionWhilePlaying(open, activeDry);
+    const Out d = auditionWhilePlaying(openWet, activeWet);
+    CHECK(!activeDry);
+    CHECK(activeWet);
     CHECK(peakOf(c.l, 0, 24000) > 0.1f);
-    CHECK(maxDiff(c, d, 0, 24000) <= 1e-5f);
+    CHECK(maxDiff(c, d, 0, 24000) == 0.0f);
+}
+
+TEST_CASE("Engine fx: a transport jump while the reverb rings does not flush it", "[Engine][fx]")
+{
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.5 });
+    m->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i); });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } }); // region 1 has no rule
+    m->fx.setSwitch(0, dc::FxInsert::Reverb, true);
+    m->fx.params.set(dc::FxParam::ReverbMix, 1.0);
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    run(e, 0.0, 24000);
+    const Out o = run(e, 3.0, 24000); // jump into region 1: Loop 2 ends, the tail rings on
+    CHECK(peakOf(o.l, 2880, 4800) > 1e-4f); // later than a 50 ms flush fade would allow
+    CHECK(peakOf(o.l, 9600, 14400) > 1e-5f);
+    CHECK(e.fxActive());
+}
+
+TEST_CASE("Engine fx: a same-data model edit while stopped keeps the ringing tail", "[Engine][fx][swap]")
+{
+    auto m = noiseModel();
+    m->fx.setSwitch(0, dc::FxInsert::Reverb, true);
+    m->fx.params.set(dc::FxParam::ReverbMix, 1.0);
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    run(e, 0.0, 48000);
+    runStopped(e, 512); // stopped: the voice is gone, the reverb rings
+    auto edited = std::make_shared<dc::Model>(*m); // same data and bars, edited rules and a switch
+    edited->rules.setTargets(0, { { 0, 0.5f, dc::PlayMode::OneShot } });
+    edited->fx.setSwitch(0, dc::FxInsert::Filter, true);
+    e.setModel(edited);
+    const Out o = runStopped(e, 9600);
+    CHECK(peakOf(o.l, 2880, 4800) > 1e-4f); // not flushed
+    CHECK(e.fxActive());
 }
 
 TEST_CASE("Engine fx: toggling the sounding region's switch in a seamless swap takes effect without a click", "[Engine][fx][swap]")
