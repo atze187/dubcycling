@@ -63,10 +63,27 @@ void Engine::setTargetMask(std::uint8_t mask)
 
 void Engine::refreshMask(const Model& m)
 {
+    // The switches of the sounding region are re-read only if its index still names the same
+    // stretch of Loop 2 (same bounds). After a boundary edit before it the indices (and the
+    // remapped switch masks) shift while the voice keeps its old index: then it keeps its mask.
+    const auto sameRegion = [&m](const Voice& v) {
+        const double len = static_cast<double>(framesOf(m.loop2.data.get()));
+        if (!(len > 0.0) || v.region2 < 0 || v.region2 >= m.loop2.regions.regionCount())
+            return false;
+        const auto [lo01, hi01] = m.loop2.regions.bounds(v.region2);
+        constexpr double kTolFrames = 0.5;
+        return std::abs(lo01 * len - v.lo) <= kTolFrames && std::abs(hi01 * len - v.hi) <= kTolFrames;
+    };
     if (maskOwner_ == MaskOwner::Voice && voice_.state == Voice::State::Playing)
-        setTargetMask(m.fx.maskFor(voice_.region2));
+    {
+        if (sameRegion(voice_))
+            setTargetMask(m.fx.maskFor(voice_.region2));
+    }
     else if (maskOwner_ == MaskOwner::Preview && preview_.slot == 1 && preview_.voice.state != Voice::State::Idle)
-        setTargetMask(m.fx.maskFor(preview_.voice.region2));
+    {
+        if (sameRegion(preview_.voice))
+            setTargetMask(m.fx.maskFor(preview_.voice.region2));
+    }
 }
 
 void Engine::releasePreviewMask()

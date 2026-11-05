@@ -68,6 +68,9 @@ void Flanger::process(float* l, float* r, int n)
         approach(mix_, mixTarget_, smoothCoeff_);
         phase_ += rate_ / sampleRate_;
         if (phase_ >= 1.0) phase_ -= 1.0;
+        // Level compensation for the feedback resonance: (1 - |fb|)^0.5, from the smoothed feedback
+        // so a feedback change does not zipper. Mix 0 still gives exact silence.
+        const float out = mix_ * std::sqrt(1.0f - std::abs(fb_));
 
         float peak = 0.0f;
         for (int c = 0; c < 2; ++c)
@@ -90,7 +93,7 @@ void Flanger::process(float* l, float* r, int n)
             b[static_cast<size_t>(write_)] = fed;
 
             peak = std::max(peak, std::abs(delayed));
-            ch[c][i] = delayed * mix_;
+            ch[c][i] = delayed * out;
         }
         tail_ = std::max(peak, tail_ * tailRelease_);
         if (tail_ < kTailFloor) tail_ = 0.0f;

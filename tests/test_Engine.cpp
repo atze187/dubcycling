@@ -1531,6 +1531,30 @@ TEST_CASE("Engine fx: toggling the sounding region's switch in a seamless swap t
     CHECK(peakOf(o.l, kSwapAt + 12000, kSwapAt + 24000) < 0.35f);
 }
 
+TEST_CASE("Engine fx: a boundary inserted before the sounding region keeps its switches", "[Engine][fx][swap]")
+{
+    // Loop 2: regions 0 [0, .25), 1 [.25, .5), 2 [.5, 1); the voice plays region 2 with the filter.
+    auto m = baseModel();
+    m->loop2.data = makeMono(kBar, [](int i) { return sineAt(i, 220.0, 0.5f); });
+    m->loop2.regions = regions({ 0.25, 0.5 });
+    m->rules.setTargets(0, { { 2, 1.0f, dc::PlayMode::Gate } });
+    m->fx.params.set(dc::FxParam::FilterCutoff, 60.0);
+    m->fx.params.set(dc::FxParam::FilterResonance, 0.0);
+    m->fx.switches = { fxBit(dc::FxInsert::Reverb), 0, fxBit(dc::FxInsert::Filter) };
+    // The editor splits region 0: the masks shift with their regions, index 2 is now [.25, .5).
+    auto split = std::make_shared<dc::Model>(*m);
+    split->loop2.regions = regions({ 0.1, 0.25, 0.5 });
+    split->fx.switches = { fxBit(dc::FxInsert::Reverb), fxBit(dc::FxInsert::Reverb), 0, fxBit(dc::FxInsert::Filter) };
+
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    const Out o = runSwap(e, kSwapAt + 24000, kSwapAt, split);
+    REQUIRE(e.playhead().region2 == 2); // the voice keeps its index and its bounds
+    CHECK(peakOf(o.l, kSwapAt - 4800, kSwapAt) < 0.35f);              // filtered before the edit
+    CHECK(peakOf(o.l, kSwapAt + 12000, kSwapAt + 24000) < 0.35f);     // and still filtered after it
+}
+
 TEST_CASE("Engine fx: a hard model restart flushes the tail", "[Engine][fx][swap]")
 {
     auto m = noiseModel();
@@ -1547,6 +1571,30 @@ TEST_CASE("Engine fx: a hard model restart flushes the tail", "[Engine][fx][swap
     CHECK(allZero(o.l, kSwapAt + 2880, o.l.size()));    // 60 ms later: nothing left
     CHECK(allZero(o.r, kSwapAt + 2880, o.r.size()));
     CHECK(!e.fxActive());
+}
+
+TEST_CASE("Engine fx: a preset load while only the filter is open leaves no flush behind for the next effected region", "[Engine][fx][swap][flush]")
+{
+    auto m = noiseModel();
+    m->fx.setSwitch(0, dc::FxInsert::Filter, true);
+    m->fx.params.set(dc::FxParam::FilterCutoff, 200.0);
+    // The "preset": other Loop-2 data; its first effected region starts at frame 48000.
+    auto other = baseModel();
+    other->loop1.regions = regions({ 0.5 });
+    other->loop2.data = makeMono(kBar, [](int i) { return noiseAt(i + 7); });
+    other->rules.setTargets(1, { { 0, 1.0f, dc::PlayMode::Gate } });
+    // Bitcrush (no smoothed parameter here): a freshly prepared engine is an exact reference.
+    other->fx.setSwitch(0, dc::FxInsert::Bitcrush, true);
+    other->fx.params.set(dc::FxParam::BitcrushBits, 2.0);
+    other->fx.params.set(dc::FxParam::BitcrushRate, 8.0);
+
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    const Out o = runSwap(e, kBar, kSwapAt, other);
+    const Out fresh = runEngine(other, kBar);
+    REQUIRE(peakOf(fresh.l, 48000, kBar) > 0.01f);
+    CHECK(maxDiff(o, fresh, 48000, kBar) <= 1e-5f);
 }
 
 TEST_CASE("Engine fx: process with more frames than prepared, and with single frames, works and stays finite", "[Engine][fx]")

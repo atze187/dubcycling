@@ -68,6 +68,7 @@ bool FxChain::isActive(FxInsert i) const
 
 bool FxChain::anyActive() const
 {
+    if (flushing_) return true; // a pending flush must still run to its end (or be cancelled)
     for (int i = 0; i < kFxInserts; ++i)
         if (isActive(static_cast<FxInsert>(i))) return true;
     return false;
@@ -174,6 +175,13 @@ void FxChain::processChunk(float* l, float* r, int n)
             sleep(k);
             gate_[k] = 0.0f;
         }
+        flushing_ = false;
+        fade_ = 1.0f;
+    }
+    else if (flushing_ && std::none_of(awake_, awake_ + kFxInserts, [](bool a) { return a; }))
+    {
+        // Every insert fell asleep before the fade ended (its state is already cleared): nothing is
+        // left to fade, so the flush is over. A leftover fade would dim the next opened insert.
         flushing_ = false;
         fade_ = 1.0f;
     }

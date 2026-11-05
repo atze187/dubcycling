@@ -780,6 +780,75 @@ TEST_CASE("Flanger: at mix 1 and feedback +-0.9 white noise gains at most 6 dB R
             }
 }
 
+namespace fxtest {
+// Drum-like test signal: a decaying noise burst (25 ms time constant) every 250 ms, peak about amp.
+inline std::vector<float> hits(int n, unsigned seed, float amp = 0.5f, double sr = kSr)
+{
+    auto v = noise(n, seed, amp);
+    const int period = static_cast<int>(0.25 * sr);
+    for (int i = 0; i < n; ++i)
+        v[static_cast<size_t>(i)] *= std::exp(-static_cast<float>(i % period) / static_cast<float>(0.025 * sr));
+    return v;
+}
+
+inline double rmsOf(const std::vector<float>& v, size_t from)
+{
+    double s = 0;
+    for (size_t i = from; i < v.size(); ++i) s += double(v[i]) * v[i];
+    return std::sqrt(s / double(v.size() - from));
+}
+} // namespace fxtest
+
+TEST_CASE("Filter: resonance 1 lifts a sine at the cutoff by at most 12 dB", "[FxUnits]")
+{
+    for (int type : {0, 1, 2})
+    {
+        INFO("type " << type);
+        Filter f;
+        f.prepare(kSr);
+        f.setParams(filterParams(type, 1000.0, 1.0));
+        auto l = sine(48000, 1000.0, 0.5f), r = l;
+        processBlocks(f, l, r, 256);
+        CHECK(peakAbs(l, 24000, l.size()) <= 2.0 * 1.02);
+        if (type != 2) // the band pass is normalized to unity at its cutoff
+            CHECK(peakAbs(l, 24000, l.size()) > 1.0); // still a clear resonance peak
+    }
+}
+
+TEST_CASE("Flanger: at feedback +-0.9 and mix 1 drum-like material gains at most 2 dB RMS", "[FxUnits]")
+{
+    for (double fb : {-0.9, 0.9})
+        for (double depth : {0.0, 0.5, 1.0})
+        {
+            INFO("fb " << fb << " depth " << depth);
+            Flanger f;
+            f.prepare(kSr);
+            f.setParams(flangerParams(0.5, depth, fb, 1.0));
+            auto l = hits(6 * 48000, 51), r = hits(6 * 48000, 52);
+            const double inRms = rmsOf(l, 48000);
+            processBlocks(f, l, r, 512);
+            CHECK(dbOf(rmsOf(l, 48000) / inRms) < 2.0);
+            CHECK(dbOf(rmsOf(r, 48000) / inRms) < 2.0);
+        }
+}
+
+TEST_CASE("Flanger: a feedback change does not click", "[FxUnits]")
+{
+    Flanger f;
+    f.prepare(kSr);
+    f.setParams(flangerParams(0.5, 0.0, 0.0, 1.0));
+    auto l = sine(48000, 200.0, 0.5f), r = l;
+    const int half = 24000;
+    for (int pos = 0; pos < 48000; pos += 128)
+    {
+        if (pos == half) f.setParams(flangerParams(0.5, 0.0, 0.9, 1.0));
+        f.process(l.data() + pos, r.data() + pos, 128);
+    }
+    double step = 0;
+    for (size_t i = 1; i < l.size(); ++i) step = std::max(step, double(std::abs(l[i] - l[i - 1])));
+    CHECK(step < 0.05); // the 200 Hz sine itself moves by up to 0.013 per sample
+}
+
 TEST_CASE("Reverb: the two channels are decorrelated for a mono input", "[FxUnits]")
 {
     std::vector<float> r;

@@ -218,6 +218,64 @@ TEST_CASE("FxChain: flush silences all effect output within 60 ms and leaves the
     }
 }
 
+TEST_CASE("FxChain: a flush with only Bitcrush/Filter open completes even when the chain goes idle", "[FxChain]")
+{
+    // Like Engine::runChain: the chain is only processed while it reports activity (mask 0 here).
+    const auto runWhileActive = [](FxChain& c, int frames) {
+        std::vector<float> l(64, 0.0f), r = l;
+        for (int pos = 0; pos < frames; pos += 64)
+            if (c.anyActive())
+            {
+                std::fill(l.begin(), l.end(), 0.0f);
+                std::fill(r.begin(), r.end(), 0.0f);
+                c.process(l.data(), r.data(), 64);
+            }
+    };
+    for (FxInsert ins : {FxInsert::Filter, FxInsert::Bitcrush})
+    {
+        INFO("insert " << static_cast<int>(ins));
+        FxParams p;
+        p.set(FxParam::FilterCutoff, 200.0);
+        p.set(FxParam::BitcrushBits, 2.0);
+        p.set(FxParam::BitcrushRate, 8.0);
+        FxChain c;
+        c.prepare(kSr, 64);
+        c.setParams(p);
+        c.setMask(bit(ins));
+        auto l = noise(9600, 3, 0.5f), r = noise(9600, 4, 0.5f);
+        run(c, l, r, 0, l.size(), 64);
+        c.flush();      // e.g. a preset load ...
+        c.setMask(0);   // ... whose first regions have no switches
+        runWhileActive(c, 48000);
+        CHECK_FALSE(c.anyActive());
+
+        // Much later the insert opens again: it sounds like a fresh chain from the first block on.
+        // (The reference has opened and closed the insert once, so its units jumped to p on sleep
+        // instead of smoothing towards it from the defaults as after prepare.)
+        FxChain fresh;
+        fresh.prepare(kSr, 64);
+        fresh.setParams(p);
+        fresh.setMask(bit(ins));
+        {
+            auto wl = noise(960, 7, 0.5f), wr = wl;
+            run(fresh, wl, wr, 0, wl.size(), 64);
+            fresh.setMask(0);
+            std::vector<float> sl(960, 0.0f), sr = sl;
+            run(fresh, sl, sr, 0, sl.size(), 64);
+            REQUIRE_FALSE(fresh.anyActive());
+        }
+        fresh.setMask(bit(ins));
+        c.setMask(bit(ins));
+        auto a = noise(9600, 5, 0.5f), ar = noise(9600, 6, 0.5f);
+        auto b = a, br = ar;
+        run(c, a, ar, 0, a.size(), 64);
+        run(fresh, b, br, 0, b.size(), 64);
+        double dev = 0;
+        for (size_t i = 0; i < a.size(); ++i) dev = std::max(dev, double(std::abs(a[i] - b[i])));
+        CHECK(dev < 1e-6);
+    }
+}
+
 TEST_CASE("FxChain: parameter changes do not click", "[FxChain]")
 {
     FxChain c;
@@ -260,9 +318,10 @@ FxParams extremeParams(const Extreme& e)
     return p;
 }
 
-// After the reverb normalization the worst peak over all subsets, settings and rates is about 15.4
-// (filter + flanger + reverb, LP 20 kHz resonance 1, feedback +-0.9, 3 s of full-scale noise).
-constexpr float kChainBound = 30.0f;
+// With filter Q at most 4 and the flanger's feedback compensation the worst peak over all subsets,
+// settings and rates is about 6.5 (filter + flanger + reverb, LP 20 kHz resonance 1, feedback 0.9,
+// 96 kHz, 3 s of full-scale noise; before the level tame it was about 17.4 with all four inserts).
+constexpr float kChainBound = 12.0f;
 
 void requireBounded(const std::vector<float>& l, const std::vector<float>& r)
 {

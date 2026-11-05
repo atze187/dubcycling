@@ -7,7 +7,7 @@ namespace dc::fx {
 namespace {
 constexpr float kPi = 3.14159265358979f;
 constexpr float kQMin = 0.7071f; // resonance 0
-constexpr float kQMax = 8.0f;    // resonance 1: strong peak, no endless self-oscillation
+constexpr float kQMax = 4.0f;    // resonance 1: clear peak (at most +12 dB), no self-oscillation
 }
 
 void Filter::prepare(double sampleRate)
