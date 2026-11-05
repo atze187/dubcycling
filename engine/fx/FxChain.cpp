@@ -7,7 +7,8 @@ namespace {
 constexpr float kGateSeconds = 0.005f;
 constexpr float kFlushSeconds = 0.050f;
 // Tail level (pre-Mix, pre wet scale) below which a closed Flanger/Reverb is put to sleep:
-// -100 dB. The reverb's output at that point is at most 3e-5 (-90 dB) before the reset.
+// -100 dB. With the reverb's wet gain (at most about 2.8) the output at that point is below 3e-5
+// (-90 dB) before the reset.
 constexpr float kSleepThreshold = 1e-5f;
 
 constexpr int idx(FxInsert i) { return static_cast<int>(i); }

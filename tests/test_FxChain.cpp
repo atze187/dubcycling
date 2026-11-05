@@ -236,44 +236,140 @@ TEST_CASE("FxChain: parameter changes do not click", "[FxChain]")
     CHECK(maxStep(r, 0, r.size()) < 0.1);
 }
 
-TEST_CASE("FxChain: all four inserts on with extreme parameters stay finite and under 50 for 10 s of noise at 44.1, 96 and 192 kHz, blocks of 1 and 4096", "[FxChain]")
+namespace chaintest {
+
+// Extreme settings: bitcrush 1 bit / rate 64 / mix 1, filter resonance 1, flanger depth 1 rate 5
+// mix 1, reverb mix 1 size 1 damping 0; filter type/cutoff and flanger feedback vary.
+struct Extreme { int filterType; double cutoff; double fb; };
+constexpr Extreme kExtremes[] = {{0, 20.0, 0.9},     {0, 20.0, -0.9},   {0, 20000.0, 0.9}, {0, 20000.0, -0.9},
+                                 {2, 1000.0, 0.9},   {2, 1000.0, -0.9}, {1, 20000.0, 0.9}, {1, 20000.0, -0.9}};
+
+FxParams extremeParams(const Extreme& e)
 {
-    // The units' gains multiply along the chain: each unit alone stays under 20 for full-scale
-    // noise, but reverb (size 1, mix 1, wet x3) after the flanger (feedback +-0.9: up to 10x at
-    // its comb peaks) after a resonant filter peaks at about 32 here. 50 bounds that with margin;
-    // the point of the test is stability (finite, bounded), not a level limit.
-    constexpr float kChainBound = 50.0f;
-    struct Extreme { int filterType; double cutoff; double fb; };
-    const Extreme sets[] = {{0, 20.0, 0.9}, {0, 20000.0, -0.9}, {2, 1000.0, 0.9}, {1, 20000.0, -0.9}};
+    FxParams p = reverbParams(1.0, 1.0, 0.0);
+    p.set(FxParam::BitcrushBits, 1.0);
+    p.set(FxParam::BitcrushRate, 64.0);
+    p.set(FxParam::BitcrushMix, 1.0);
+    p.set(FxParam::FilterType, e.filterType);
+    p.set(FxParam::FilterCutoff, e.cutoff);
+    p.set(FxParam::FilterResonance, 1.0);
+    p.set(FxParam::FlangerRate, 5.0);
+    p.set(FxParam::FlangerDepth, 1.0);
+    p.set(FxParam::FlangerFeedback, e.fb);
+    p.set(FxParam::FlangerMix, 1.0);
+    return p;
+}
+
+// After the reverb normalization the worst peak over all subsets, settings and rates is about 15.4
+// (filter + flanger + reverb, LP 20 kHz resonance 1, feedback +-0.9, 3 s of full-scale noise).
+constexpr float kChainBound = 20.0f;
+
+void requireBounded(const std::vector<float>& l, const std::vector<float>& r)
+{
+    for (size_t i = 0; i < l.size(); ++i)
+    {
+        REQUIRE(std::isfinite(l[i]));
+        REQUIRE(std::isfinite(r[i]));
+        REQUIRE(std::abs(l[i]) < kChainBound);
+        REQUIRE(std::abs(r[i]) < kChainBound);
+    }
+}
+
+} // namespace chaintest
+
+TEST_CASE("FxChain: all four inserts on with extreme parameters stay finite and bounded for 10 s of noise at 44.1, 96 and 192 kHz, blocks of 1 and 4096, then die out", "[FxChain]")
+{
     for (double sr : {44100.0, 96000.0, 192000.0})
         for (int block : {1, 4096})
-            for (const auto& e : sets)
+            for (const auto& e : kExtremes)
             {
+                INFO("sr " << sr << " block " << block << " type " << e.filterType << " cutoff " << e.cutoff << " fb " << e.fb);
                 FxChain c;
                 c.prepare(sr, 4096);
-                FxParams p = reverbParams(1.0, 1.0, 0.0);
-                p.set(FxParam::BitcrushBits, 1.0);
-                p.set(FxParam::BitcrushRate, 64.0);
-                p.set(FxParam::BitcrushMix, 1.0);
-                p.set(FxParam::FilterType, e.filterType);
-                p.set(FxParam::FilterCutoff, e.cutoff);
-                p.set(FxParam::FilterResonance, 1.0);
-                p.set(FxParam::FlangerRate, 5.0);
-                p.set(FxParam::FlangerDepth, 1.0);
-                p.set(FxParam::FlangerFeedback, e.fb);
-                p.set(FxParam::FlangerMix, 1.0);
-                c.setParams(p);
+                c.setParams(extremeParams(e));
                 c.setMask(0x0F);
                 const int n = static_cast<int>(10 * sr);
                 auto l = noise(n, 10), r = noise(n, 11);
+                const auto l0 = l;
                 run(c, l, r, 0, l.size(), block);
+                requireBounded(l, r);
+                // The effects really act: the output differs clearly from the input.
+                double diff = 0, in = 0;
                 for (size_t i = 0; i < l.size(); ++i)
                 {
-                    REQUIRE(std::isfinite(l[i]));
-                    REQUIRE(std::isfinite(r[i]));
-                    REQUIRE(std::abs(l[i]) < kChainBound);
-                    REQUIRE(std::abs(r[i]) < kChainBound);
+                    diff += double(l[i] - l0[i]) * (l[i] - l0[i]);
+                    in += double(l0[i]) * l0[i];
                 }
-                CHECK(c.anyActive());
+                CHECK(diff > 0.1 * in);
+
+                // Then 2 s of silence with everything off: the tails decay ...
+                c.setMask(0);
+                const size_t s = static_cast<size_t>(sr);
+                std::vector<float> sl(2 * s, 0.0f), srr = sl;
+                run(c, sl, srr, 0, sl.size(), block);
+                requireBounded(sl, srr);
+                CHECK(peakAbs(sl, sl.size() - s / 10, sl.size()) < 0.5 * peakAbs(sl, 0, s / 10));
+                // ... and eventually stop: nothing active, exact silence.
+                std::vector<float> ql(s, 0.0f), qr = ql;
+                for (int sec = 2; sec < 60 && c.anyActive(); ++sec)
+                {
+                    std::fill(ql.begin(), ql.end(), 0.0f);
+                    std::fill(qr.begin(), qr.end(), 0.0f);
+                    run(c, ql, qr, 0, ql.size(), 4096);
+                }
+                CHECK_FALSE(c.anyActive());
+                std::fill(ql.begin(), ql.end(), 0.0f);
+                std::fill(qr.begin(), qr.end(), 0.0f);
+                run(c, ql, qr, 0, ql.size(), block);
+                CHECK(peakAbs(ql, 0, ql.size()) == 0.0);
+                CHECK(peakAbs(qr, 0, qr.size()) == 0.0);
             }
+}
+
+TEST_CASE("FxChain: every subset of inserts with extreme parameters stays finite and bounded", "[FxChain]")
+{
+    for (double sr : {44100.0, 96000.0, 192000.0})
+        for (int mask = 1; mask < 16; ++mask)
+            for (const auto& e : kExtremes)
+            {
+                INFO("sr " << sr << " mask " << mask << " type " << e.filterType << " cutoff " << e.cutoff << " fb " << e.fb);
+                FxChain c;
+                c.prepare(sr, 512);
+                c.setParams(extremeParams(e));
+                c.setMask(static_cast<std::uint8_t>(mask));
+                const int n = static_cast<int>(3 * sr);
+                auto l = noise(n, 12), r = noise(n, 13);
+                run(c, l, r, 0, l.size(), 512);
+                requireBounded(l, r);
+            }
+}
+
+TEST_CASE("FxChain: sleeping reverb and flanger wake up without a click while a sine runs", "[FxChain]")
+{
+    FxChain c;
+    c.prepare(kSr, 256);
+    c.setParams(reverbParams(1.0, 1.0, 0.0)); // flanger at its defaults
+    const std::uint8_t both = bit(FxInsert::Flanger) | bit(FxInsert::Reverb);
+    c.setMask(both);
+    auto l = noise(24000, 14, 0.5f), r = noise(24000, 15, 0.5f);
+    run(c, l, r, 0, l.size(), 256);
+    c.setMask(0);
+    std::vector<float> sl(40 * 48000, 0.0f), sr = sl;
+    run(c, sl, sr, 0, sl.size(), 256);
+    REQUIRE_FALSE(c.isActive(FxInsert::Flanger));
+    REQUIRE_FALSE(c.isActive(FxInsert::Reverb));
+
+    auto tl = sine(48000, 220.0, 0.5f), tr = tl;
+    run(c, tl, tr, 0, 4811, 256);
+    c.setMask(both);
+    run(c, tl, tr, 4811, tl.size(), 256);
+    CHECK(c.isActive(FxInsert::Reverb));
+    // Dry sine slope is 0.0144; with flanger and reverb running the signal's own steps reach about
+    // 0.03. Around the switch (10 ms) the steps stay within that: no click from the woken state.
+    CHECK(maxStep(tl, 0, 4811) < 0.015);
+    CHECK(maxStep(tl, 4700, 4811 + 480) < 0.04);
+    CHECK(maxStep(tr, 4700, 4811 + 480) < 0.04);
+    CHECK(maxStep(tl, 0, tl.size()) < 0.05);
+    CHECK(maxStep(tr, 0, tr.size()) < 0.05);
+    CHECK(peakAbs(tl, 24000, tl.size()) > 0.6); // the effects are audible on top of the dry 0.5
 }

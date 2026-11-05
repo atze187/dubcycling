@@ -699,19 +699,25 @@ TEST_CASE("Reverb: size 0 decays faster than size 1", "[FxUnits]")
 
 TEST_CASE("Reverb: damping 1 has less energy above 8 kHz than damping 0", "[FxUnits]")
 {
-    auto hfEnergy = [](double damping) {
+    // Energy above 8 kHz relative to the energy below 1 kHz (the wet level is normalized, so the
+    // spectral tilt is compared, not the absolute level).
+    auto tilt = [](double damping) {
         Reverb v;
         v.prepare(kSr);
         v.setParams(reverbParams(1.0, 0.5, damping));
-        Filter hp;
-        hp.prepare(kSr);
-        hp.setParams(filterParams(1, 8000.0, 0.0));
         auto l = noise(48000, 29, 0.5f), r = noise(48000, 30, 0.5f);
         processBlocks(v, l, r, 512);
-        processBlocks(hp, l, r, 512);
-        return energy(l, 24000, l.size());
+        auto band = [&](int type, double cutoff) {
+            Filter f;
+            f.prepare(kSr);
+            f.setParams(filterParams(type, cutoff, 0.0));
+            auto bl = l, br = r;
+            processBlocks(f, bl, br, 512);
+            return energy(bl, 24000, bl.size());
+        };
+        return band(1, 8000.0) / band(0, 1000.0);
     };
-    CHECK(hfEnergy(1.0) < 0.5 * hfEnergy(0.0));
+    CHECK(tilt(1.0) < 0.5 * tilt(0.0));
 }
 
 TEST_CASE("Reverb: full-scale noise at extreme parameters stays finite and under 20", "[FxUnits]")
@@ -732,6 +738,45 @@ TEST_CASE("Reverb: full-scale noise at extreme parameters stays finite and under
                 REQUIRE(std::abs(r[i]) < 20.0f);
             }
         }
+}
+
+TEST_CASE("Reverb: at mix 1 white noise comes out within 3 dB of its input RMS, peak well under 20", "[FxUnits]")
+{
+    for (double sr : {44100.0, 48000.0, 192000.0})
+        for (double size : {0.0, 0.5, 1.0})
+            for (double damping : {0.0, 0.5, 1.0})
+            {
+                Reverb v;
+                v.prepare(sr);
+                v.setParams(reverbParams(1.0, size, damping));
+                const int n = static_cast<int>(6 * sr);
+                auto l = noise(n, 41), r = noise(n, 42);
+                const double inRms = tailRms(l);
+                processBlocks(v, l, r, 512);
+                INFO("sr " << sr << " size " << size << " damping " << damping);
+                CHECK(std::abs(dbOf(tailRms(l) / inRms)) < 3.0);
+                CHECK(std::abs(dbOf(tailRms(r) / inRms)) < 3.0);
+                CHECK(std::max(peakAbs(l, 0, l.size()), peakAbs(r, 0, r.size())) < 8.0);
+            }
+}
+
+TEST_CASE("Flanger: at mix 1 and feedback +-0.9 white noise gains at most 6 dB RMS", "[FxUnits]")
+{
+    for (double sr : {44100.0, 192000.0})
+        for (double fb : {-0.9, 0.9})
+            for (double depth : {0.0, 1.0})
+            {
+                Flanger f;
+                f.prepare(sr);
+                f.setParams(flangerParams(5.0, depth, fb, 1.0));
+                const int n = static_cast<int>(6 * sr);
+                auto l = noise(n, 43), r = noise(n, 44);
+                const double inRms = tailRms(l);
+                processBlocks(f, l, r, 512);
+                INFO("sr " << sr << " fb " << fb << " depth " << depth);
+                CHECK(dbOf(tailRms(l) / inRms) < 6.0);
+                CHECK(dbOf(tailRms(r) / inRms) < 6.0);
+            }
 }
 
 TEST_CASE("Reverb: the two channels are decorrelated for a mono input", "[FxUnits]")
