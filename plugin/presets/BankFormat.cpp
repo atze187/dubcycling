@@ -1,5 +1,6 @@
 #include "plugin/presets/BankFormat.h"
 #include "engine/FxSettings.h"
+#include "engine/MixGain.h"
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -209,6 +210,8 @@ juce::var rulesToVar(const std::vector<RuleEntry>& rules)
             o->setProperty("region2", t.region2);
             o->setProperty("weight", static_cast<double>(t.weight));
             o->setProperty("mode", t.mode == PlayMode::OneShot ? 1 : 0);
+            if (t.mix != 0.5f)
+                o->setProperty("mix", static_cast<double>(t.mix));
             targets.add(juce::var(o));
         }
         r->setProperty("targets", targets);
@@ -241,6 +244,8 @@ std::vector<RuleEntry> rulesFromVar(const juce::var& v)
                 // RuleSet clamps a weight to [0, 1] anyway; clamping first keeps the float cast defined.
                 t.weight = static_cast<float>(clampedNumber(tv["weight"], 0.0, 1.0, 0.0));
                 t.mode = intOf(tv["mode"], 0) == 1 ? PlayMode::OneShot : PlayMode::Gate;
+                // Absent in version 1 and 2 files; clamped as a double before the float cast.
+                t.mix = sanitizeMix(static_cast<float>(clampedNumber(tv["mix"], 0.0, 1.0, 0.5)));
                 if (!addRuleTarget(targets, t))
                     break;
             }
@@ -449,7 +454,8 @@ juce::String presetFingerprint(const PluginState& state)
     {
         out << "R|" << e.region1;
         for (auto& t : e.targets)
-            out << '|' << t.region2 << ',' << num(static_cast<double>(t.weight)) << ',' << (t.mode == PlayMode::OneShot ? 1 : 0);
+            out << '|' << t.region2 << ',' << num(static_cast<double>(t.weight)) << ',' << (t.mode == PlayMode::OneShot ? 1 : 0)
+                << (t.mix != 0.5f ? ",m" + num(static_cast<double>(t.mix)) : juce::String());
         out << '\n';
     }
     // Effect settings: nothing at all for the default state, so presets without effect data keep their fingerprint.

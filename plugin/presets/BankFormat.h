@@ -6,8 +6,9 @@
 
 namespace dc {
 
-// 2 adds the per-preset "fx" object; version 1 files are still read (default fx).
-constexpr int kBankVersion = 2;
+// 2 adds the per-preset "fx" object, 3 the per-target "mix" in the rules; version 1 and 2 files are
+// still read (default fx, mix 0.5).
+constexpr int kBankVersion = 3;
 constexpr int kMaxPresetNameLength = 32;
 constexpr int kMaxBankNameLength = 64;
 constexpr int kMaxPresetsPerBank = 1024;
