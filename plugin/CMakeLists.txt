@@ -58,13 +58,15 @@ juce_add_plugin(Dubcycling
     PLUGIN_CODE Dcyc
     FORMATS VST3
     PRODUCT_NAME "Dubcycling"
-    IS_SYNTH FALSE
-    NEEDS_MIDI_INPUT FALSE
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
-    VST3_CATEGORIES Fx)
+    # No audio input: the plugin generates audio from its own loops, so it is an instrument
+    # (an "Fx" without an input bus is refused by Ableton).
+    VST3_CATEGORIES Instrument)
 
 target_include_directories(Dubcycling PRIVATE ${PROJECT_SOURCE_DIR})
 target_compile_definitions(Dubcycling PUBLIC

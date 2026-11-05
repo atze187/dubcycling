@@ -25,7 +25,7 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return "Dubcycling"; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return true; } // instrument: MIDI is accepted and ignored
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
