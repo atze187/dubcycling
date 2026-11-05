@@ -49,7 +49,7 @@ TEST_CASE("FxStrip: every region gets four markers inside its own x range")
     }
 }
 
-TEST_CASE("FxStrip: a click on a marker reports region and insert, a click beside one does nothing")
+TEST_CASE("FxStrip: a click on a marker reports region and insert, a click outside the strip does nothing")
 {
     StripFixture f;
     const auto b = f.strip.markerBounds(1, FxInsert::Flanger);
@@ -58,9 +58,9 @@ TEST_CASE("FxStrip: a click on a marker reports region and insert, a click besid
     CHECK(f.toggled[0].first == 1);
     CHECK(f.toggled[0].second == FxInsert::Flanger);
 
-    f.strip.toggleAt(b.getCentreX(), 0.5f);                // above the markers
-    f.strip.toggleAt(b.getRight() + 0.5f, b.getCentreY()); // in the gap
     f.strip.toggleAt(-5.0f, 8.0f);
+    f.strip.toggleAt(500.0f, -1.0f);
+    f.strip.toggleAt(500.0f, 16.0f);
     f.strip.toggleAt(2000.0f, 8.0f);
     CHECK(f.toggled.size() == 1);
 }
@@ -114,4 +114,57 @@ TEST_CASE("FxStrip: with 30 regions in 600 px nothing overflows the strip")
             for (int k = 0; k < kFxInserts; ++k)
                 CHECK(strip.contains(f.strip.markerBounds(r, static_cast<FxInsert>(k))));
     }
+}
+
+TEST_CASE("FxStrip: a click in the gap or above the marker rect hits the marker's column")
+{
+    StripFixture f;
+    const auto b = f.strip.markerBounds(1, FxInsert::Filter);
+    f.strip.toggleAt(b.getCentreX(), 0.5f);                // above the rect, inside the strip
+    f.strip.toggleAt(b.getCentreX(), 15.5f);               // below the rect
+    f.strip.toggleAt(b.getRight() + 0.2f, b.getCentreY()); // gap, closer to this marker
+    REQUIRE(f.toggled.size() == 3);
+    for (const auto& t : f.toggled)
+    {
+        CHECK(t.first == 1);
+        CHECK(t.second == FxInsert::Filter);
+    }
+}
+
+TEST_CASE("FxStrip: a column edge belongs to exactly one marker")
+{
+    StripFixture f;
+    for (int r = 0; r < 3; ++r)
+        for (int k = 0; k < kFxInserts; ++k)
+        {
+            const auto col = f.strip.columnRange(r, static_cast<FxInsert>(k));
+            int region = -1;
+            FxInsert insert = FxInsert::Bitcrush;
+            REQUIRE(f.strip.markerAt(col.getStart(), 8.0f, region, insert));
+            CHECK(region == r);
+            CHECK(insert == static_cast<FxInsert>(k));
+            REQUIRE(f.strip.markerAt(col.getEnd() - 0.01f, 8.0f, region, insert));
+            CHECK(region == r);
+            CHECK(insert == static_cast<FxInsert>(k));
+            if (col.getEnd() < 1000.0f) // the end is the start of the next column
+            {
+                REQUIRE(f.strip.markerAt(col.getEnd(), 8.0f, region, insert));
+                CHECK((region != r || insert != static_cast<FxInsert>(k)));
+            }
+        }
+}
+
+TEST_CASE("FxStrip: a right-click does not report, a left-click does")
+{
+    StripFixture f;
+    const auto b = f.strip.markerBounds(0, FxInsert::Reverb);
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto click = [&](juce::ModifierKeys mods) {
+        return juce::MouseEvent(source, b.getCentre(), mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &f.strip, &f.strip,
+                                juce::Time::getCurrentTime(), b.getCentre(), juce::Time::getCurrentTime(), 1, false);
+    };
+    f.strip.mouseDown(click(juce::ModifierKeys(juce::ModifierKeys::rightButtonModifier)));
+    CHECK(f.toggled.empty());
+    f.strip.mouseDown(click(juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier)));
+    CHECK(f.toggled.size() == 1);
 }

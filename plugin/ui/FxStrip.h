@@ -32,12 +32,21 @@ public:
     juce::Rectangle<float> markerBounds(int region, FxInsert insert) const;
     bool isCollective(int region) const;
     juce::Rectangle<float> collectiveBounds(int region) const; // empty unless collective
-    // True and fills region/insert if (x, y) is on an individual marker.
+    // x range that hits a marker: its rect widened to the middle of the gaps and the region edges, so
+    // neighbouring columns touch without overlapping ([start, end)). Full strip height; only for a
+    // non-collective region.
+    juce::Range<float> columnRange(int region, FxInsert insert) const;
+    // True and fills region/insert if (x, y) is in a marker's column.
     bool markerAt(float x, float y, int& region, FxInsert& insert) const;
     void toggleAt(float x, float y);
 
     void paint(juce::Graphics& g) override;
-    void mouseDown(const juce::MouseEvent& e) override { toggleAt(e.position.x, e.position.y); }
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu())
+            return;
+        toggleAt(e.position.x, e.position.y);
+    }
 
 private:
     float xFor(double phase) const { return static_cast<float>(phase * getWidth()); }

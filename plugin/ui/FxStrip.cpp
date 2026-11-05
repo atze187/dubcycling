@@ -28,7 +28,7 @@ void FxStrip::setRegions(const RegionMap& regions)
     if (regions.boundaries == regions_.boundaries)
         return;
     regions_ = regions;
-    selected_ = std::clamp(selected_, 0, regions_.regionCount() - 1);
+    selected_ = std::clamp(selected_, 0, std::max(0, regions_.regionCount() - 1));
     repaint();
 }
 
@@ -42,7 +42,7 @@ void FxStrip::setSwitches(const std::vector<std::uint8_t>& masks)
 
 void FxStrip::setSelectedRegion(int region)
 {
-    const int r = std::clamp(region, 0, regions_.regionCount() - 1);
+    const int r = std::clamp(region, 0, std::max(0, regions_.regionCount() - 1));
     if (r == selected_)
         return;
     selected_ = r;
@@ -93,19 +93,35 @@ juce::Rectangle<float> FxStrip::collectiveBounds(int region) const
     return { x0 + kInset, kPadY, w, static_cast<float>(getHeight()) - 2.0f * kPadY };
 }
 
+juce::Range<float> FxStrip::columnRange(int region, FxInsert insert) const
+{
+    // Contiguous columns: the marker widened to the middle of the gap (the region edge at the ends).
+    const auto [lo, hi] = regions_.bounds(region);
+    const int k = static_cast<int>(insert);
+    const auto m = markerBounds(region, insert);
+    const float left = k == 0 ? xFor(lo) : m.getX() - kGap * 0.5f;
+    const float right = k == kFxInserts - 1 ? xFor(hi) : m.getRight() + kGap * 0.5f;
+    return { left, right };
+}
+
 bool FxStrip::markerAt(float x, float y, int& region, FxInsert& insert) const
 {
+    if (y < 0.0f || y >= static_cast<float>(getHeight()))
+        return false;
     for (int r = 0; r < regions_.regionCount(); ++r)
     {
         if (isCollective(r))
             continue;
         for (int k = 0; k < kFxInserts; ++k)
-            if (markerBounds(r, static_cast<FxInsert>(k)).contains(x, y))
+        {
+            const auto col = columnRange(r, static_cast<FxInsert>(k));
+            if (x >= col.getStart() && x < col.getEnd())
             {
                 region = r;
                 insert = static_cast<FxInsert>(k);
                 return true;
             }
+        }
     }
     return false;
 }
