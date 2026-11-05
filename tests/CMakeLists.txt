@@ -5,6 +5,7 @@ add_executable(dc_tests
     test_RegionMap.cpp
     test_RuleSet.cpp
     test_FxSettings.cpp
+    test_FxUnits.cpp
     test_TransientDetector.cpp
     test_Sequencer.cpp
     test_Engine.cpp)
