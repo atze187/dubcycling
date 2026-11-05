@@ -1,4 +1,5 @@
 #include "engine/RuleSet.h"
+#include "engine/MixGain.h"
 #include <algorithm>
 #include <cmath>
 
@@ -22,6 +23,7 @@ void RuleSet::setTargets(int region1, std::vector<RuleTarget> targets)
             t.weight = 0.0f;
         t.weight = std::min(t.weight, 1.0f);
         sum += t.weight;
+        t.mix = sanitizeMix(t.mix);
     }
     if (sum > 1.0)
         for (auto& t : targets)

@@ -19,6 +19,8 @@ public:
         enum class Type { None, Stop, Start } type = Type::None;
         int region2 = -1;
         PlayMode mode = PlayMode::Gate;
+        float mix = 0.5f;
+        int region1 = -1; // Start: the Loop-1 region that triggered it
     };
 
     Sequencer();
@@ -44,6 +46,7 @@ public:
         enum class Type { None, Silence, Target } type = Type::None; // None: the region has no rule
         int region2 = -1;
         PlayMode mode = PlayMode::Gate;
+        float mix = 0.5f;
     };
     // The weighted draw for an entry into region1. Consumes the random source (only when a rule
     // exists); changes no state, so it may run before the entry.

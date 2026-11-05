@@ -4,6 +4,7 @@ add_executable(dc_tests
     test_LoopReader.cpp
     test_RegionMap.cpp
     test_RuleSet.cpp
+    test_MixGain.cpp
     test_FxSettings.cpp
     test_FxUnits.cpp
     test_FxChain.cpp

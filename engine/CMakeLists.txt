@@ -5,6 +5,7 @@ add_library(dc_engine STATIC
     LoopReader.h LoopReader.cpp
     RegionMap.h RegionMap.cpp
     TransientDetector.h TransientDetector.cpp
+    MixGain.h
     RuleSet.h RuleSet.cpp
     FxSettings.h FxSettings.cpp
     fx/Bitcrush.h fx/Bitcrush.cpp fx/Filter.h fx/Filter.cpp
