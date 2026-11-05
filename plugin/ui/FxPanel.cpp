@@ -334,8 +334,12 @@ void FxPanel::resized()
                     btn.setBounds(bt.removeFromLeft(bw).reduced(1, 0));
                 continue;
             }
-            k.value.setBounds(line.removeFromRight(line.getWidth() * 3 / 5));
-            k.name.setBounds(line);
+            // The name gets the width of its text (long German names would be squashed in a fixed
+            // share), the value the rest, right-aligned.
+            const int nameW = std::min(line.getWidth(),
+                                       juce::GlyphArrangement::getStringWidthInt(k.name.getFont(), k.name.getText()) + 3);
+            k.name.setBounds(line.removeFromLeft(nameW));
+            k.value.setBounds(line);
             k.slider.setBounds(row.removeFromTop(14));
         }
     }

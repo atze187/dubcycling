@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -6,6 +7,8 @@
 #include "plugin/DubcyclingProcessor.h"
 #include "plugin/ui/LoopLane.h"
 #include "plugin/presets/BankStore.h"
+#include "plugin/ui/FxPanel.h"
+#include "plugin/ui/FxStrip.h"
 #include "plugin/ui/PanelLook.h"
 #include "plugin/ui/PresetBar.h"
 #include "plugin/ui/RulePanel.h"
@@ -59,6 +62,15 @@ std::vector<juce::String> remapLabelsForBoundaryEdit(std::vector<juce::String> l
                                                      const std::vector<double>& before,
                                                      const std::vector<double>& after);
 
+// Insert switches are keyed by Loop-2 region index (FxSettings::switches): a new boundary splitting
+// old region k gives the new region k+1 the mask of k (later masks shift up), so the split region
+// keeps its sound on both halves; removing the boundary between k and k+1 keeps k's mask and drops
+// k+1's (later masks shift down). Any other change (a drag, several boundaries at once) returns the
+// masks unchanged. No trailing zeros; a list shorter than the split index stays as it is.
+std::vector<std::uint8_t> remapFxSwitchesForBoundaryEdit(std::vector<std::uint8_t> masks,
+                                                         const std::vector<double>& before,
+                                                         const std::vector<double>& after);
+
 // Title and text of the "replace loop?" confirmation (slot 0 = Loop 1).
 juce::String replaceConfirmTitle(int slot);
 juce::String replaceConfirmMessage();
@@ -69,8 +81,11 @@ juce::String suggestConfirmMessage();
 
 // Edit view: top row with logo, preset bar and BPM (the cycle readout only when it fits);
 // Loop 1 lane on top, Loop 2 below, each with bars field, "Load..." button and slot
-// status; the combined cycle length; the rule panel for the selected Loop-1 region. A 10 Hz timer
-// polls the processor and refreshes lanes and panel; edits go through processor.applyEdit.
+// status; the insert strip right under the Loop-2 lane; the combined cycle length; at the bottom
+// the rule panel for the selected Loop-1 region (left) and the effects panel for the selected
+// Loop-2 region (right). A 10 Hz timer polls the processor and refreshes lanes and panels; edits go
+// through processor.applyEdit. A switch toggle (strip or panel) is heard at once: the engine
+// re-evaluates the sounding voice's mask on the model swap.
 class Editor final : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -85,6 +100,8 @@ public:
     const LoopLane& lane(int slot) const { return lanes_[slot == 0 ? 0 : 1]; }
     LoopLane& lane(int slot) { return lanes_[slot == 0 ? 0 : 1]; }
     RulePanel& rulePanel() { return rules_; }
+    FxStrip& fxStrip() { return fxStrip_; }
+    FxPanel& fxPanel() { return fxPanel_; }
     PresetBar& presetBar() { return presetBar_; }
     juce::Slider& barsField(int slot) { return bars_[slot == 0 ? 0 : 1]; }
     // Pulls state, slot status and loop data from the processor (the timer calls it).
@@ -131,6 +148,11 @@ private:
     void updateRules(const PluginState& st);
     // Replaces the entry for region1 (other entries, stale ones included, stay), then applyEdit.
     void rulesEdited(int region1, std::vector<RuleTarget> targets);
+    // Strip and panel show fx for the current Loop-2 regions and the lane's selected region.
+    void updateFx(const PluginState& st);
+    // One insert switch of a Loop-2 region (strip click or panel switch), then applyEdit.
+    void switchEdited(int region2, FxInsert insert, bool on);
+    void paramsEdited(const FxParams& params);
     void barsEdited(int slot);
     // confirmedState: serialized state the user confirmed a replace for, or nullptr (not asked yet).
     void handleFile(int slot, const juce::File& file, const juce::MemoryBlock* confirmedState);
@@ -158,6 +180,8 @@ private:
     juce::Rectangle<float> ledBounds_[2];
     juce::Colour ledColour_[2];
     RulePanel rules_;
+    FxStrip fxStrip_;
+    FxPanel fxPanel_;
     juce::TooltipWindow tooltips_ { this };
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::String notice_[2];         // short message shown instead of the status (e.g. rejected file)
