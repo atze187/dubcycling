@@ -27,9 +27,9 @@ Punkte stehen so, wie der Nutzer sie formuliert hat. Einschätzungen darunter si
    - Entschieden (Nutzer, 2026-11-03): Loops bleiben im Session-State als Pfad plus Hash, kein Einbetten der Audiodaten. Die Samples eines Presets liegen in der Bank unter `samples/`.
    - Einschätzung: Preset = Regionsgrenzen, Regeln, Labels und Takte ohne Audiodatei, vermutlich als Datei neben dem Loop oder in einem Preset-Ordner. Passt zu den Region-Labels (Punkt 4) und zum Vorschlag-Algorithmus für Nicht-Drum-Loops.
 
-6. Effekte pro Region (ursprünglicher Plan, noch nicht gebaut)
-   - Stand aus der Brainstorming-Runde: Effekte liegen direkt auf den Regionen. Details wurden bewusst vertagt ("details zu effekten besprechen wir später").
-   - Einschätzung: Im Code gibt es nur den ungenutzten Haken `engine/FxSlot.h`. Zu klären: welche Effekte (dubgefahren als mögliche Quelle), wie viele Slots pro Region, ob Loop 1 und Loop 2 gleich behandelt werden, Parameter im State, Umschalten beim Regionswechsel ohne Klicks (Tails). Braucht eigenes Brainstorming vor einem Plan.
+6. ERLEDIGT (2026-11-05; vier Inserts für Loop 2 in fester Reihenfolge Bitcrush, Filter, Flanger, Reverb, ein Reglersatz pro Insert für alle Regionen, Schalter pro Region im Streifen unter Loop 2 und im Panel, Hall und Flanger klingen aus, Effekte in Presets und Projekten, Bank-Format Version 2; Entwurf: `docs/superpowers/specs/2026-11-05-effects-design.md`). Ursprünglich: "Effekte pro Region"
+   - Bekannte Grenzen: Effekte nur auf Loop 2. 1-Bit-Bitcrush hat drei Pegel (-1/0/+1).
+   - Offene Ideen: Host-Automation der Insert-Parameter, Tempo-Sync der Flanger-Rate, Parametersätze pro Region, Effekte auch auf Loop 1, FX-Anzeige in der UI, solange nur noch der Nachhall klingt.
 
 Hinweis des Nutzers: Der Rest ergibt sich aus dem UI-Umbau; es macht "einen mordsspaß".
 
