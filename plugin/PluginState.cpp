@@ -5,6 +5,7 @@
 #include <sstream>
 #include <string>
 #include <juce_cryptography/juce_cryptography.h>
+#include "engine/MixGain.h"
 #include "engine/RegionMap.h"
 
 namespace dc {
@@ -228,6 +229,8 @@ juce::MemoryBlock serialize(const PluginState& s)
             tt.setProperty("region2", t.region2, nullptr);
             tt.setProperty("weight", num(static_cast<double>(t.weight)), nullptr);
             tt.setProperty("mode", t.mode == PlayMode::OneShot ? 1 : 0, nullptr);
+            if (t.mix != 0.5f)
+                tt.setProperty("mix", num(static_cast<double>(t.mix)), nullptr);
             r.appendChild(tt, nullptr);
         }
         rules.appendChild(r, nullptr);
@@ -276,6 +279,11 @@ std::optional<PluginState> deserialize(const void* data, std::size_t size)
                 t.region2 = tt.getProperty("region2", 0);
                 t.weight = static_cast<float>(tt.getProperty("weight").toString().getDoubleValue());
                 t.mode = static_cast<int>(tt.getProperty("mode", 0)) == 1 ? PlayMode::OneShot : PlayMode::Gate;
+                if (tt.hasProperty("mix"))
+                {
+                    const double m = parseFxNumber(tt.getProperty("mix").toString());
+                    t.mix = std::isfinite(m) ? sanitizeMix(static_cast<float>(std::clamp(m, 0.0, 1.0))) : 0.5f;
+                }
                 if (!addRuleTarget(targets, t))
                     break;
             }

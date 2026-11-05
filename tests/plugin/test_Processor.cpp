@@ -478,3 +478,17 @@ TEST_CASE("Processor: an old state without fx plays like before", "[processor][f
     CHECK(m->fx.switches.empty());
     CHECK(m->fx == FxSettings {});
 }
+
+TEST_CASE("Processor: the mix is published in the model", "[processor][mix]")
+{
+    ProcFixture f;
+    auto s = f.proc.getPluginState();
+    s.loop1.boundaries = { 0.5 };
+    s.rules = { RuleEntry { 0, { RuleTarget { 0, 1.0f, PlayMode::Gate, 0.3f } } } };
+    f.proc.applyEdit(s);
+    const auto m = f.proc.getModel();
+    REQUIRE(m != nullptr);
+    REQUIRE(m->rules.targets(0).size() == 1);
+    CHECK(m->rules.targets(0)[0].mix == 0.3f);
+    CHECK(f.proc.getPluginState().rules[0].targets[0].mix == 0.3f);
+}

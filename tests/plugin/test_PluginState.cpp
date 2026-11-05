@@ -441,3 +441,59 @@ TEST_CASE("sanitizeFx clamps, masks and trims", "[PluginState][fx]")
     const auto out = sanitizeFx(f, 3);
     CHECK(out.switches == std::vector<std::uint8_t> { 15, 0, 1 });
 }
+
+namespace {
+juce::String mixDoc(const juce::String& targetAttrs)
+{
+    return "<DubcyclingState version=\"1\"><Loop1 bars=\"1\"/><Loop2 bars=\"1\"/><Rules><Rule region1=\"0\">"
+           "<Target region2=\"1\" weight=\"1\" mode=\"0\" " + targetAttrs + "/></Rule></Rules></DubcyclingState>";
+}
+}
+
+TEST_CASE("State: the mix of a target survives a round trip", "[PluginState][mix]")
+{
+    auto s = sample();
+    s.rules[0].targets[0].mix = 0.2f;
+    s.rules[0].targets[1].mix = 0.8f;
+    s.rules[1].targets[0].mix = 0.0f;
+    auto s2 = s;
+    s2.rules[1].targets[0].mix = 1.0f;
+    for (const auto& st : { s, s2 })
+    {
+        const auto block = serialize(st);
+        const auto r = deserialize(block.getData(), block.getSize());
+        REQUIRE(r.has_value());
+        REQUIRE(r->rules.size() == 2);
+        CHECK(r->rules[0].targets[0].mix == st.rules[0].targets[0].mix);
+        CHECK(r->rules[0].targets[1].mix == st.rules[0].targets[1].mix);
+        CHECK(r->rules[1].targets[0].mix == st.rules[1].targets[0].mix);
+    }
+}
+
+TEST_CASE("State: a target without mix loads with 0.5", "[PluginState][mix]")
+{
+    const auto r = loadXml(mixDoc(""));
+    REQUIRE(r.has_value());
+    REQUIRE(r->rules.size() == 1);
+    CHECK(r->rules[0].targets[0].mix == 0.5f);
+}
+
+TEST_CASE("State: the default mix writes no attribute", "[PluginState][mix]")
+{
+    CHECK_FALSE(serialize(sample()).toString().contains("mix="));
+    auto s = sample();
+    s.rules[0].targets[0].mix = 0.3f;
+    CHECK(serialize(s).toString().contains("mix="));
+}
+
+TEST_CASE("State: mix numbers are sanitized", "[PluginState][mix][hardening]")
+{
+    const std::pair<const char*, float> cases[] = { { "nan", 0.5f }, { "abc", 0.5f }, { "1e99", 1.0f }, { "-5", 0.0f }, { "inf", 0.5f } };
+    for (const auto& [text, expected] : cases)
+    {
+        const auto r = loadXml(mixDoc(juce::String("mix=\"") + text + "\""));
+        REQUIRE(r.has_value());
+        REQUIRE(r->rules.size() == 1);
+        CHECK(r->rules[0].targets[0].mix == expected);
+    }
+}
