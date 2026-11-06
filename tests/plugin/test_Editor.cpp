@@ -699,21 +699,21 @@ TEST_CASE("Editor: adding or removing a boundary in a lane moves the rules with 
     REQUIRE(f.editor->lane(1).hasData());
 
     // Loop 1: a boundary at 0.1 splits region 0 -> the entries move to 2 and 4.
-    f.editor->lane(0).doubleClickAt(w0 * 0.1f);
+    f.editor->lane(0).doubleClickAt(w0 * 0.1f, true);
     auto st = f.proc.getPluginState();
     REQUIRE(st.loop1.boundaries.size() == 4);
     CHECK(shapeOf(st.rules) == Shape { { 2, { 2 } }, { 4, { 3 } } });
 
     // Loop 2: a boundary at 0.6 splits region 2 -> target 3 becomes 4, target 2 stays.
     f.editor->refresh();
-    f.editor->lane(1).doubleClickAt(w1 * 0.6f);
+    f.editor->lane(1).doubleClickAt(w1 * 0.6f, true);
     st = f.proc.getPluginState();
     REQUIRE(st.loop2.boundaries.size() == 4);
     CHECK(shapeOf(st.rules) == Shape { { 2, { 2 } }, { 4, { 4 } } });
 
     // Loop 1: removing the boundary at 0.1 again -> back to 1 and 3.
     f.editor->refresh();
-    f.editor->lane(0).doubleClickAt(w0 * 0.1f);
+    f.editor->lane(0).doubleClickAt(w0 * 0.1f, true);
     st = f.proc.getPluginState();
     REQUIRE(st.loop1.boundaries.size() == 3);
     CHECK(shapeOf(st.rules) == Shape { { 1, { 2 } }, { 3, { 4 } } });
@@ -721,7 +721,7 @@ TEST_CASE("Editor: adding or removing a boundary in a lane moves the rules with 
     // Loop 2: removing 0.5 merges regions 1 and 2 -> target 2 is dropped, 4 becomes 3. Entry 1 is
     // left without targets, which the state sanitizer drops (same as "no rule").
     f.editor->refresh();
-    f.editor->lane(1).doubleClickAt(w1 * 0.5f);
+    f.editor->lane(1).doubleClickAt(w1 * 0.5f, true);
     st = f.proc.getPluginState();
     REQUIRE(st.loop2.boundaries.size() == 3);
     CHECK(shapeOf(st.rules) == Shape { { 3, { 3 } } });
@@ -731,7 +731,7 @@ TEST_CASE("Editor: adding or removing a boundary in a lane moves the rules with 
     const auto rulesBefore = shapeOf(f.proc.getPluginState().rules);
     f.editor->lane(0).pressAt(w0 * 0.25f);
     REQUIRE(f.editor->lane(0).isDragging());
-    f.editor->lane(0).dragTo(w0 * 0.3f);
+    f.editor->lane(0).dragTo(w0 * 0.3f, true);
     f.editor->lane(0).release();
     st = f.proc.getPluginState();
     CHECK(st.loop1.boundaries[0] != 0.25);
@@ -938,7 +938,7 @@ TEST_CASE("Editor: adding a Loop-2 boundary keeps the sound of the split region"
     f.editor->refresh();
 
     auto& lane = f.editor->lane(1);
-    lane.doubleClickAt(0.4f * static_cast<float>(lane.getWidth())); // splits region 1
+    lane.doubleClickAt(0.4f * static_cast<float>(lane.getWidth()), true); // splits region 1
     auto st = f.proc.getPluginState();
     REQUIRE(st.loop2.boundaries.size() == 3);
     CHECK(st.fx.switches == Masks { 1, 2, 2, 4 });
@@ -947,7 +947,7 @@ TEST_CASE("Editor: adding a Loop-2 boundary keeps the sound of the split region"
     CHECK(f.proc.getModel()->fx.switches == st.fx.switches);
 
     f.editor->refresh();
-    lane.doubleClickAt(0.25f * static_cast<float>(lane.getWidth())); // removes 0.25: 0 and 1 merge
+    lane.doubleClickAt(0.25f * static_cast<float>(lane.getWidth()), true); // removes 0.25: 0 and 1 merge
     st = f.proc.getPluginState();
     REQUIRE(st.loop2.boundaries.size() == 2);
     CHECK(st.fx.switches == Masks { 1, 2, 4 });
@@ -964,11 +964,11 @@ TEST_CASE("Editor: a Loop-1 boundary edit leaves the fx switches alone", "[edito
     f.editor->refresh();
 
     auto& lane = f.editor->lane(0);
-    lane.doubleClickAt(0.4f * static_cast<float>(lane.getWidth()));
+    lane.doubleClickAt(0.4f * static_cast<float>(lane.getWidth()), true);
     REQUIRE(f.proc.getPluginState().loop1.boundaries.size() == 3);
     CHECK(f.proc.getPluginState().fx.switches == Masks { 1, 2, 4 });
     f.editor->refresh();
-    lane.doubleClickAt(0.25f * static_cast<float>(lane.getWidth()));
+    lane.doubleClickAt(0.25f * static_cast<float>(lane.getWidth()), true);
     REQUIRE(f.proc.getPluginState().loop1.boundaries.size() == 2);
     CHECK(f.proc.getPluginState().fx.switches == Masks { 1, 2, 4 });
 }
@@ -1086,7 +1086,7 @@ TEST_CASE("Editor: boundary edits of Loop 2 keep the mix of the targets", "[edit
     f.editor->refresh();
     const float w1 = static_cast<float>(f.editor->lane(1).getWidth());
     REQUIRE(w1 > 100.0f);
-    f.editor->lane(1).doubleClickAt(w1 * 0.1f); // splits region 0: target 2 moves to 3
+    f.editor->lane(1).doubleClickAt(w1 * 0.1f, true); // splits region 0: target 2 moves to 3
     auto st = f.proc.getPluginState();
     REQUIRE(st.loop2.boundaries.size() == 4);
     REQUIRE(st.rules.size() == 1);
@@ -1112,3 +1112,84 @@ TEST_CASE("Editor: replacing a loop clears its names", "[editor][labels]")
     f.proc.waitForLoads();
     CHECK(f.proc.getPluginState().loop1.labels.empty());
 }
+
+namespace {
+// 2 s stereo wav at 44.1 kHz with noise clicks at the given fractions of the loop.
+juce::File clicksAtWav(const juce::File& dir, const juce::String& name, const std::vector<double>& at)
+{
+    const auto file = dir.getChildFile(name);
+    juce::WavAudioFormat format;
+    std::unique_ptr<juce::OutputStream> out = std::make_unique<juce::FileOutputStream>(file);
+    auto writer = format.createWriterFor(out, juce::AudioFormatWriterOptions {}
+                                                  .withSampleRate(44100)
+                                                  .withNumChannels(2)
+                                                  .withBitsPerSample(16));
+    REQUIRE(writer != nullptr);
+    const int frames = 88200;
+    juce::AudioBuffer<float> buf(2, frames);
+    buf.clear();
+    juce::Random rnd(11);
+    for (const double a : at)
+        for (int i = 0; i < 130; ++i)
+        {
+            const float v = 0.8f * (rnd.nextFloat() * 2.0f - 1.0f);
+            const int pos = static_cast<int>(a * frames) + i;
+            buf.setSample(0, pos, v);
+            buf.setSample(1, pos, v);
+        }
+    REQUIRE(writer->writeFromAudioSampleBuffer(buf, 0, frames));
+    return file;
+}
+} // namespace
+
+TEST_CASE("Editor: both lanes get the grid of their own bars and the host beats per bar", "[editor][grid]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, f.wav("a.wav"), 4);
+    f.proc.replaceLoop(1, f.wav("b.wav"), 8);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    CHECK(f.editor->lane(0).gridStep() == Catch::Approx(1.0 / 16.0));
+    CHECK(f.editor->lane(1).gridStep() == Catch::Approx(1.0 / 32.0));
+}
+
+TEST_CASE("Editor: changing the bars field updates the grid", "[editor][grid]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, f.wav("a.wav"), 4);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    REQUIRE(f.editor->lane(0).gridStep() == Catch::Approx(1.0 / 16.0));
+    f.editor->barsField(0).setValue(2.0, juce::sendNotificationSync);
+    CHECK(f.editor->lane(0).gridStep() == Catch::Approx(1.0 / 8.0));
+}
+
+TEST_CASE("Editor: without a loaded file the lane has no grid", "[editor][grid]")
+{
+    EditorFixture f;
+    f.editor->refresh();
+    CHECK(f.editor->lane(0).gridStep() == 0.0);
+    CHECK(f.editor->lane(1).gridStep() == 0.0);
+}
+
+TEST_CASE("Editor: the suggestion snaps its boundaries to the grid", "[editor][grid][suggest]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, clicksAtWav(f.dir, "off.wav", { 0.11, 0.33, 0.61, 0.87 }), 2); // grid 1/8
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    const double step = f.editor->lane(0).gridStep();
+    REQUIRE(step == Catch::Approx(0.125));
+    f.editor->suggestRegions(0);
+    const auto b = f.proc.getPluginState().loop1.boundaries;
+    REQUIRE_FALSE(b.empty());
+    CHECK(b.size() <= 4);
+    for (const double v : b)
+    {
+        const double k = v / step;
+        CHECK(std::abs(k - std::round(k)) < 1e-9);
+        CHECK(v > 0.0);
+        CHECK(v < 1.0);
+    }
+}
+

@@ -295,6 +295,7 @@ void Editor::refresh()
         lanes_[i].setLabels(ref.labels);
         suggest_[i].setEnabled(status == DubcyclingProcessor::SlotStatus::Loaded && lanes_[i].hasData());
         bars_[i].setValue(static_cast<double>(ref.bars), juce::dontSendNotification);
+        lanes_[i].setGrid(ref.bars, proc_.hostBeatsPerBar());
 
         // A staged replace that failed to decode: the slot is unchanged, say so once.
         const auto failure = proc_.replaceFailure(i);
@@ -513,10 +514,16 @@ void Editor::suggestRegions(int slot)
     const auto data = model == nullptr ? nullptr : (slot == 0 ? model->loop1.data : model->loop2.data);
     if (data == nullptr || data->frames() == 0)
         return;
-    const std::vector<double> found = suggestBoundaries(*data, kSuggestMaxBoundaries);
-    if (found.empty())
+    const std::vector<double> raw = suggestBoundaries(*data, kSuggestMaxBoundaries);
+    if (raw.empty())
     {
         showNotice(slot, "Keine Transienten gefunden");
+        return;
+    }
+    const std::vector<double> found = snapBoundariesToGrid(raw, lanes_[slot].gridStep());
+    if (found.empty())
+    {
+        showNotice(slot, "Keine Grenzen auf dem Raster");
         return;
     }
     const PluginState st = proc_.getPluginState();

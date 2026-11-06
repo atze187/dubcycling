@@ -80,6 +80,8 @@ public:
     void setSessionDir(const juce::File& dir) { sessionDir_ = dir; }
     // Last tempo the host reported in processBlock; 0 = none yet. Any thread.
     double hostBpm() const { return hostBpm_.load(std::memory_order_relaxed); }
+    // Numerator of the last time signature the host reported in processBlock (1..64); 4 before. Any thread.
+    int hostBeatsPerBar() const { return hostBeatsPerBar_.load(std::memory_order_relaxed); }
     // How long before a Loop-1 region entry its draw is made and shown (see Engine::Playhead::teaser).
     static constexpr double kTeaserLookaheadSec = 0.15;
     // Audition of one region (slot 0 = Loop 1, 1 = Loop 2), see Engine::requestPreview. Any thread.
@@ -122,6 +124,7 @@ private:
     mutable juce::CriticalSection stateLock_; // guards state_, slots_ and model_
     LoopLoader loader_;
     std::atomic<double> hostBpm_ { 0.0 };
+    std::atomic<int> hostBeatsPerBar_ { 4 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DubcyclingProcessor)
 };

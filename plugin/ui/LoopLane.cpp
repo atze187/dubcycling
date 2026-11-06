@@ -20,8 +20,8 @@ const juce::Colour kWave { 0xff6f94b3 };
 const juce::Colour kSelected { 0x245aa9e6 };
 const juce::Colour kBoundary { 0xffe8c26a };
 const juce::Colour kHint { 0xff7b828d };
-const juce::Colour kBeatLine = panel::kEdge;     // faint, just above the background
-const juce::Colour kBarLine = panel::kEdgeLight; // a bit stronger, still far below the boundaries
+const juce::Colour kBeatLine = panel::kEdgeLight; // faint, but visible over the waveform
+const juce::Colour kBarLine { 0xff5a626d };         // clearly stronger, still far below the boundaries
 } // namespace
 
 std::vector<PeakColumn> computePeaks(const std::vector<float>& left, const std::vector<float>& right, int columns)

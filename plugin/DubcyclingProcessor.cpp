@@ -265,7 +265,11 @@ void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     const TransportInfo t = toTransportInfo(head != nullptr ? head->getPosition()
                                                             : juce::Optional<juce::AudioPlayHead::PositionInfo> {});
     if (t.bpm > 0.0)
+    {
         hostBpm_.store(t.bpm, std::memory_order_relaxed);
+        if (t.tsNum >= 1 && t.tsNum <= 64)
+            hostBeatsPerBar_.store(t.tsNum, std::memory_order_relaxed);
+    }
     engine_.process(t, buffer.getWritePointer(0), buffer.getWritePointer(1), n);
     for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
         buffer.clear(ch, 0, n);
