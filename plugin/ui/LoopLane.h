@@ -19,6 +19,11 @@ struct PeakColumn
 // shorter one.
 std::vector<PeakColumn> computePeaks(const std::vector<float>& left, const std::vector<float>& right, int columns);
 
+// Rounds every boundary to the nearest multiple of `step` (a grid step in phase), drops values that
+// land on 0 or 1 or outside, then sorts, spaces and de-duplicates them like sanitizeBoundaries.
+// step <= 0 (no grid) returns the input unchanged.
+std::vector<double> snapBoundariesToGrid(const std::vector<double>& boundaries, double step);
+
 // True for the file types the lanes and the "Load..." button accept (wav, mp3, flac, aif, aiff).
 bool isAcceptedAudioFile(const juce::File& file);
 
@@ -67,6 +72,17 @@ public:
     void setPlayhead(double phase);
     double playhead() const { return playhead_; }
 
+    // Beat grid over the whole loop: `bars` bars of `beatsPerBar` beats. Either <= 0 = no grid.
+    void setGrid(int bars, int beatsPerBar);
+    // Snap step in phase: one beat while beats are at least 4 px apart, else one bar while bars are,
+    // else 0 (no grid: no data, no valid bars/beats, or too fine for the lane width).
+    double gridStep() const;
+    // Nearest grid point to `phase`, clamped to 0..1; unchanged when gridStep() is 0.
+    double snapPhase(double phase) const;
+    // What paint draws: beat lines (with stronger bar lines), or only bar lines when beats are too dense.
+    bool beatLinesShown() const;
+    bool barLinesShown() const;
+
     const RegionMap& regions() const { return regions_; }
     int selectedRegion() const { return selected_; }
     bool hasData() const { return data_ != nullptr && data_->frames() > 0; }
@@ -86,13 +102,17 @@ public:
     void auditionAt(float x);
     // Moves a grabbed boundary (clamped by RegionMap::moveBoundary), keeping the offset between
     // cursor and boundary from the press. Only a local preview: nothing is published while dragging.
-    void dragTo(float x);
+    // The new position snaps to the grid (see gridStep) unless `free`; the one-argument form snaps.
+    void dragTo(float x) { dragTo(x, false); }
+    void dragTo(float x, bool free);
     // Ends a drag; fires onRegionsChanged once if the boundary actually moved.
     void release();
-    // On a boundary: removes it; elsewhere: adds a boundary at x.
-    void doubleClickAt(float x);
+    // On a boundary: removes it; elsewhere: adds a boundary at x, snapped to the grid unless `free`.
+    void doubleClickAt(float x) { doubleClickAt(x, false); }
+    void doubleClickAt(float x, bool free);
     // Same, but a double-click on a region's name edits the name instead.
-    void doubleClickAt(float x, float y);
+    void doubleClickAt(float x, float y) { doubleClickAt(x, y, false); }
+    void doubleClickAt(float x, float y, bool free);
 
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override
@@ -102,9 +122,12 @@ public:
         else
             pressAt(e.position.x);
     }
-    void mouseDrag(const juce::MouseEvent& e) override { dragTo(e.position.x); }
+    void mouseDrag(const juce::MouseEvent& e) override { dragTo(e.position.x, e.mods.isShiftDown()); }
     void mouseUp(const juce::MouseEvent&) override { release(); }
-    void mouseDoubleClick(const juce::MouseEvent& e) override { doubleClickAt(e.position.x, e.position.y); }
+    void mouseDoubleClick(const juce::MouseEvent& e) override
+    {
+        doubleClickAt(e.position.x, e.position.y, e.mods.isShiftDown());
+    }
     void mouseMove(const juce::MouseEvent& e) override;
 
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
@@ -117,6 +140,7 @@ private:
     double phaseAt(float x) const { return static_cast<double>(x) / getWidth(); }
     float xFor(double phase) const { return static_cast<float>(phase * getWidth()); }
     int boundaryAt(float x) const; // nearest boundary within the hit tolerance, or -1
+    double beatPixels() const;     // distance of two beats in pixels, 0 without a grid
     void changed();
     void cancelDrag(); // ends a drag without publishing and restores the regions from the press
     void setDropHighlight(bool on);
@@ -125,6 +149,8 @@ private:
     Status status_ = Status::Empty;
     RegionMap regions_;
     int selected_ = 0;
+    int gridBars_ = 0;
+    int gridBeatsPerBar_ = 0;
     int dragging_ = -1;
     float grabOffset_ = 0.0f; // boundary x minus cursor x at the press
     RegionMap dragStart_;     // regions at the press, to detect a real move and to cancel

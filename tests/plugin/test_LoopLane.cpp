@@ -484,3 +484,199 @@ TEST_CASE("LoopLane: active region and teaser are clamped to what exists", "[Loo
     CHECK(f.lane.teaser() == LoopLane::kNone);
     CHECK(f.lane.teaserProgress() == 0.0);
 }
+
+namespace {
+
+// An 800 px wide lane with data and a grid of 8 bars of 4 beats: one beat = 1/32 = 25 px.
+struct GridFixture : LaneFixture
+{
+    GridFixture()
+    {
+        lane.setSize(800, 100);
+        lane.setGrid(8, 4);
+    }
+};
+
+} // namespace
+
+TEST_CASE("LoopLane grid: gridStep follows bars and beats per bar", "[LoopLane][grid]")
+{
+    GridFixture f;
+    CHECK_THAT(f.lane.gridStep(), WithinAbs(1.0 / 32.0, 1e-12));
+    f.lane.setGrid(4, 3);
+    CHECK_THAT(f.lane.gridStep(), WithinAbs(1.0 / 12.0, 1e-12));
+    f.lane.setGrid(4, 7); // 7/8: the numerator counts
+    CHECK_THAT(f.lane.gridStep(), WithinAbs(1.0 / 28.0, 1e-12));
+}
+
+TEST_CASE("LoopLane grid: no grid without data or with invalid bars", "[LoopLane][grid]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    LoopLane lane;
+    lane.setSize(800, 100);
+    lane.setGrid(8, 4);
+    CHECK(lane.gridStep() == 0.0); // no data
+    CHECK_FALSE(lane.barLinesShown());
+    CHECK_FALSE(lane.beatLinesShown());
+    lane.setData(someData());
+    CHECK(lane.gridStep() > 0.0);
+    lane.setGrid(0, 4);
+    CHECK(lane.gridStep() == 0.0);
+    lane.setGrid(-3, 4);
+    CHECK(lane.gridStep() == 0.0);
+    lane.setGrid(8, 0);
+    CHECK(lane.gridStep() == 0.0);
+    CHECK_FALSE(lane.barLinesShown());
+    CHECK_THAT(lane.snapPhase(0.1), WithinAbs(0.1, 1e-12)); // unchanged without a grid
+}
+
+TEST_CASE("LoopLane grid: snapPhase rounds to the nearest beat and stays within 0..1", "[LoopLane][grid]")
+{
+    GridFixture f;
+    CHECK_THAT(f.lane.snapPhase(0.1), WithinAbs(3.0 / 32.0, 1e-12));     // 3.2 beats
+    CHECK_THAT(f.lane.snapPhase(0.11), WithinAbs(4.0 / 32.0, 1e-12));    // 3.52 beats
+    CHECK_THAT(f.lane.snapPhase(0.5), WithinAbs(0.5, 1e-12));
+    CHECK_THAT(f.lane.snapPhase(0.99), WithinAbs(1.0, 1e-12));
+    CHECK(f.lane.snapPhase(1.3) == 1.0);
+    CHECK(f.lane.snapPhase(-0.2) == 0.0);
+}
+
+TEST_CASE("LoopLane grid: a dragged boundary snaps to beats", "[LoopLane][grid]")
+{
+    GridFixture f;
+    f.lane.setRegions(regions({ 0.5 }));
+    f.lane.pressAt(400.0f);
+    f.lane.dragTo(103.0f);
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(4.0 / 32.0, 1e-12)); // 100 px
+    CHECK(f.changes == 0);
+    f.lane.release();
+    REQUIRE(f.changes == 1);
+    CHECK_THAT(f.last.boundaries[0], WithinAbs(0.125, 1e-12));
+
+    // The grab offset still counts: grabbed 4 px right of the boundary at 100 px, the cursor at
+    // 440 px puts the boundary at 436 px, whose nearest beat is 425 px (not 450 px).
+    f.lane.pressAt(104.0f);
+    f.lane.dragTo(440.0f);
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(17.0 / 32.0, 1e-12));
+    f.lane.release();
+    CHECK(f.changes == 2);
+}
+
+TEST_CASE("LoopLane grid: a free drag does not snap", "[LoopLane][grid]")
+{
+    GridFixture f;
+    f.lane.setRegions(regions({ 0.5 }));
+    f.lane.pressAt(400.0f);
+    f.lane.dragTo(103.0f, true);
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(103.0 / 800.0, 1e-9));
+    f.lane.dragTo(103.0f, false);
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(0.125, 1e-12));
+    f.lane.release();
+    CHECK(f.changes == 1);
+}
+
+TEST_CASE("LoopLane grid: a double click adds a boundary on the beat, a free double click on the exact position",
+          "[LoopLane][grid]")
+{
+    GridFixture f;
+    f.lane.doubleClickAt(103.0f);
+    REQUIRE(f.changes == 1);
+    CHECK(f.last.boundaries == std::vector<double> { 0.125 });
+    f.lane.doubleClickAt(603.0f, true);
+    REQUIRE(f.changes == 2);
+    REQUIRE(f.last.boundaries.size() == 2);
+    CHECK_THAT(f.last.boundaries[1], WithinAbs(603.0 / 800.0, 1e-9));
+    f.lane.doubleClickAt(203.0f, 30.0f); // the name-editor variant snaps too (away from every name)
+    REQUIRE(f.changes == 3);
+    CHECK_THAT(f.last.boundaries[1], WithinAbs(0.25, 1e-12));
+    // On a boundary a double click still removes it.
+    f.lane.doubleClickAt(101.0f);
+    REQUIRE(f.changes == 4);
+    CHECK(f.last.boundaries.size() == 2);
+    CHECK_THAT(f.last.boundaries[0], WithinAbs(0.25, 1e-12));
+}
+
+TEST_CASE("LoopLane grid: snapping respects the minimum region width", "[LoopLane][grid]")
+{
+    GridFixture f;
+    // The beat at 200 px (0.25) is closer than kMinRegion to the boundary at 0.252 (201.6 px); the
+    // click at 195 px is outside the hit tolerance, so it adds, and adding there is refused.
+    f.lane.setRegions(regions({ 0.252 }));
+    f.lane.doubleClickAt(195.0f);
+    CHECK(f.changes == 0);
+    CHECK(f.lane.regions().boundaries == std::vector<double> { 0.252 });
+
+    // A drag onto that beat is clamped by RegionMap as usual.
+    f.lane.setRegions(regions({ 0.1, 0.2525 }));
+    f.lane.pressAt(80.0f);
+    f.lane.dragTo(200.0f);
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(0.2525 - kMinRegion, 1e-12));
+    f.lane.release();
+    REQUIRE(f.changes == 1);
+
+    // Two boundaries 4 px apart: a double click removes only the one hit.
+    f.lane.doubleClickAt(202.0f);
+    REQUIRE(f.changes == 2);
+    REQUIRE(f.last.boundaries.size() == 1);
+    CHECK_THAT(f.last.boundaries[0], WithinAbs(0.2525 - kMinRegion, 1e-12));
+}
+
+TEST_CASE("LoopLane grid: an existing off-grid boundary is not moved by selecting a region or by pressing",
+          "[LoopLane][grid]")
+{
+    GridFixture f;
+    f.lane.setRegions(regions({ 0.3 })); // 240 px, between the beats at 225 and 250 px
+    f.lane.pressAt(100.0f);              // selects region 0
+    f.lane.pressAt(500.0f);              // selects region 1
+    f.lane.pressAt(242.0f);              // grabs the boundary
+    f.lane.release();
+    CHECK(f.changes == 0);
+    CHECK(f.lane.regions().boundaries == std::vector<double> { 0.3 });
+    CHECK(f.selected == std::vector<int> { 0, 1 });
+}
+
+TEST_CASE("LoopLane grid: beats closer than 4 px are not drawn, then neither bars", "[LoopLane][grid]")
+{
+    GridFixture f;
+    CHECK(f.lane.beatLinesShown());
+    CHECK(f.lane.barLinesShown());
+
+    f.lane.setSize(128, 100); // beats exactly 4 px apart: still drawn
+    CHECK(f.lane.beatLinesShown());
+    CHECK_THAT(f.lane.gridStep(), WithinAbs(1.0 / 32.0, 1e-12));
+
+    f.lane.setSize(100, 100); // beats 3.125 px, bars 12.5 px: only bars, and snapping follows bars
+    CHECK_FALSE(f.lane.beatLinesShown());
+    CHECK(f.lane.barLinesShown());
+    CHECK_THAT(f.lane.gridStep(), WithinAbs(1.0 / 8.0, 1e-12));
+    CHECK_THAT(f.lane.snapPhase(0.1), WithinAbs(0.125, 1e-12));
+
+    f.lane.setSize(20, 100); // bars 2.5 px: nothing
+    CHECK_FALSE(f.lane.beatLinesShown());
+    CHECK_FALSE(f.lane.barLinesShown());
+
+    f.lane.setSize(0, 100);
+    CHECK_FALSE(f.lane.barLinesShown());
+    CHECK(f.lane.gridStep() == 0.0);
+}
+
+TEST_CASE("LoopLane grid: a too fine grid does not snap", "[LoopLane][grid]")
+{
+    GridFixture f;
+    f.lane.setSize(20, 100); // 8 bars in 20 px
+    CHECK(f.lane.gridStep() == 0.0);
+    CHECK_THAT(f.lane.snapPhase(0.33), WithinAbs(0.33, 1e-12));
+    f.lane.doubleClickAt(7.0f);
+    REQUIRE(f.changes == 1);
+    CHECK_THAT(f.last.boundaries[0], WithinAbs(0.35, 1e-9));
+}
+
+TEST_CASE("snapBoundariesToGrid: rounds, drops duplicates and values at the ends, keeps order", "[LoopLane][grid]")
+{
+    using dc::ui::snapBoundariesToGrid;
+    CHECK(snapBoundariesToGrid({ 0.1, 0.12, 0.49, 0.5, 1.0 }, 0.25) == std::vector<double> { 0.5 });
+    CHECK(snapBoundariesToGrid({ 0.3, 0.7, 0.2 }, 0.125) == std::vector<double> { 0.25, 0.75 });
+    CHECK(snapBoundariesToGrid({ 0.7, 0.3 }, 0.0) == std::vector<double> { 0.7, 0.3 }); // no grid: unchanged
+    CHECK(snapBoundariesToGrid({ 0.3 }, -1.0) == std::vector<double> { 0.3 });
+    CHECK(snapBoundariesToGrid({}, 0.25).empty());
+}
