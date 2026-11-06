@@ -1,10 +1,12 @@
 // DubcyclingProcessor: transactional replace, rejected files, hash refresh, stale loads.
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <tuple>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
+#include "plugin/presets/BankFormat.h"
 
 using namespace dc;
 using Status = DubcyclingProcessor::SlotStatus;
@@ -530,4 +532,187 @@ TEST_CASE("Processor: hostBeatsPerBar defaults to 4 and follows the host time si
     runBlock(f.proc, head, 64);
     CHECK(f.proc.hostBeatsPerBar() == 64);
     f.proc.setPlayHead(nullptr);
+}
+
+namespace {
+
+float peak(const juce::AudioBuffer<float>& b, int from, int to)
+{
+    float p = 0.0f;
+    for (int c = 0; c < 2; ++c)
+        for (int i = from; i < to; ++i)
+            p = std::max(p, std::abs(b.getSample(c, i)));
+    return p;
+}
+
+struct MidiFixture : ProcFixture
+{
+    static constexpr int kBlock = 512;
+    MidiFixture()
+    {
+        proc.replaceLoop(0, wav("loop.wav"), 1);
+        proc.waitForLoads();
+        REQUIRE(proc.getSlotStatus(0) == Status::Loaded);
+        proc.prepareToPlay(44100.0, kBlock);
+    }
+
+    juce::AudioBuffer<float> run(juce::MidiBuffer& midi, int n = kBlock)
+    {
+        juce::AudioBuffer<float> buf(2, n);
+        buf.clear();
+        proc.processBlock(buf, midi);
+        return buf;
+    }
+    juce::AudioBuffer<float> run(int n = kBlock)
+    {
+        juce::MidiBuffer m;
+        return run(m, n);
+    }
+};
+
+} // namespace
+
+TEST_CASE("Processor: autoplay output is unchanged by MIDI events", "[processor][midi]")
+{
+    MidiFixture a, b;
+    FixedPlayHead ha, hb;
+    juce::AudioPlayHead::PositionInfo info;
+    info.setBpm(120.0);
+    info.setPpqPosition(0.0);
+    info.setIsPlaying(true);
+    ha.pos = info;
+    hb.pos = info;
+    a.proc.setPlayHead(&ha);
+    b.proc.setPlayHead(&hb);
+
+    juce::MidiBuffer none, withNote;
+    withNote.addEvent(juce::MidiMessage::noteOn(1, 60, 1.0f), 100);
+    const auto x = a.run(none);
+    const auto y = b.run(withNote);
+    REQUIRE(peak(x, 0, MidiFixture::kBlock) > 0.0f); // the comparison is not of two silences
+    for (int c = 0; c < 2; ++c)
+        for (int i = 0; i < MidiFixture::kBlock; ++i)
+            REQUIRE(x.getSample(c, i) == y.getSample(c, i));
+    a.proc.setPlayHead(nullptr);
+    b.proc.setPlayHead(nullptr);
+}
+
+TEST_CASE("Processor: midi mode plays only while a note is held (stopped host)", "[processor][midi]")
+{
+    MidiFixture f;
+    CHECK_FALSE(f.proc.isMidiEffect());
+    f.proc.setTriggerMode(TriggerMode::Midi);
+    CHECK(f.proc.triggerMode() == TriggerMode::Midi);
+
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f); // no note: silence
+
+    juce::MidiBuffer on;
+    on.addEvent(juce::MidiMessage::noteOn(1, 60, 1.0f), 200);
+    const auto b = f.run(on);
+    CHECK(peak(b, 0, 200) == 0.0f);
+    CHECK(peak(b, 250, MidiFixture::kBlock) > 0.0f);
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f); // still held
+
+    juce::MidiBuffer off;
+    off.addEvent(juce::MidiMessage::noteOff(1, 60), 10);
+    f.run(off);
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f); // after the cancel fade
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
+}
+
+TEST_CASE("Processor: midi mode starts at the next bar with a running host", "[processor][midi]")
+{
+    MidiFixture f;
+    f.proc.setTriggerMode(TriggerMode::Midi);
+    FixedPlayHead head;
+    f.proc.setPlayHead(&head);
+    juce::AudioPlayHead::PositionInfo info;
+    info.setBpm(120.0);
+    info.setIsPlaying(true);
+    info.setTimeSignature(juce::AudioPlayHead::TimeSignature { 4, 4 });
+    info.setPpqPosition(3.99); // the bar line at ppq 4 is 220.5 frames (at 44.1 kHz) into the block
+    head.pos = info;
+
+    juce::MidiBuffer on;
+    on.addEvent(juce::MidiMessage::noteOn(1, 60, 1.0f), 0);
+    const auto b = f.run(on);
+    CHECK(peak(b, 0, 221) == 0.0f);
+    CHECK(peak(b, 280, MidiFixture::kBlock) > 0.0f);
+    f.proc.setPlayHead(nullptr);
+}
+
+TEST_CASE("Processor: all-notes-off and prepareToPlay clear held notes", "[processor][midi]")
+{
+    MidiFixture f;
+    f.proc.setTriggerMode(TriggerMode::Midi);
+    juce::MidiBuffer on;
+    on.addEvent(juce::MidiMessage::noteOn(1, 60, 1.0f), 0);
+    f.run(on);
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f);
+
+    for (int cc : { 123, 120 })
+    {
+        juce::MidiBuffer allOff;
+        allOff.addEvent(juce::MidiMessage::controllerEvent(1, cc, 0), 0);
+        f.run(allOff);
+        CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
+        f.run(on); // play again
+        CHECK(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f);
+    }
+
+    f.proc.prepareToPlay(44100.0, MidiFixture::kBlock);
+    f.run();
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
+
+    // a note-on with velocity 0 is a note-off
+    f.run(on);
+    juce::MidiBuffer zero;
+    zero.addEvent(juce::MidiMessage(0x90, 60, 0), 0);
+    f.run(zero);
+    f.run();
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
+}
+
+TEST_CASE("Processor: the mode is saved with the project, not with presets", "[processor][midi]")
+{
+    ProcFixture f;
+    CHECK(f.proc.triggerMode() == TriggerMode::Autoplay);
+    f.proc.setTriggerMode(TriggerMode::Midi);
+
+    juce::MemoryBlock saved;
+    f.proc.getStateInformation(saved);
+    CHECK(juce::String::fromUTF8(static_cast<const char*>(saved.getData()), static_cast<int>(saved.getSize()))
+              .contains("Trigger=\"midi\""));
+    CHECK(deserialize(saved.getData(), saved.getSize()).has_value()); // still a valid state
+
+    DubcyclingProcessor other;
+    other.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    CHECK(other.triggerMode() == TriggerMode::Midi);
+
+    // Autoplay writes no attribute; a state without it (or with garbage) loads as Autoplay.
+    f.proc.setTriggerMode(TriggerMode::Autoplay);
+    juce::MemoryBlock plain;
+    f.proc.getStateInformation(plain);
+    CHECK_FALSE(juce::String::fromUTF8(static_cast<const char*>(plain.getData()), static_cast<int>(plain.getSize()))
+                    .contains("Trigger"));
+    other.setStateInformation(plain.getData(), static_cast<int>(plain.getSize()));
+    CHECK(other.triggerMode() == TriggerMode::Autoplay);
+
+    other.setTriggerMode(TriggerMode::Midi);
+    auto text = juce::String::fromUTF8(static_cast<const char*>(saved.getData()), static_cast<int>(saved.getSize()))
+                    .replace("Trigger=\"midi\"", "Trigger=\"bogus\"");
+    other.setStateInformation(text.toRawUTF8(), static_cast<int>(text.getNumBytesAsUTF8()));
+    CHECK(other.triggerMode() == TriggerMode::Autoplay);
+
+    // Presets neither carry nor change it.
+    other.setTriggerMode(TriggerMode::Midi);
+    other.restoreState(PluginState {});
+    CHECK(other.triggerMode() == TriggerMode::Midi);
+    other.setTriggerMode(TriggerMode::Autoplay);
+    other.restoreState(PluginState {});
+    CHECK(other.triggerMode() == TriggerMode::Autoplay);
+
+    Bank bank;
+    bank.presets.push_back(Preset { "p", PluginState {} });
+    CHECK_FALSE(bankToJson(bank).containsIgnoreCase("trigger"));
 }

@@ -5,6 +5,7 @@
 #include <vector>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "engine/Engine.h"
+#include "engine/MidiTrigger.h"
 #include "plugin/LoopLoader.h"
 #include "plugin/PluginState.h"
 #include "plugin/SlotTracker.h"
@@ -25,7 +26,7 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return "Dubcycling"; }
-    bool acceptsMidi() const override { return true; } // instrument: MIDI is accepted and ignored
+    bool acceptsMidi() const override { return true; } // notes gate the output in MIDI trigger mode; ignored in Autoplay
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
@@ -79,6 +80,10 @@ public:
     // searched again (both loops moved together are found once one of them is relinked).
     void setSessionDir(const juce::File& dir) { sessionDir_ = dir; }
     // Last tempo the host reported in processBlock; 0 = none yet. Any thread.
+    // Trigger mode (see engine/MidiTrigger.h). Any thread; applied at the start of the next processBlock.
+    // Saved with the project (getStateInformation), NOT with presets or banks.
+    void setTriggerMode(TriggerMode m) { triggerMode_.store(m, std::memory_order_relaxed); }
+    TriggerMode triggerMode() const { return triggerMode_.load(std::memory_order_relaxed); }
     double hostBpm() const { return hostBpm_.load(std::memory_order_relaxed); }
     // Numerator of the last time signature the host reported in processBlock (1..64); 4 before. Any thread.
     int hostBeatsPerBar() const { return hostBeatsPerBar_.load(std::memory_order_relaxed); }
@@ -125,6 +130,8 @@ private:
     LoopLoader loader_;
     std::atomic<double> hostBpm_ { 0.0 };
     std::atomic<int> hostBeatsPerBar_ { 4 };
+    std::atomic<TriggerMode> triggerMode_ { TriggerMode::Autoplay };
+    MidiTrigger trigger_; // audio thread only
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DubcyclingProcessor)
 };

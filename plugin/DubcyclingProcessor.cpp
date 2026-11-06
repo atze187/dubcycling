@@ -3,6 +3,7 @@
 #include "plugin/FileRelink.h"
 #include "plugin/ui/Editor.h"
 #include <algorithm>
+#include <array>
 
 namespace dc {
 
@@ -18,9 +19,12 @@ DubcyclingProcessor::~DubcyclingProcessor() {
 
 void DubcyclingProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     engine_.prepare(sampleRate, samplesPerBlock);
+    trigger_.prepare(sampleRate); // clears held notes and any armed start/stop
 }
 
-void DubcyclingProcessor::releaseResources() {}
+void DubcyclingProcessor::releaseResources() {
+    trigger_.reset();
+}
 
 bool DubcyclingProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const {
     return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
@@ -153,15 +157,35 @@ bool DubcyclingProcessor::relinkOtherIfMissing(int slot) {
 }
 
 void DubcyclingProcessor::getStateInformation(juce::MemoryBlock& dest) {
-    const juce::ScopedLock sl(stateLock_);
-    dest = serialize(state_);
+    {
+        const juce::ScopedLock sl(stateLock_);
+        dest = serialize(state_);
+    }
+    // The trigger mode belongs to this instance, not to PluginState (so not to presets/banks): it is
+    // an optional root attribute next to the serialized state. Absent = Autoplay.
+    if (triggerMode() == TriggerMode::Midi) {
+        const auto text = juce::String::fromUTF8(static_cast<const char*>(dest.getData()),
+                                                 static_cast<int>(dest.getSize()));
+        const int at = text.indexOf("<DubcyclingState");
+        if (at >= 0) {
+            const auto withMode = text.replaceSection(at + 16, 0, " Trigger=\"midi\"");
+            dest.replaceAll(withMode.toRawUTF8(), withMode.getNumBytesAsUTF8());
+        }
+    }
 }
 
 void DubcyclingProcessor::setStateInformation(const void* data, int size) {
     if (size <= 0)
         return;
-    if (auto s = deserialize(data, static_cast<std::size_t>(size)))
+    if (auto s = deserialize(data, static_cast<std::size_t>(size))) {
+        // deserialize succeeded, so the text is well-formed XML; unknown or missing value = Autoplay
+        bool midi = false;
+        const auto text = juce::String::fromUTF8(static_cast<const char*>(data), size);
+        if (auto xml = juce::XmlDocument::parse(text))
+            midi = xml->getStringAttribute("Trigger") == "midi";
+        setTriggerMode(midi ? TriggerMode::Midi : TriggerMode::Autoplay);
         applyState(*s);
+    }
     // damaged or unknown state: keep what we have
 }
 
@@ -254,7 +278,7 @@ void DubcyclingProcessor::timerCallback() {
         publish();
     engine_.releaseRetired();
 }
-void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) {
+void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     juce::ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
     if (buffer.getNumChannels() < 2) {
@@ -270,7 +294,43 @@ void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         if (t.tsNum >= 1 && t.tsNum <= 64)
             hostBeatsPerBar_.store(t.tsNum, std::memory_order_relaxed);
     }
-    engine_.process(t, buffer.getWritePointer(0), buffer.getWritePointer(1), n);
+    trigger_.setMode(triggerMode_.load(std::memory_order_relaxed));
+
+    // Gate-relevant MIDI events, in frame order (MidiBuffer iterates sorted). Fixed storage, extras ignored.
+    constexpr int kMaxGateEvents = 512;
+    std::array<GateEvent, kMaxGateEvents> events;
+    int numEvents = 0;
+    {
+        for (const auto meta : midi) {
+            if (numEvents >= kMaxGateEvents)
+                break;
+            const auto msg = meta.getMessage();
+            GateEvent e;
+            e.frame = std::clamp(meta.samplePosition, 0, n - 1);
+            e.channel = std::clamp(msg.getChannel() - 1, 0, 15);
+            if (msg.isNoteOn(false)) {
+                e.kind = GateEvent::Kind::NoteOn;
+                e.note = msg.getNoteNumber();
+            } else if (msg.isNoteOff(true)) { // also note-on with velocity 0
+                e.kind = GateEvent::Kind::NoteOff;
+                e.note = msg.getNoteNumber();
+            } else if (msg.isAllNotesOff() || msg.isAllSoundOff()) {
+                e.kind = GateEvent::Kind::AllOff;
+            } else {
+                continue;
+            }
+            events[static_cast<std::size_t>(numEvents++)] = e;
+        }
+    }
+
+    std::array<TriggerSegment, MidiTrigger::kMaxSegments> segments;
+    const int numSegments = trigger_.plan(t, events.data(), numEvents, n, segments);
+    float* l = buffer.getWritePointer(0);
+    float* r = buffer.getWritePointer(1);
+    for (int i = 0; i < numSegments; ++i) {
+        const auto& seg = segments[static_cast<std::size_t>(i)];
+        engine_.process(seg.t, l + seg.frame, r + seg.frame, seg.length);
+    }
     for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
         buffer.clear(ch, 0, n);
 }
