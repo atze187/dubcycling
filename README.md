@@ -37,6 +37,17 @@ Status: edit view, audio engine and presets implemented. The plugin has stereo o
   re-saved by an older plugin version loses its effect settings (older versions ignore the Fx data). The bank
   format is now `bank.json` version 2; older plugin versions refuse banks saved with the new one.
 
+- **Beat grid:** the loop lanes show a grid in quarter-note beats: faint lines per beat, stronger lines per bar. The
+  number of beats per bar is the numerator of the host time signature (4 without host info), so in 6/8 the grid has
+  six lines per bar. Adding and dragging region boundaries always snaps to the grid; hold Shift for free placement.
+  The "Vorschlag" (AUTO) boundaries snap to the grid as well. The lines are hidden when they would be too dense.
+- **Mix:** every rule row has a MIX control for the balance of the two loops while that Loop-2 region plays. Centre =
+  both loops at full level (as before), left = the Loop-2 region gets quieter, right = Loop 1 gets quieter, far right =
+  only Loop 2 is heard. The mix applies only while that Loop-2 region plays; otherwise Loop 1 is back at full level.
+  Auditioning (right-click) ignores the mix. The mix is stored per rule in projects and presets. The bank format is
+  now `bank.json` version 3; older plugin versions refuse banks saved with the new one, and a project with mix
+  values re-saved by an older plugin version loses them.
+
 ### Known limitations
 
 - Not tested in a real host yet on any platform; macOS and Linux are only built and unit-tested in CI.

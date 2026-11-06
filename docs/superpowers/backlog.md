@@ -31,6 +31,13 @@ Punkte stehen so, wie der Nutzer sie formuliert hat. Einschätzungen darunter si
    - Bekannte Grenzen: Effekte nur auf Loop 2. 1-Bit-Bitcrush hat drei Pegel (-1/0/+1).
    - Offene Ideen: Host-Automation der Insert-Parameter, Tempo-Sync der Flanger-Rate, Parametersätze pro Region, Effekte auch auf Loop 1, FX-Anzeige in der UI, solange nur noch der Nachhall klingt.
 
+7. ERLEDIGT (2026-11-05; Raster in Viertelnoten in den Loop-Lanes, Schläge pro Takt aus dem Zähler der Host-Taktart (ohne Host 4), schwache Linien pro Schlag, starke pro Takt, Einrasten beim Ziehen und Hinzufügen immer, Umschalt-Taste für freies Setzen, AUTO rastet auf das Raster, Linien bei zu großer Dichte ausgeblendet; Entwurf: `docs/superpowers/specs/2026-11-05-grid-and-mix-design.md`).
+   - Offene Ideen: Rasterweite einstellbar, Triolen, Schwelle beim Ziehen, bevor eingerastet wird.
+
+8. ERLEDIGT (2026-11-05; Mix-Regler pro Regelzeile: Mitte = beide Loops voll, links Loop-2-Region leiser, rechts Loop 1 leiser, ganz rechts nur Loop 2; wirkt, solange die Loop-2-Region spielt, danach ist Loop 1 wieder voll; Vorhören ignoriert den Mix; pro Regel in Projekt und Preset gespeichert, Bank-Format Version 3; Entwurf: `docs/superpowers/specs/2026-11-05-grid-and-mix-design.md`).
+   - Bekannte Grenzen: Ältere Plugin-Versionen lehnen Banks der Version 3 ab; ein Projekt mit Mix, das eine ältere Version speichert, verliert die Mix-Werte.
+   - Offene Ideen: Host-Automation des Mix, Mix für das Vorhören, breiterer Mix-Regler bei der kleinsten Fenstergröße.
+
 Hinweis des Nutzers: Der Rest ergibt sich aus dem UI-Umbau; es macht "einen mordsspaß".
 
 1b. Playhead-Details zu Punkt 1
