@@ -30,9 +30,13 @@ void styleLcd(juce::Label& label, juce::Colour text, juce::Justification justifi
 } // namespace panel
 
 // Flat buttons, monospace button text, and weight sliders drawn as a row of LED-style segments.
+// A slider with the property kBipolar (e.g. the mix) lights the segments between the centre and
+// its value and shows a centre mark.
 class PanelLook final : public juce::LookAndFeel_V4
 {
 public:
+    static inline const juce::Identifier kBipolar { "dcBipolar" };
+
     PanelLook();
 
     void drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour& background, bool highlighted,

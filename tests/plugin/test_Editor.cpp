@@ -1045,6 +1045,61 @@ TEST_CASE("Editor: strip, panels and lanes fit in the window without overlap", "
     }
 }
 
+TEST_CASE("Editor: a mix change reaches the processor state and the published model", "[editor][mix]")
+{
+    EditorFixture f;
+    bothLoaded(f);
+    auto s = f.proc.getPluginState();
+    s.rules = { RuleEntry { 0, { RuleTarget { 1, 0.5f, PlayMode::OneShot } } } };
+    f.proc.applyEdit(s);
+    f.editor->refresh();
+    REQUIRE(f.editor->rulePanel().rowCount() == 3);
+    f.editor->rulePanel().setMix(1, 0.2f);
+    f.editor->rulePanel().setMix(2, 0.9f); // weight 0, touched: stored
+    const auto st = f.proc.getPluginState();
+    REQUIRE(st.rules.size() == 1);
+    REQUIRE(st.rules[0].targets.size() == 2);
+    CHECK(st.rules[0].targets[0].region2 == 1);
+    CHECK(st.rules[0].targets[0].weight == 0.5f);
+    CHECK(st.rules[0].targets[0].mode == PlayMode::OneShot);
+    CHECK(st.rules[0].targets[0].mix == 0.2f);
+    CHECK(st.rules[0].targets[1].region2 == 2);
+    CHECK(st.rules[0].targets[1].mix == 0.9f);
+    const auto model = f.proc.getModel();
+    REQUIRE(model != nullptr);
+    const auto& targets = model->rules.targets(0);
+    REQUIRE(targets.size() == 2);
+    CHECK(targets[0].mix == 0.2f);
+    CHECK(targets[1].mix == 0.9f);
+    f.editor->refresh(); // the poll shows what was stored
+    CHECK(f.editor->rulePanel().mix(1) == 0.2f);
+    CHECK(f.editor->rulePanel().mixText(1) == "L2 40 %");
+}
+
+TEST_CASE("Editor: boundary edits of Loop 2 keep the mix of the targets", "[editor][mix][remap]")
+{
+    EditorFixture f;
+    bothLoaded(f, kFour);
+    auto s = f.proc.getPluginState();
+    s.rules = { RuleEntry { 0, { RuleTarget { 2, 0.5f, PlayMode::Gate, 0.3f }, RuleTarget { 0, 0.2f, PlayMode::Gate, 0.8f } } } };
+    f.proc.applyEdit(s);
+    f.editor->refresh();
+    const float w1 = static_cast<float>(f.editor->lane(1).getWidth());
+    REQUIRE(w1 > 100.0f);
+    f.editor->lane(1).doubleClickAt(w1 * 0.1f); // splits region 0: target 2 moves to 3
+    auto st = f.proc.getPluginState();
+    REQUIRE(st.loop2.boundaries.size() == 4);
+    REQUIRE(st.rules.size() == 1);
+    REQUIRE(st.rules[0].targets.size() == 2);
+    CHECK(st.rules[0].targets[0].region2 == 3);
+    CHECK(st.rules[0].targets[0].mix == 0.3f);
+    CHECK(st.rules[0].targets[1].region2 == 0);
+    CHECK(st.rules[0].targets[1].mix == 0.8f);
+    f.editor->refresh();
+    CHECK(f.editor->rulePanel().mix(3) == 0.3f);
+    CHECK(f.editor->rulePanel().mix(2) == 0.5f);
+}
+
 TEST_CASE("Editor: replacing a loop clears its names", "[editor][labels]")
 {
     EditorFixture f;

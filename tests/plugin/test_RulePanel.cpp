@@ -1,11 +1,13 @@
 // RulePanel: one row per Loop-2 region, capped weights, remainder as silence, stale entries kept.
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
+#include <iterator>
 #include <memory>
 #include <vector>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
 #include "plugin/ui/Editor.h"
+#include "plugin/ui/PanelLook.h"
 #include "plugin/ui/RulePanel.h"
 #include "tests/plugin/TestLoops.h"
 
@@ -32,6 +34,29 @@ void record(RulePanel& p, Published& out)
 }
 
 float pct(float p) { return p / 100.0f; }
+
+// Children are found by component ID: "row<i>" in the panel, "name", "weight", "percent", "mode",
+// "mix", "mixValue" inside a row.
+juce::Component* findById(juce::Component& root, const juce::String& id)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (c->getComponentID() == id)
+            return c;
+        if (auto* found = findById(*c, id))
+            return found;
+    }
+    return nullptr;
+}
+
+juce::Component& control(RulePanel& p, int row, const char* id)
+{
+    auto* r = findById(p, "row" + juce::String(row));
+    REQUIRE(r != nullptr);
+    auto* c = findById(*r, id);
+    REQUIRE(c != nullptr);
+    return *c;
+}
 
 } // namespace
 
@@ -499,4 +524,284 @@ TEST_CASE("Editor: a freshly loaded loop is one region over the whole loop", "[R
         if (auto out = png.createOutputStream())
             juce::PNGImageFormat().writeImageToStream(img, *out);
     }
+}
+
+// --- Mix per rule row -----------------------------------------------------------------------------
+
+TEST_CASE("RulePanel: every row shows a mix control that defaults to the centre", "[RulePanel][mix]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    p.setSize(440, 200);
+    p.setContext(0, 3, { RuleTarget { 1, 0.4f, PlayMode::Gate, 0.2f } });
+    for (int row = 0; row < 3; ++row)
+    {
+        CAPTURE(row);
+        CHECK(control(p, row, "mix").isVisible());
+        CHECK(control(p, row, "mixValue").isVisible());
+    }
+    CHECK(p.mix(0) == 0.5f); // weight 0, no target: still a mix control at the centre
+    CHECK(p.mix(1) == 0.2f);
+    CHECK(p.mix(2) == 0.5f);
+    CHECK(p.mixText(0) == "L1 | L2");
+    auto* slider = dynamic_cast<juce::Slider*>(&control(p, 1, "mix"));
+    REQUIRE(slider != nullptr);
+    CHECK(std::abs(slider->getValue() - 0.2) < 1e-6);
+}
+
+TEST_CASE("RulePanel: setMix publishes the whole target list once and keeps weight and mode", "[RulePanel][mix]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setContext(1, 3, { RuleTarget { 0, 0.5f, PlayMode::OneShot }, RuleTarget { 2, 0.25f } });
+    p.setMix(0, 0.3f);
+    CHECK(out.calls == 1);
+    CHECK(out.region1 == 1);
+    REQUIRE(out.targets.size() == 2);
+    CHECK(out.targets[0].region2 == 0);
+    CHECK(out.targets[0].weight == 0.5f);
+    CHECK(out.targets[0].mode == PlayMode::OneShot);
+    CHECK(out.targets[0].mix == 0.3f);
+    CHECK(out.targets[1].region2 == 2);
+    CHECK(out.targets[1].mix == 0.5f);
+    CHECK(p.mix(0) == 0.3f);
+    p.setMix(0, 0.3f); // unchanged: nothing published
+    CHECK(out.calls == 1);
+}
+
+TEST_CASE("RulePanel: changing weight or mode keeps the mix", "[RulePanel][mix]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setContext(0, 2, { RuleTarget { 1, 0.4f, PlayMode::Gate, 0.8f } });
+    p.setWeight(1, 60.0f);
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].weight == pct(60.0f));
+    CHECK(out.targets[0].mix == 0.8f);
+    p.setMode(1, PlayMode::OneShot);
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].mode == PlayMode::OneShot);
+    CHECK(out.targets[0].mix == 0.8f);
+    p.setMix(0, 0.1f);
+    p.setWeight(0, 20.0f);
+    REQUIRE(out.targets.size() == 2);
+    CHECK(out.targets[1].region2 == 0);
+    CHECK(out.targets[1].mix == 0.1f);
+    CHECK(out.targets[1].weight == pct(20.0f));
+    CHECK(p.mix(1) == 0.8f);
+}
+
+TEST_CASE("RulePanel: a touched mix is stored for a row with weight 0", "[RulePanel][mix]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setContext(0, 2, {});
+    p.setMix(1, 0.9f);
+    CHECK(out.calls == 1);
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].region2 == 1);
+    CHECK(out.targets[0].weight == 0.0f);
+    CHECK(out.targets[0].mode == PlayMode::Gate);
+    CHECK(out.targets[0].mix == 0.9f);
+}
+
+TEST_CASE("RulePanel: an untouched row stores no target", "[RulePanel][mix]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setContext(0, 3, {});
+    p.setMix(1, 0.7f);
+    p.setWeight(2, 10.0f);
+    REQUIRE(out.targets.size() == 2);
+    CHECK(out.targets[0].region2 == 1);
+    CHECK(out.targets[1].region2 == 2);
+    CHECK(out.targets[1].mix == 0.5f);
+}
+
+TEST_CASE("RulePanel: a mix drag publishes once at its end", "[RulePanel][mix]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setContext(0, 2, { RuleTarget { 0, 0.5f } });
+    p.beginMixDrag(0);
+    p.dragMix(0, 0.4f);
+    p.dragMix(0, 0.2f);
+    CHECK(out.calls == 0);
+    CHECK(p.mix(0) == 0.2f);
+    CHECK(p.mixText(0) == "L2 40 %");
+    p.endMixDrag();
+    CHECK(out.calls == 1);
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].mix == 0.2f);
+    CHECK(out.targets[0].weight == 0.5f);
+    p.beginMixDrag(0);
+    p.endMixDrag(); // nothing moved: nothing published
+    CHECK(out.calls == 1);
+}
+
+TEST_CASE("RulePanel: reset restores the centre and publishes", "[RulePanel][mix]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setSize(440, 200);
+    p.setContext(0, 2, { RuleTarget { 1, 0.3f, PlayMode::Gate, 0.9f } });
+    auto* slider = dynamic_cast<juce::Slider*>(&control(p, 1, "mix"));
+    REQUIRE(slider != nullptr);
+    const auto at = slider->getLocalBounds().getCentre().toFloat();
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const juce::MouseEvent dbl(source, at, juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 1.0f, 0.0f,
+                               0.0f, 0.0f, 0.0f, slider, slider, juce::Time::getCurrentTime(), at,
+                               juce::Time::getCurrentTime(), 2, false);
+    slider->mouseDoubleClick(dbl); // double-click = centre
+    CHECK(p.mix(1) == 0.5f);
+    CHECK(p.mixText(1) == "L1 | L2");
+    CHECK(out.calls == 1);
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].mix == 0.5f);
+    CHECK(out.targets[0].weight == 0.3f);
+}
+
+TEST_CASE("RulePanel: mixText reads centre, ends and sides", "[RulePanel][mix]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    p.setContext(0, 1, {});
+    CHECK(p.mixText(0) == "L1 | L2");
+    p.setMix(0, 0.0f);
+    CHECK(p.mixText(0) == "nur L1");
+    p.setMix(0, 1.0f);
+    CHECK(p.mixText(0) == "nur L2");
+    p.setMix(0, 0.25f); // left of centre: Loop 2 at half level
+    CHECK(p.mixText(0) == "L2 50 %");
+    p.setMix(0, 0.75f); // right of centre: Loop 1 at half level
+    CHECK(p.mixText(0) == "L1 50 %");
+    p.setMix(0, 0.5f);
+    CHECK(p.mixText(0) == "L1 | L2");
+    CHECK(p.mixText(5).isEmpty());
+}
+
+TEST_CASE("RulePanel: out-of-range mix values are clamped by setMix", "[RulePanel][mix]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setContext(0, 1, { RuleTarget { 0, 0.5f, PlayMode::Gate, 1.7f } }); // stored junk is clamped for display
+    CHECK(p.mix(0) == 1.0f);
+    p.setMix(0, -0.3f);
+    CHECK(p.mix(0) == 0.0f);
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].mix == 0.0f);
+    p.setMix(0, 2.0f);
+    CHECK(p.mix(0) == 1.0f);
+    p.setMix(0, std::nanf(""));
+    CHECK(p.mix(0) == 0.5f);
+    CHECK(out.targets[0].mix == 0.5f);
+    CHECK(p.mix(3) == 0.5f); // no such row
+}
+
+TEST_CASE("RulePanel: setContext does not overwrite a mix drag in progress", "[RulePanel][mix]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setContext(0, 2, { RuleTarget { 0, 0.5f, PlayMode::Gate, 0.5f } });
+    p.beginMixDrag(0);
+    p.dragMix(0, 0.9f);
+    p.setContext(0, 2, { RuleTarget { 0, 0.5f, PlayMode::Gate, 0.5f } }); // the editor's poll
+    CHECK(p.mix(0) == 0.9f);
+    p.endMixDrag();
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].mix == 0.9f);
+
+    // A stored list that differs only in the mix is a change the panel shows.
+    p.setContext(0, 2, { RuleTarget { 0, 0.5f, PlayMode::Gate, 0.1f } });
+    CHECK(p.mix(0) == 0.1f);
+}
+
+TEST_CASE("RulePanel: controls do not overlap at the editor's panel width", "[RulePanel][mix][layout]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    DubcyclingProcessor proc;
+    LoopPair loops(proc);
+    auto s = proc.getPluginState();
+    s.loop2.boundaries = { 0.5 };
+    s.loop2.labels = { "Intro" };
+    s.rules = { RuleEntry { 0, { RuleTarget { 0, 1.0f, PlayMode::OneShot, 0.2f } } } };
+    proc.applyEdit(s);
+    std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
+    auto* editor = dynamic_cast<dc::ui::Editor*>(ed.get());
+    REQUIRE(editor != nullptr);
+    editor->refresh();
+    const char* ids[] = { "name", "weight", "percent", "mode", "mix", "mixValue" };
+    // Fits at the label's smallest horizontal scale (the label squeezes the text instead of cutting it).
+    const auto fits = [](const juce::Label& l, const juce::String& text) {
+        const float w = juce::GlyphArrangement::getStringWidth(l.getFont(), text) * l.getMinimumHorizontalScale();
+        return w <= static_cast<float>(l.getBorderSize().subtractedFrom(l.getLocalBounds()).getWidth()) + 0.5f;
+    };
+    for (const auto size : { juce::Point<int> { 800, 540 }, juce::Point<int> { 900, 600 }, juce::Point<int> { 1400, 900 } })
+    {
+        editor->setSize(size.x, size.y);
+        auto& p = editor->rulePanel();
+        REQUIRE(p.rowCount() == 2);
+        CAPTURE(size.x, p.getWidth());
+        for (int row = 0; row < p.rowCount(); ++row)
+        {
+            auto* r = findById(p, "row" + juce::String(row));
+            REQUIRE(r != nullptr);
+            CHECK(r->getHeight() == 20);
+            CHECK(r->getRight() <= p.getWidth());
+            for (std::size_t i = 0; i < std::size(ids); ++i)
+            {
+                const auto a = control(p, row, ids[i]).getBounds();
+                CAPTURE(row, ids[i], a.toString());
+                CHECK(!a.isEmpty());
+                CHECK(r->getLocalBounds().contains(a));
+                for (std::size_t j = i + 1; j < std::size(ids); ++j)
+                {
+                    CAPTURE(ids[j]);
+                    CHECK(!a.intersects(control(p, row, ids[j]).getBounds()));
+                }
+            }
+            CHECK(control(p, row, "weight").getWidth() >= 36);
+            CHECK(control(p, row, "mix").getWidth() >= 36);
+            const auto* percent = dynamic_cast<juce::Label*>(&control(p, row, "percent"));
+            const auto* mixValue = dynamic_cast<juce::Label*>(&control(p, row, "mixValue"));
+            REQUIRE(percent != nullptr);
+            REQUIRE(mixValue != nullptr);
+            CHECK(fits(*percent, "100 %"));
+            for (const auto* text : { "L1 | L2", "L2 98 %", "L1 98 %", "nur L1", "nur L2" })
+            {
+                CAPTURE(text);
+                CHECK(fits(*mixValue, text));
+            }
+            const auto modeHalf = static_cast<float>(control(p, row, "mode").getWidth()) * 0.5f - 2.0f;
+            CHECK(juce::GlyphArrangement::getStringWidth(dc::ui::panel::mono(10.0f), "1-SHOT") * 0.8f <= modeHalf);
+        }
+    }
+    // Look at it: DC_SNAPSHOT_DIR=<dir> writes editor_mix_<w>x<h>.png.
+    if (const auto dir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {}); dir.isNotEmpty())
+        for (const auto size : { juce::Point<int> { 800, 540 }, juce::Point<int> { 900, 600 } })
+        {
+            editor->setSize(size.x, size.y);
+            const auto img = editor->createComponentSnapshot(editor->getLocalBounds());
+            auto png = juce::File(dir).getChildFile("editor_mix_" + juce::String(size.x) + "x" + juce::String(size.y)
+                                                    + ".png");
+            png.deleteFile();
+            if (auto o = png.createOutputStream())
+                juce::PNGImageFormat().writeImageToStream(img, *o);
+        }
 }
