@@ -10,6 +10,7 @@ add_executable(dc_tests
     test_FxChain.cpp
     test_TransientDetector.cpp
     test_Sequencer.cpp
+    test_MidiTrigger.cpp
     test_Engine.cpp)
 target_link_libraries(dc_tests PRIVATE dc_engine Catch2::Catch2WithMain)
 include(Catch)
