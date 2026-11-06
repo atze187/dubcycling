@@ -1,6 +1,6 @@
 # MIDI trigger mode — design
 
-Date: 2026-11-06. Status: draft for approval.
+Date: 2026-11-06. Status: implemented.
 
 ## Intent
 

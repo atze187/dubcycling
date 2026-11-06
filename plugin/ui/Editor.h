@@ -103,6 +103,9 @@ public:
     FxStrip& fxStrip() { return fxStrip_; }
     FxPanel& fxPanel() { return fxPanel_; }
     PresetBar& presetBar() { return presetBar_; }
+    juce::TextButton& modeButton() { return mode_; }
+    bool cycleVisible() const { return cycle_.isVisible(); }
+    juce::Rectangle<int> cycleBounds() const { return cycle_.getBounds(); }
     juce::Slider& barsField(int slot) { return bars_[slot == 0 ? 0 : 1]; }
     // Pulls state, slot status and loop data from the processor (the timer calls it).
     void refresh();
@@ -176,6 +179,7 @@ private:
     juce::Label bpmCaption_;
     juce::Label bpm_;
     juce::Label cycle_;
+    juce::TextButton mode_; // "Autoplay" / "MIDI": DubcyclingProcessor::setTriggerMode
     juce::Rectangle<int> stripBounds_[2];
     juce::Rectangle<float> ledBounds_[2];
     juce::Colour ledColour_[2];

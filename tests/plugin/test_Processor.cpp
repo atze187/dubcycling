@@ -673,6 +673,16 @@ TEST_CASE("Processor: all-notes-off and prepareToPlay clear held notes", "[proce
     CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
 }
 
+TEST_CASE("Processor: MIDI events in a zero-length block are ignored", "[processor][midi]")
+{
+    MidiFixture f;
+    f.proc.setTriggerMode(TriggerMode::Midi);
+    juce::MidiBuffer on;
+    on.addEvent(juce::MidiMessage::noteOn(1, 60, 1.0f), 0);
+    f.run(on, 0);
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f); // the note did not gate anything
+}
+
 TEST_CASE("Processor: the mode is saved with the project, not with presets", "[processor][midi]")
 {
     ProcFixture f;

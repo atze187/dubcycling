@@ -302,7 +302,7 @@ void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     int numEvents = 0;
     {
         for (const auto meta : midi) {
-            if (numEvents >= kMaxGateEvents)
+            if (numEvents >= kMaxGateEvents || n <= 0) // n == 0: no frame to put an event on (clamp would be UB)
                 break;
             const auto msg = meta.getMessage();
             GateEvent e;

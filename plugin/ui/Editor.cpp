@@ -16,6 +16,7 @@ constexpr int kGap = 6;
 constexpr int kMargin = 8;
 constexpr int kLogoW = 88;
 constexpr int kCycleW = 130;
+constexpr int kModeW = 72;
 constexpr int kFxStripH = 17;     // incl. the 1 px bottom border of the Loop-2 box
 constexpr int kFxPanelMinW = 440; // four modules
 constexpr int kFxPanelMaxW = 600;
@@ -245,6 +246,15 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
     styleLcd(cycle_, kAmber);
     addAndMakeVisible(cycle_);
 
+    mode_.setTooltip("Autoplay: the loops follow the host transport. MIDI: a held note starts both loops at the "
+                     "next host bar and releasing it stops them at the next bar (with a stopped host it starts "
+                     "at once).");
+    mode_.onClick = [this] {
+        proc_.setTriggerMode(proc_.triggerMode() == TriggerMode::Midi ? TriggerMode::Autoplay : TriggerMode::Midi);
+        refresh();
+    };
+    addAndMakeVisible(mode_);
+
     lanes_[0].onRegionSelected = [this](int) { updateRules(proc_.getPluginState()); };
     rules_.onChanged = [this](int region1, std::vector<RuleTarget> targets) {
         rulesEdited(region1, std::move(targets));
@@ -359,6 +369,7 @@ void Editor::refresh()
     updateFx(st);
     cycle_.setText("Cycle: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Bars",
                    juce::dontSendNotification);
+    mode_.setButtonText(proc_.triggerMode() == TriggerMode::Midi ? "MIDI" : "Autoplay");
     presetBar_.refresh();
 }
 
@@ -700,6 +711,8 @@ void Editor::resized()
     bpm_.setBounds(top.removeFromRight(52));
     top.removeFromRight(kGap);
     bpmCaption_.setBounds(top.removeFromRight(34));
+    top.removeFromRight(kGap * 2);
+    mode_.setBounds(top.removeFromRight(kModeW));
     top.removeFromRight(kGap * 2);
     const bool cycleFits = top.getWidth() >= PresetBar::kPreferredWidth + kGap * 2 + kCycleW;
     cycle_.setVisible(cycleFits);
