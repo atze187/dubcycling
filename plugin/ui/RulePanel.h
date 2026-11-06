@@ -14,8 +14,13 @@ juce::String regionLetters(int index);
 juce::String regionLabel(const std::vector<juce::String>& labels, int index);
 
 // The rules of one Loop-1 region: one row per CURRENT Loop-2 region
-//   A  |-------------o-------|  70 %  [GATE]
-// (slider 0..100 %, percent value, Gate/One-Shot toggle) and "Stille: x %" for the remainder.
+//   A  |-------------o-------|  70 %  [GATE]  |----|-o--|  L1 60 %
+// (slider 0..100 %, percent value, Gate/One-Shot toggle, mix Loop 1 vs. Loop 2 with its readout)
+// and "Silence: x %" for the remainder.
+//
+// Mix is 0..1 (RuleTarget::mix, see MixGain.h), 0.5 = both loops full; a double-click on the mix
+// slider sets the centre. It is kept when weight or mode change and behaves like the weight for
+// storing (a touched mix stores the target, also with weight 0) and publishing (drag: once at the end).
 //
 // Weights are percent here (0..100), RuleTarget::weight is 0..1. A change that would lift the
 // sum above 100 % is capped at the remaining percent; the other rows stay as they are.
@@ -51,6 +56,11 @@ public:
     void beginDrag(int row);
     void dragWeight(int row, float percent);
     void endDrag();
+    // Mix of a row, clamped to 0..1 (NaN = centre). setMix publishes once; a drag at its end.
+    void setMix(int row, float mix);
+    void beginMixDrag(int row);
+    void dragMix(int row, float mix);
+    void endMixDrag();
 
     int region1() const { return region1_; }
     int rowCount() const { return static_cast<int>(rows_.size()); }
@@ -58,8 +68,11 @@ public:
     float weightPercent(int row) const;
     PlayMode mode(int row) const;
     juce::String percentText(int row) const;
+    float mix(int row) const; // 0.5 for rows that do not exist
+    // "L1 | L2" at the centre, "L2 40 %" left of it (Loop-2 level), "L1 40 %" right of it, "L1 only" / "L2 only".
+    juce::String mixText(int row) const;
     juce::String silenceText() const { return silence_.getText(); }
-    // "davon X % auf entfernte Regionen" while stale targets exist, otherwise empty (and hidden).
+    // "X % of it on removed regions" while stale targets exist, otherwise empty (and hidden).
     juce::String staleText() const { return staleHint_.isVisible() ? staleHint_.getText() : juce::String(); }
     // Drops exactly the stale targets (not shown, duplicates, negative) and publishes once.
     void resetStale();
@@ -71,11 +84,12 @@ private:
     struct Row;
     static constexpr int kRowH = 20;
     static constexpr int kHeaderH = 22;
-    static constexpr int kLabelW = 72; // name column of a row (kMaxLabelLength characters fit scaled)
+    static constexpr int kCaptionH = 12; // column captions above the rows
 
     float otherPercent(int row) const; // everything except this row's own target
     float stalePercent() const;        // stored targets no row shows
     void applyWeight(int row, float percent);
+    void applyMix(int row, float mix);
     void updateSilence();
     void publish();
     std::vector<RuleTarget> buildTargets() const;

@@ -5,9 +5,14 @@ add_library(dc_engine STATIC
     LoopReader.h LoopReader.cpp
     RegionMap.h RegionMap.cpp
     TransientDetector.h TransientDetector.cpp
+    MixGain.h
     RuleSet.h RuleSet.cpp
+    FxSettings.h FxSettings.cpp
+    fx/Bitcrush.h fx/Bitcrush.cpp fx/Filter.h fx/Filter.cpp
+    fx/Flanger.h fx/Flanger.cpp fx/Reverb.h fx/Reverb.cpp
+    fx/FxChain.h fx/FxChain.cpp
     Sequencer.h Sequencer.cpp
-    FxSlot.h Engine.h Engine.cpp)
+    Engine.h Engine.cpp)
 target_include_directories(dc_engine PUBLIC ${PROJECT_SOURCE_DIR})
 target_compile_features(dc_engine PUBLIC cxx_std_20)
 if(MSVC)

@@ -5,14 +5,14 @@
 namespace dc {
 
 namespace {
-// Wrappt nach [0,1), auch für negative Werte; Rundung auf 1.0 ergibt 0.0.
+// Wraps to [0,1), also for negative values; rounding to 1.0 gives 0.0.
 double wrap01(double p)
 {
     p -= std::floor(p);
     return p >= 1.0 ? 0.0 : p;
 }
 
-// Kürzester Abstand zweier Phasen auf dem Kreis, in [0, 0.5].
+// Shortest distance between two phases on the circle, in [0, 0.5].
 double circularDistance(double a, double b)
 {
     const double d = std::abs(a - b);
@@ -51,15 +51,15 @@ void LoopReader::render(float* l, float* r, int n, double phase01, double phaseS
     {
         std::fill(l, l + n, 0.0f);
         std::fill(r, r + n, 0.0f);
-        started_ = false; // nach Stille sauber neu einsetzen
+        started_ = false; // restart cleanly after silence
         return;
     }
 
     const double len = static_cast<double>(frames);
     const double phase = wrap01(phase01);
 
-    // Tonhöhe: Die Stücke lesen mit dem Verhältnis der Sampleraten, unabhängig vom Tempo. Das Tempo
-    // (step aus sourceStep) steckt allein im Phasenzuwachs, den der Aufrufer vorgibt.
+    // Pitch: the grains read at the ratio of the sample rates, independent of tempo. The tempo
+    // (step from sourceStep) lives solely in the phase increment the caller provides.
     const double srcRate = std::isfinite(d->sampleRate) && d->sampleRate > 0.0 ? d->sampleRate : outRate_;
     GrainFrame f;
     f.step = srcRate / outRate_;
@@ -76,8 +76,8 @@ void LoopReader::render(float* l, float* r, int n, double phase01, double phaseS
     }
     else
     {
-        // Sprungerkennung: Weicht die gegebene Phase von der Fortschreibung des letzten Blocks um mehr
-        // als eine halbe Grain-Länge Spielzeit ab, setzen beide Kanäle sofort neu an (mit Überblendung).
+        // Jump detection: if the given phase deviates from the continuation of the last block by more
+        // than half a grain length of playing time, both channels restart immediately (with a crossfade).
         const double tolerance = std::abs(lastPhaseStep_) * 0.5 * grainLen_ + 1e-9;
         if (circularDistance(phase, expectedPhase_) > tolerance)
         {

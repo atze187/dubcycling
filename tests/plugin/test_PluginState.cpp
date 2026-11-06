@@ -1,8 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <clocale>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <locale>
+#include <optional>
+#include <string>
 #include <juce_core/juce_core.h>
 #include "plugin/PluginState.h"
 
@@ -280,4 +285,215 @@ TEST_CASE("sanitizeName drops control characters, trims and cuts", "[PluginState
 {
     CHECK(sanitizeName(juce::String("  a") + juce::String::charToString(9) + "b  ", 16) == "ab");
     CHECK(sanitizeName("abcdef", 3) == "abc");
+}
+
+namespace {
+std::optional<PluginState> loadXml(const juce::String& xml)
+{
+    const auto utf8 = xml.toRawUTF8();
+    return deserialize(utf8, std::strlen(utf8));
+}
+juce::String fxDoc(const juce::String& fxXml, const juce::String& loop2 = "<Loop2 bars=\"1\"/>")
+{
+    return "<DubcyclingState version=\"1\"><Loop1 bars=\"1\"/>" + loop2 + fxXml + "</DubcyclingState>";
+}
+}
+
+TEST_CASE("State: fx settings survive a round trip", "[PluginState][fx]")
+{
+    auto s = sample();
+    s.loop2.boundaries = { 0.25, 0.5, 0.75 };
+    s.fx.params.set(FxParam::ReverbMix, 0.123456789012345);
+    s.fx.params.set(FxParam::FilterType, 2);
+    s.fx.params.set(FxParam::FilterCutoff, 1234.5);
+    s.fx.params.set(FxParam::FlangerFeedback, -0.7);
+    s.fx.setSwitch(0, FxInsert::Filter, true);
+    s.fx.setSwitch(3, FxInsert::Bitcrush, true);
+    s.fx.setSwitch(3, FxInsert::Reverb, true);
+    const auto block = serialize(s);
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    CHECK(r->fx == s.fx);
+    CHECK(r->fx.maskFor(0) == 2);
+    CHECK(r->fx.maskFor(3) == 9);
+}
+
+TEST_CASE("State: a state without fx loads with defaults and everything off", "[PluginState][fx]")
+{
+    const auto r = loadXml(fxDoc(""));
+    REQUIRE(r.has_value());
+    CHECK(r->fx == FxSettings {});
+    CHECK(r->fx.switches.empty());
+}
+
+TEST_CASE("State: default fx writes no Fx element", "[PluginState][fx]")
+{
+    const auto text = serialize(sample()).toString();
+    CHECK_FALSE(text.contains("Fx"));
+    auto s = sample();
+    s.fx.params.set(FxParam::ReverbMix, 0.9);
+    CHECK(serialize(s).toString().contains("<Fx"));
+}
+
+TEST_CASE("State: fx numbers are sanitized", "[PluginState][fx][hardening]")
+{
+    const auto r = loadXml(fxDoc("<Fx reverb.mix=\"nan\" filter.cutoff=\"1e99\" bitcrush.bits=\"abc\" flanger.rate=\"inf\">"
+                                 "<Switches><Switch region=\"-1\" mask=\"3\"/><Switch region=\"99999\" mask=\"3\"/>"
+                                 "<Switch region=\"1\" mask=\"255\"/></Switches></Fx>",
+                                 "<Loop2 bars=\"1\" boundaries=\"0.5\"/>"));
+    REQUIRE(r.has_value());
+    CHECK(r->fx.params.get(FxParam::ReverbMix) == sanitizeFxParam(FxParam::ReverbMix, fxParamInfo(FxParam::ReverbMix).def));
+    CHECK(r->fx.params.get(FxParam::FilterCutoff) == 20000.0f);
+    CHECK(r->fx.params.get(FxParam::BitcrushBits) == 8.0f);
+    CHECK(r->fx.params.get(FxParam::FlangerRate) == 0.3f);
+    CHECK(r->fx.maskFor(1) == 15);
+    CHECK(r->fx.switches.size() == 2);
+}
+
+namespace {
+struct CommaPoint : std::numpunct<char>
+{
+    char do_decimal_point() const override { return ','; }
+};
+
+// Sets a decimal-comma locale (C locale if one is installed, and the C++ global locale), restores both.
+struct ScopedCommaLocale
+{
+    std::string oldC;
+    std::locale oldCpp;
+    bool cSet = false;
+    ScopedCommaLocale()
+    {
+        if (const char* c = std::setlocale(LC_ALL, nullptr))
+            oldC = c;
+        for (const char* name : { "de-DE", "German_Germany", "de_DE.UTF-8", "de_DE" })
+            if (std::setlocale(LC_ALL, name) != nullptr)
+            {
+                cSet = true;
+                break;
+            }
+        oldCpp = std::locale::global(std::locale(std::locale::classic(), new CommaPoint));
+    }
+    ~ScopedCommaLocale()
+    {
+        std::locale::global(oldCpp);
+        std::setlocale(LC_ALL, oldC.empty() ? "C" : oldC.c_str());
+    }
+};
+} // namespace
+
+TEST_CASE("State: fx numbers survive a round trip under a decimal-comma locale", "[PluginState][fx][locale]")
+{
+    auto s = sample();
+    s.fx.params.set(FxParam::ReverbMix, 0.37);
+    s.fx.params.set(FxParam::FilterCutoff, 1234.5);
+    s.fx.params.set(FxParam::FlangerFeedback, -0.7);
+    // Written with '.', read back while a host has switched to a decimal-comma locale (some hosts
+    // call setlocale; the C++ global locale is switched too, for a stream-based parser).
+    const auto block = serialize(s);
+    REQUIRE(block.toString().contains("0.37"));
+    std::optional<PluginState> r;
+    {
+        ScopedCommaLocale comma;
+        if (comma.cSet)
+            REQUIRE(std::strtod("0,5", nullptr) == 0.5); // the C locale really uses a comma
+        r = deserialize(block.getData(), block.getSize());
+    }
+    REQUIRE(r.has_value());
+    CHECK(r->fx.params == s.fx.params);
+    CHECK(r->fx.params.get(FxParam::ReverbMix) == s.fx.params.get(FxParam::ReverbMix));
+}
+
+TEST_CASE("State: fx number text forms", "[PluginState][fx][hardening]")
+{
+    const float def = sanitizeFxParam(FxParam::ReverbMix, fxParamInfo(FxParam::ReverbMix).def);
+    const auto mixOf = [](const juce::String& text) {
+        const auto r = loadXml(fxDoc("<Fx reverb.mix=\"" + text + "\"/>"));
+        REQUIRE(r.has_value());
+        return r->fx.params.get(FxParam::ReverbMix);
+    };
+    CHECK(mixOf("1e-1") == sanitizeFxParam(FxParam::ReverbMix, 0.1));
+    CHECK(mixOf("+0.5") == sanitizeFxParam(FxParam::ReverbMix, 0.5));
+    CHECK(mixOf(" 0.5 ") == sanitizeFxParam(FxParam::ReverbMix, 0.5));
+    CHECK(mixOf("-0.0") == 0.0f);
+    for (const char* bad : { "0.5abc", "", "1e999", "-1e999", "inf", "nan", "+", "++0.5", "0,5", "0.5 1", "abc" })
+    {
+        CAPTURE(bad);
+        CHECK(mixOf(bad) == def);
+    }
+}
+
+TEST_CASE("State: surplus switch entries beyond the Loop-2 region count are dropped", "[PluginState][fx][hardening]")
+{
+    const auto r = loadXml(fxDoc("<Fx><Switches><Switch region=\"2\" mask=\"1\"/><Switch region=\"7\" mask=\"1\"/></Switches></Fx>",
+                                 "<Loop2 bars=\"1\" boundaries=\"0.3,0.6\"/>"));
+    REQUIRE(r.has_value());
+    CHECK(r->loop2.boundaries.size() == 2);
+    CHECK(r->fx.maskFor(2) == 1);
+    CHECK(r->fx.maskFor(7) == 0);
+    CHECK(r->fx.switches.size() == 3);
+}
+
+TEST_CASE("sanitizeFx clamps, masks and trims", "[PluginState][fx]")
+{
+    FxSettings f;
+    f.switches = { 255, 0, 1, 0, 0, 7 };
+    const auto out = sanitizeFx(f, 3);
+    CHECK(out.switches == std::vector<std::uint8_t> { 15, 0, 1 });
+}
+
+namespace {
+juce::String mixDoc(const juce::String& targetAttrs)
+{
+    return "<DubcyclingState version=\"1\"><Loop1 bars=\"1\"/><Loop2 bars=\"1\"/><Rules><Rule region1=\"0\">"
+           "<Target region2=\"1\" weight=\"1\" mode=\"0\" " + targetAttrs + "/></Rule></Rules></DubcyclingState>";
+}
+}
+
+TEST_CASE("State: the mix of a target survives a round trip", "[PluginState][mix]")
+{
+    auto s = sample();
+    s.rules[0].targets[0].mix = 0.2f;
+    s.rules[0].targets[1].mix = 0.8f;
+    s.rules[1].targets[0].mix = 0.0f;
+    auto s2 = s;
+    s2.rules[1].targets[0].mix = 1.0f;
+    for (const auto& st : { s, s2 })
+    {
+        const auto block = serialize(st);
+        const auto r = deserialize(block.getData(), block.getSize());
+        REQUIRE(r.has_value());
+        REQUIRE(r->rules.size() == 2);
+        CHECK(r->rules[0].targets[0].mix == st.rules[0].targets[0].mix);
+        CHECK(r->rules[0].targets[1].mix == st.rules[0].targets[1].mix);
+        CHECK(r->rules[1].targets[0].mix == st.rules[1].targets[0].mix);
+    }
+}
+
+TEST_CASE("State: a target without mix loads with 0.5", "[PluginState][mix]")
+{
+    const auto r = loadXml(mixDoc(""));
+    REQUIRE(r.has_value());
+    REQUIRE(r->rules.size() == 1);
+    CHECK(r->rules[0].targets[0].mix == 0.5f);
+}
+
+TEST_CASE("State: the default mix writes no attribute", "[PluginState][mix]")
+{
+    CHECK_FALSE(serialize(sample()).toString().contains("mix="));
+    auto s = sample();
+    s.rules[0].targets[0].mix = 0.3f;
+    CHECK(serialize(s).toString().contains("mix="));
+}
+
+TEST_CASE("State: mix numbers are sanitized", "[PluginState][mix][hardening]")
+{
+    const std::pair<const char*, float> cases[] = { { "nan", 0.5f }, { "abc", 0.5f }, { "1e99", 1.0f }, { "-5", 0.0f }, { "inf", 0.5f } };
+    for (const auto& [text, expected] : cases)
+    {
+        const auto r = loadXml(mixDoc(juce::String("mix=\"") + text + "\""));
+        REQUIRE(r.has_value());
+        REQUIRE(r->rules.size() == 1);
+        CHECK(r->rules[0].targets[0].mix == expected);
+    }
 }

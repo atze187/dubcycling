@@ -1,7 +1,11 @@
 #include "plugin/PluginState.h"
 #include <algorithm>
 #include <cmath>
+#include <locale>
+#include <sstream>
+#include <string>
 #include <juce_cryptography/juce_cryptography.h>
+#include "engine/MixGain.h"
 #include "engine/RegionMap.h"
 
 namespace dc {
@@ -64,6 +68,72 @@ LoopRef loopFromTree(const juce::ValueTree& t)
     return l;
 }
 
+
+// Garbage text -> NaN (sanitizeFxParam turns that into the default, as for NaN/inf). Locale
+// independent: num() always writes '.', whatever decimal point a host set with setlocale.
+double parseFxNumber(const juce::String& text)
+{
+    // A classic-locale stream (std::from_chars for double is missing in Apple libc++ before macOS 13.3).
+    const auto t = text.trim().toStdString();
+    if (t.empty())
+        return std::nan("");
+    std::istringstream in(t);
+    in.imbue(std::locale::classic());
+    in >> std::noskipws;
+    double v = 0.0;
+    in >> v; // accepts an optional sign; out of range, "inf" or "nan" text set failbit
+    if (in.fail() || in.peek() != std::char_traits<char>::eof())
+        return std::nan(""); // garbage, out of range or trailing characters
+    return v;
+}
+
+juce::ValueTree fxToTree(const FxSettings& fx)
+{
+    juce::ValueTree t("Fx");
+    for (int p = 0; p < kFxParamCount; ++p)
+    {
+        const auto param = static_cast<FxParam>(p);
+        if (fx.params.get(param) != sanitizeFxParam(param, fxParamInfo(param).def))
+            t.setProperty(fxParamInfo(param).id, num(static_cast<double>(fx.params.get(param))), nullptr);
+    }
+    juce::ValueTree switches("Switches");
+    for (std::size_t i = 0; i < fx.switches.size() && i < static_cast<std::size_t>(kMaxFxRegions); ++i)
+        if (fx.switches[i] != 0)
+        {
+            juce::ValueTree n("Switch");
+            n.setProperty("region", static_cast<int>(i), nullptr);
+            n.setProperty("mask", static_cast<int>(fx.switches[i]), nullptr);
+            switches.appendChild(n, nullptr);
+        }
+    if (switches.getNumChildren() > 0)
+        t.appendChild(switches, nullptr);
+    return t;
+}
+
+FxSettings fxFromTree(const juce::ValueTree& t)
+{
+    FxSettings fx;
+    for (int p = 0; p < kFxParamCount; ++p)
+    {
+        const auto param = static_cast<FxParam>(p);
+        if (t.hasProperty(fxParamInfo(param).id))
+            fx.params.set(param, parseFxNumber(t.getProperty(fxParamInfo(param).id).toString()));
+    }
+    int kept = 0;
+    for (auto n : t.getChildWithName("Switches"))
+    {
+        if (kept++ >= kMaxFxRegions)
+            break;
+        const int region = n.getProperty("region", -1);
+        if (region < 0 || region >= kMaxFxRegions)
+            continue;
+        if (fx.switches.size() <= static_cast<std::size_t>(region))
+            fx.switches.resize(static_cast<std::size_t>(region) + 1, 0);
+        fx.switches[static_cast<std::size_t>(region)] = static_cast<std::uint8_t>(std::clamp(static_cast<int>(n.getProperty("mask", 0)), 0, 15));
+    }
+    return fx;
+}
+
 } // namespace
 
 std::vector<double> sanitizeBoundaries(const std::vector<double>& raw)
@@ -123,6 +193,21 @@ juce::String sanitizeName(const juce::String& text, int maxLength)
     return out.trim().substring(0, maxLength).trim();
 }
 
+FxSettings sanitizeFx(FxSettings fx, int loop2RegionCount)
+{
+    for (int p = 0; p < kFxParamCount; ++p)
+    {
+        const auto param = static_cast<FxParam>(p);
+        fx.params.set(param, fx.params.get(param)); // sanitized by set
+    }
+    if (fx.switches.size() > static_cast<std::size_t>(kMaxFxRegions))
+        fx.switches.resize(static_cast<std::size_t>(kMaxFxRegions));
+    for (auto& m : fx.switches)
+        m &= 15;
+    fx.trimTo(loop2RegionCount);
+    return fx;
+}
+
 juce::MemoryBlock serialize(const PluginState& s)
 {
     juce::ValueTree root("DubcyclingState");
@@ -144,11 +229,15 @@ juce::MemoryBlock serialize(const PluginState& s)
             tt.setProperty("region2", t.region2, nullptr);
             tt.setProperty("weight", num(static_cast<double>(t.weight)), nullptr);
             tt.setProperty("mode", t.mode == PlayMode::OneShot ? 1 : 0, nullptr);
+            if (t.mix != 0.5f)
+                tt.setProperty("mix", num(static_cast<double>(t.mix)), nullptr);
             r.appendChild(tt, nullptr);
         }
         rules.appendChild(r, nullptr);
     }
     root.appendChild(rules, nullptr);
+    if (s.fx != FxSettings {})
+        root.appendChild(fxToTree(s.fx), nullptr);
 
     juce::MemoryBlock block;
     if (auto xml = root.createXml())
@@ -190,12 +279,18 @@ std::optional<PluginState> deserialize(const void* data, std::size_t size)
                 t.region2 = tt.getProperty("region2", 0);
                 t.weight = static_cast<float>(tt.getProperty("weight").toString().getDoubleValue());
                 t.mode = static_cast<int>(tt.getProperty("mode", 0)) == 1 ? PlayMode::OneShot : PlayMode::Gate;
+                if (tt.hasProperty("mix"))
+                {
+                    const double m = parseFxNumber(tt.getProperty("mix").toString());
+                    t.mix = std::isfinite(m) ? sanitizeMix(static_cast<float>(std::clamp(m, 0.0, 1.0))) : 0.5f;
+                }
                 if (!addRuleTarget(targets, t))
                     break;
             }
             if (auto e = sanitizeRuleEntry(r.getProperty("region1", -1), std::move(targets), r.getNumChildren() > 0))
                 s.rules.push_back(std::move(*e));
         }
+        s.fx = sanitizeFx(fxFromTree(root.getChildWithName("Fx")), static_cast<int>(s.loop2.boundaries.size()) + 1);
         return s;
     }
     catch (...)

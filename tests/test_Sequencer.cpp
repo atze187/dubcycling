@@ -157,3 +157,35 @@ TEST_CASE("Sequencer is not copyable or movable (audio-thread state, own RNG)", 
     for (int i = 0; i < 100; ++i)
         CHECK(s.onRegion1(0, rs).type == Type::Start);
 }
+
+TEST_CASE("Sequencer: the start command carries the mix of the drawn target and the triggering region", "[Sequencer]")
+{
+    dc::RuleSet rs;
+    dc::RuleTarget t = T(2, 1.0f);
+    t.mix = 0.8f;
+    rs.setTargets(3, { t });
+    dc::Sequencer s;
+    s.setRandom(seq({ 0.1f }));
+    const auto c = s.onRegion1(3, rs);
+    REQUIRE(c.type == Type::Start);
+    REQUIRE(c.mix == 0.8f);
+    REQUIRE(c.region1 == 3);
+    REQUIRE(dc::Sequencer::Command{}.mix == 0.5f);
+    REQUIRE(dc::Sequencer::Command{}.region1 == -1);
+}
+
+TEST_CASE("Sequencer: a draw carries the mix", "[Sequencer]")
+{
+    dc::RuleSet rs;
+    dc::RuleTarget t = T(2, 1.0f);
+    t.mix = 0.2f;
+    rs.setTargets(1, { t });
+    dc::Sequencer s;
+    s.setRandom(seq({ 0.1f }));
+    const auto d = s.draw(1, rs);
+    REQUIRE(d.type == dc::Sequencer::Draw::Type::Target);
+    REQUIRE(d.mix == 0.2f);
+    const auto c = s.apply(1, d);
+    REQUIRE(c.mix == 0.2f);
+    REQUIRE(c.region1 == 1);
+}

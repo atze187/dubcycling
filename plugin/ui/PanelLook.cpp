@@ -1,5 +1,6 @@
 #include "plugin/ui/PanelLook.h"
 #include <algorithm>
+#include <cmath>
 
 namespace dc::ui {
 
@@ -75,10 +76,22 @@ void PanelLook::drawLinearSlider(juce::Graphics& g, int x, int y, int width, int
     const float filled = left + static_cast<float>(slider.valueToProportionOfLength(slider.getValue())) * (right - left);
     const auto on = slider.findColour(juce::Slider::trackColourId);
     const auto off = slider.findColour(juce::Slider::backgroundColourId);
+    const bool bipolar = static_cast<bool>(slider.getProperties()[kBipolar]);
+    const float centre = left + 0.5f * (right - left);
+    const float litFrom = bipolar ? std::min(centre, filled) : left;
+    const float litTo = bipolar ? std::max(centre, filled) : filled;
     for (float sx = left; sx + kSeg <= right + 0.01f; sx += kSeg + kGap)
     {
-        g.setColour(sx + kSeg * 0.5f <= filled ? on : off);
+        const float mid = sx + kSeg * 0.5f;
+        g.setColour(mid >= litFrom && mid <= litTo ? on : off);
         g.fillRect(sx, top, kSeg, kBar);
+    }
+    if (bipolar)
+    {
+        g.setColour(slider.findColour(juce::Slider::thumbColourId).withAlpha(0.6f));
+        g.fillRect(std::round(centre) - 0.5f, top - 2.0f, 1.0f, kBar + 4.0f);
+        g.setColour(slider.findColour(juce::Slider::thumbColourId));
+        g.fillRect(std::clamp(filled, left + 1.0f, right - 1.0f) - 1.0f, top - 2.0f, 2.0f, kBar + 4.0f);
     }
 }
 

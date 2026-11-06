@@ -4,6 +4,10 @@ add_executable(dc_tests
     test_LoopReader.cpp
     test_RegionMap.cpp
     test_RuleSet.cpp
+    test_MixGain.cpp
+    test_FxSettings.cpp
+    test_FxUnits.cpp
+    test_FxChain.cpp
     test_TransientDetector.cpp
     test_Sequencer.cpp
     test_Engine.cpp)
@@ -11,7 +15,7 @@ target_link_libraries(dc_tests PRIVATE dc_engine Catch2::Catch2WithMain)
 include(Catch)
 catch_discover_tests(dc_tests)
 
-# Plugin-seitige Tests: JUCE-Konsolen-App, die dc_plugin_shared linkt.
+# Plugin-side tests: JUCE console app that links dc_plugin_shared.
 juce_add_console_app(dc_plugin_tests PRODUCT_NAME "DubcyclingPluginTests")
 target_sources(dc_plugin_tests PRIVATE
     plugin/test_LoopLoader.cpp
@@ -19,6 +23,8 @@ target_sources(dc_plugin_tests PRIVATE
     plugin/test_PluginState.cpp
     plugin/test_FileRelink.cpp
     plugin/test_LoopLane.cpp
+    plugin/test_FxStrip.cpp
+    plugin/test_FxPanel.cpp
     plugin/test_Editor.cpp
     plugin/test_RulePanel.cpp
     plugin/test_Processor.cpp
@@ -27,7 +33,7 @@ target_sources(dc_plugin_tests PRIVATE
     plugin/test_BankStore.cpp
     plugin/test_BankArchive.cpp
     plugin/test_PresetBar.cpp)
-# dc_plugin_ui bringt Processor und Editor als Quellen mit (die Tests instanziieren den Editor).
+# dc_plugin_ui brings Processor and Editor as sources (the tests instantiate the editor).
 target_link_libraries(dc_plugin_tests PRIVATE dc_plugin_shared dc_plugin_ui Catch2::Catch2WithMain)
 target_compile_definitions(dc_plugin_tests PRIVATE
     DC_TEST_HOOKS=1

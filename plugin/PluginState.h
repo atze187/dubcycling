@@ -3,6 +3,7 @@
 #include <optional>
 #include <vector>
 #include <juce_data_structures/juce_data_structures.h>
+#include "engine/FxSettings.h"
 #include "engine/RuleSet.h"
 
 namespace dc {
@@ -50,6 +51,9 @@ struct PluginState
     // Names of the bank and preset last loaded or saved; empty = none. Optional in the stored
     // state (only written when not empty), so kStateVersion stays 1.
     juce::String activeBank, activePreset;
+    // Effect settings (knobs and per-Loop-2-region switches). Optional in the stored state (an Fx
+    // element is only written when not the default), so kStateVersion stays 1.
+    FxSettings fx;
 };
 
 // Shared sanitizing steps of deserialize (also used by the bank file format).
@@ -62,6 +66,9 @@ bool addRuleTarget(std::vector<RuleTarget>& targets, const RuleTarget& t);
 // Weights through RuleSet::setTargets; nullopt for region1 outside 0..kMaxRegion1-1, or when the
 // result is empty and the source entry had no targets at all (hadTargets = false).
 std::optional<RuleEntry> sanitizeRuleEntry(int region1, std::vector<RuleTarget> targets, bool hadTargets);
+
+// Params through sanitizeFxParam, masks to 0..15, switches cut to loop2RegionCount regions.
+FxSettings sanitizeFx(FxSettings fx, int loop2RegionCount);
 
 juce::MemoryBlock serialize(const PluginState&);
 

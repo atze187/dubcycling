@@ -1,175 +1,175 @@
-# Dubcycling – Presets und Banks (Design)
+# Dubcycling – Presets and Banks (Design)
 
-Stand: 2026-11-04. Entstanden im Gespräch mit dem Nutzer (Backlog-Punkt 5). Was der Nutzer entschieden hat, steht
-als Entscheidung da; was Claude als Vorschlag ergänzt hat, steht unter "Entscheidungen von Claude".
+As of: 2026-11-04. Came out of the conversation with the user (backlog item 5). What the user decided is stated
+as a decision; what Claude added as a proposal is under "Decisions by Claude".
 
-## Worum es geht und warum
+## What it is about and why
 
-Der Nutzer baut pro Live-Session Aufbauten aus zwei Loops, Regionen, Beschriftungen und Regeln. Wenn ein Aufbau gut
-klingt, will er ihn mit einem Knopf, einem Namen und ohne Dateidialoge festhalten, später wiederholen und
-unkompliziert an andere weitergeben. Presets sind nicht für den Wechsel während des Spielens gedacht ("vermutlich
-gar nicht"), sondern zum Vorbereiten, Wiederfinden und Weiterreichen. Später, wenn auch Nicht-Drum-Loops und Effekte
-pro Region dazukommen, werden Presets wichtiger.
+For each live session the user builds setups from two loops, regions, labels and rules. When a setup sounds good,
+they want to capture it with one button, a name and no file dialogs, repeat it later and hand it on to others
+without hassle. Presets are not meant for switching while playing ("probably not at all"), but for preparing,
+finding again and passing on. Later, when non-drum loops and effects per region are added, presets become more
+important.
 
-## Begriffe
+## Terms
 
-- **Preset:** der komplette gespeicherte Zustand des Plugins: beide Loops (Datei, Hash, Takte, Regionsgrenzen,
-  Beschriftungen) und die Regeln (Gewichte, Modus Gate/One-Shot, Stille-Anteil ergibt sich aus der Restmenge).
-  Effekte pro Region kommen später dazu; das Format muss sie aufnehmen können.
-- **Bank:** ein Ordner im Dubcycling-Preset-Ordner. Er gehört zu einer Live-Session oder einem Stil (Beispiele des
-  Nutzers: "atmospheric jungle", "jump up", "techstep") und enthält mehrere Presets samt den Loop-Dateien, die sie
-  brauchen.
-- **Preset-Ordner:** der Dubcycling-Ordner, in dem alle Banks liegen und in den beim Import entpackt wird.
+- **Preset:** the complete saved state of the plugin: both loops (file, hash, bars, region boundaries,
+  labels) and the rules (weights, mode Gate/One-Shot, the silence share follows from the remainder).
+  Effects per region will be added later; the format has to be able to take them.
+- **Bank:** a folder in the Dubcycling preset folder. It belongs to a live session or a style (the user's
+  examples: "atmospheric jungle", "jump up", "techstep") and contains several presets together with the loop files
+  they need.
+- **Preset folder:** the Dubcycling folder in which all banks live and into which imports are unpacked.
 
-## Ziele
+## Goals
 
-1. Ein Preset speichern ist ein Knopfdruck plus Namenseingabe.
-2. Eine Bank ist in sich geschlossen: Bank-Datei und Loop-Dateien liegen zusammen, die Pfade sind relativ. Eine
-   Bank lässt sich kopieren, verschieben und weitergeben, ohne dass etwas bricht.
-3. Export ist ein Zip einer Bank, Import ist Entpacken in den Preset-Ordner. Es müssen keine Pfade umgeschrieben
-   werden.
-4. Mehrere Banks nebeneinander.
-5. Das Dateiformat ist erweiterbar (Effekte pro Region, weitere Zustandsfelder), ohne alte Banks zu entwerten.
+1. Saving a preset is one button press plus entering a name.
+2. A bank is self-contained: bank file and loop files lie together, the paths are relative. A
+   bank can be copied, moved and passed on without anything breaking.
+3. Export is a zip of a bank, import is unpacking into the preset folder. No paths have to be
+   rewritten.
+4. Several banks side by side.
+5. The file format is extensible (effects per region, further state fields) without invalidating old banks.
 
-## Nicht-Ziele
+## Non-goals
 
-- Preset-Wechsel während des Spielens: keine MIDI-Programmwechsel, keine Anbindung an die Programmliste des Hosts,
-  kein nahtloses Umschalten bei laufender Wiedergabe. Ein Preset zu laden darf kurz dauern.
-- Teilen über Cloud, Online-Bibliothek oder Standard-Preset-Formate von Hosts (.vstpreset, .fxp/.fxb im
-  VST2-Format). Das Konzept ist an fxb/fxp angelehnt, das Format ist eigen.
-- Aufräum-Funktion für unbenutzte Samples (Ordner wächst; später möglich).
-- Ändern des Preset-Ordners per Einstellung.
+- Preset switching while playing: no MIDI program changes, no connection to the host's program list,
+  no seamless switching during playback. Loading a preset may take a moment.
+- Sharing via cloud, online library or standard host preset formats (.vstpreset, .fxp/.fxb in the
+  VST2 format). The concept is modeled on fxb/fxp, the format is its own.
+- Cleanup function for unused samples (folder grows; possible later).
+- Changing the preset folder via a setting.
 
-## Anti-Ziele (daran würde es scheitern, selbst wenn es technisch läuft)
+## Anti-goals (it would fail on these even if it works technically)
 
-- Ein exportiertes Zip, das auf einem anderen Rechner nicht funktioniert (fehlende Samples, kaputte Pfade).
-- Ein Laden, das das Plugin in einem halben Zustand lässt, oder ein Speichern, das eine bestehende Bank beschädigt.
-- Dass das Plugin vom Nutzer Gespeichertes still löscht.
-- Dateizugriffe im Audio-Thread.
+- An exported zip that does not work on another machine (missing samples, broken paths).
+- A load that leaves the plugin in a half state, or a save that damages an existing bank.
+- The plugin silently deleting something the user saved.
+- File access in the audio thread.
 
-## Entscheidungen des Nutzers
+## Decisions by the user
 
-- Ablauf: Knopf drücken, das Plugin fragt nach einem Namen, der Nutzer gibt ihn ein, das Plugin speichert.
-- Es gibt mehrere Banks, benannt vom Nutzer.
-- Eine Bank ist ein Ordner mit Bank-Datei und Unterordner `samples`. Die Pfade in der Bank-Datei sind relativ.
-- Die Samples werden erst beim Speichern eines Presets in den Bank-Ordner kopiert, nicht beim Laden des Loops.
-  Jede Bank hat ihre eigenen Kopien, auch wenn dieselbe Datei in mehreren Banks vorkommt (doppelter Platz ist in
-  Ordnung).
-- Das Plugin löscht nie ein Sample aus `samples`. Ersetzt der Nutzer einen Loop in einem Preset, bleibt das alte
-  Sample lokal liegen.
-- Export packt nur Samples ein, die mindestens ein Preset der Bank nutzt. Unbenutzte bleiben lokal erhalten.
-- Das Zip enthält als oberstes Element genau einen Ordner mit dem Namen der Bank.
-- Import: Der Nutzer entpackt das Zip in den Dubcycling-Preset-Ordner, die Bank erscheint danach im Plugin.
-- Format der Bank-Datei: JSON.
-- In den Auswahllisten ist der aktuelle Eintrag gekennzeichnet: in der Bank-Liste die ausgewählte Bank, in der
-  Preset-Liste das aktive Preset.
-- Rückfrage beim Laden: Wählt der Nutzer ein Preset, während der aktuelle Zustand ungespeichert ist, fragt das
-  Plugin vor dem Laden nach. Es ersetzt den Zustand nur nach Bestätigung (Schutz vor einem Fehlklick).
-  Umsetzung nach dem Muster des Namensfeldes: In derselben Zeile erscheint statt der Preset-Auswahl eine Meldung
-  ("Ungespeicherte Änderungen verwerfen?") mit LADEN und ABBRECHEN, kein eigenes Dialogfenster (Claudes Vorschlag
-  zur Darstellung, der Nutzer hat nur die Rückfrage selbst entschieden).
-- Speichern überschreibt das geladene Preset. Ohne geladenes Preset fragt es nach einem Namen. "Speichern unter"
-  legt eine Variante unter neuem Namen an.
-- Oberfläche (Entwurf "A", vom Nutzer abgenommen, im Look des bestehenden Panels): In der oberen Zeile neben dem
-  Logo: Feld BANK (Auswahlliste), Feld PRESET (Auswahlliste), Knöpfe SAVE (blau betont), SAVE AS und "⋯", rechts BPM.
-  Das Menü "⋯" enthält: Neue Bank…, Bank exportieren…, Bank importieren…, Preset-Ordner öffnen. Nach SAVE AS (und
-  bei SAVE ohne geladenes Preset) ersetzt in derselben Zeile ein Namensfeld mit OK und ABBRECHEN die
-  Preset-Auswahl. Kein eigenes Dialogfenster. Die Loop-Streifen und das Regelpanel darunter bleiben unverändert.
-  Die Zeile wird bei schmalem Fenster eng; die Anzeige "Zyklus: n Takte" muss dafür eventuell weichen oder
-  umziehen (Baufrage).
+- Flow: press a button, the plugin asks for a name, the user enters it, the plugin saves.
+- There are several banks, named by the user.
+- A bank is a folder with a bank file and a subfolder `samples`. The paths in the bank file are relative.
+- The samples are only copied into the bank folder when a preset is saved, not when the loop is loaded.
+  Each bank has its own copies, even if the same file appears in several banks (double space is
+  fine).
+- The plugin never deletes a sample from `samples`. If the user replaces a loop in a preset, the old
+  sample stays there locally.
+- Export only packs samples that at least one preset of the bank uses. Unused ones are kept locally.
+- The zip contains exactly one folder with the name of the bank as its top-level element.
+- Import: the user unpacks the zip into the Dubcycling preset folder, the bank then appears in the plugin.
+- Format of the bank file: JSON.
+- In the selection lists the current entry is marked: in the bank list the selected bank, in the
+  preset list the active preset.
+- Prompt on loading: if the user picks a preset while the current state is unsaved, the
+  plugin asks before loading. It replaces the state only after confirmation (protection against a misclick).
+  Implementation following the pattern of the name field: in the same row, instead of the preset selection, a message
+  appears ("Discard unsaved changes?") with LOAD and CANCEL, no separate dialog window (Claude's proposal
+  for the presentation, the user only decided the prompt itself).
+- Save overwrites the loaded preset. Without a loaded preset it asks for a name. "Save as"
+  creates a variant under a new name.
+- Interface (draft "A", approved by the user, in the look of the existing panel): in the top row next to the
+  logo: field BANK (selection list), field PRESET (selection list), buttons SAVE (emphasized in blue), SAVE AS and "⋯", BPM on the right.
+  The "⋯" menu contains: New bank…, Export bank…, Import bank…, Open presets folder. After SAVE AS (and
+  for SAVE without a loaded preset) a name field with OK and CANCEL replaces the
+  preset selection in the same row. No separate dialog window. The loop strips and the rule panel below stay unchanged.
+  The row gets tight with a narrow window; the display "Cycle: n Bars" may have to give way or
+  move for that (build question).
 
-## Entscheidungen von Claude (bitte beim Lesen prüfen)
+## Decisions by Claude (please check while reading)
 
-1. **Dateiformat (Format JSON vom Nutzer vorgegeben):** Die Bank-Datei heißt `bank.json`. Sie enthält ein Objekt mit
-   `version` und einer Liste `presets`; jedes Preset hat `name` und denselben Inhalt wie der Session-Zustand
-   (beide Loops mit Datei, Hash, Takten, Regionsgrenzen und Beschriftungen, dazu die Regeln), nur mit relativem
-   `path` (Schrägstriche `/`, relativ zum Bank-Ordner). Der Session-Zustand im Host bleibt XML wie bisher; die
-   Bank bekommt einen eigenen JSON-Leser und -Schreiber (z. B. `juce::JSON`), der dieselben Bereinigungsregeln und
-   Obergrenzen wie `deserialize` in `PluginState.cpp` anwendet. Jede Erweiterung des Formats, die ältere
-   Versionen beim Speichern nicht erhalten könnten (neue Felder, neue Eintragsarten), erhöht `version`; eine
-   ältere Version lehnt eine solche Bank mit Meldung ab (zu neu) und schreibt sie nie. Eine Bank mit unbekannter
-   höherer Version wird mit Meldung übersprungen, nie überschrieben. Enthält eine Bank Einträge, die das Plugin
-   beim Lesen überspringt (kein Objekt, Preset ohne Namen, mehr als 1024 Presets), verweigert Speichern mit
-   Meldung, statt sie beim Zurückschreiben zu verlieren. Zahlen werden mit voller Genauigkeit geschrieben (bis zu
-   17 signifikante Stellen), damit ein gespeichertes Preset genau dem Zustand gleicht, aus dem es gespeichert
-   wurde.
-2. **Preset-Ordner:** Standard `Dokumente/Dubcycling/Presets` (`juce::File::userDocumentsDirectory`). Jeder
-   Unterordner mit `bank.json` ist eine Bank.
-3. **Sample-Ablage beim Speichern:** Liegt der Loop schon in `samples` dieser Bank (z. B. nach dem Laden eines
-   Presets), wird nichts kopiert. Sonst wird er unter dem Originalnamen kopiert, wobei Zeichen, die nicht auf
-   allen Systemen in Dateinamen erlaubt sind, durch `_` ersetzt werden (dazu Punkte und Leerzeichen am Ende
-   entfernt, reservierte Windows-Namen mit `_` davor, Länge begrenzt); gibt es den Namen schon (in beliebiger
-   Groß-/Kleinschreibung) mit anderem Hash, wird ein Zähler angehängt (`name (2).wav`), bei gleichem Hash wird
-   die vorhandene Datei in ihrer Schreibweise auf der Platte weiterverwendet.
-4. **Speichern bei fehlendem Loop:** Ist ein Slot Missing oder Failed (Datei nicht lesbar), wird nicht gespeichert
-   und das Plugin meldet es. Ist ein Slot leer, wird er als leer gespeichert.
-5. **Preset laden:** Ersetzt den kompletten Plugin-Zustand (beide Loops, Regeln) wie ein Wiederherstellen des
-   Host-Zustands, mit absolut aufgelösten Pfaden in den Bank-Ordner. Laden und Dekodieren der Loops läuft wie
-   bisher im Hintergrund. Ein fehlendes Sample ergibt den vorhandenen Zustand "Missing" für diesen Slot, nicht einen
-   Absturz. Ist der aktuelle Zustand ungespeichert, fragt das Plugin vorher nach (siehe Entscheidung des Nutzers
-   zur Rückfrage). Ungespeichert heißt: Der Plugin-Zustand (Loops, Takte, Grenzen, Beschriftungen, Regeln) weicht
-   vom Stand ab, der zuletzt geladen oder gespeichert wurde; ohne aktives Preset gilt der leere Zustand als Stand,
-   also ist ein Aufbau mit geladenem Loop ungespeichert. Verglichen wird der Zustand, nicht die Oberfläche. Eine
-   dauerhafte "geändert"-Markierung ist nicht vorgesehen.
-6. **Aktives Preset im Host-Zustand:** Bank-Name und Preset-Name des zuletzt geladenen oder gespeicherten Presets
-   werden als optionale Felder im Session-Zustand gespeichert (Version bleibt 1), damit SAVE nach dem erneuten
-   Öffnen des Projekts weiter das richtige Preset überschreibt. Existiert es nicht mehr, wirkt SAVE wie SAVE AS.
-7. **Namen:** Preset-Namen: wie Beschriftungen bereinigt (Steuerzeichen raus, getrimmt), höchstens 32 Zeichen,
-   nicht leer, innerhalb einer Bank eindeutig (existiert der Name, zeigt das Namensfeld eine Meldung statt zu
-   überschreiben; zum Überschreiben dient SAVE). Bank-Namen sind Ordnernamen: ungültige Dateinamen-Zeichen
-   (`\ / : * ? " < > |`), Punkte am Ende und reservierte Windows-Namen werden abgelehnt oder bereinigt, höchstens 64
-   Zeichen, eindeutig im Preset-Ordner (Groß-/Kleinschreibung egal).
-8. **Reihenfolge:** Presets stehen in der Reihenfolge, in der sie angelegt wurden. Banks alphabetisch.
-9. **Export:** Zielort wählt der Nutzer per Dateidialog, Vorschlag `<Bank>.zip`. Fehlt ein Sample, das ein Preset
-   braucht, bricht der Export mit einer Meldung ab und nennt die Datei, statt ein unvollständiges Zip zu
-   schreiben. Zip erzeugt mit `juce::ZipFile::Builder`.
-10. **Import:** Zip per Dateidialog wählen und in den Preset-Ordner entpacken (das ist die Bedienung für "Zip in
-    den Preset-Ordner entpacken"; ein von Hand entpackter Ordner funktioniert genauso). Existiert eine Bank mit
-    dem Namen schon, wird unter `Name (2)` importiert; nie überschreiben. Beim Entpacken: genau ein oberster
-    Ordner (ein `__MACOSX`-Ordner zählt nicht mit), Einträge mit `..`, absoluten Pfaden oder Laufwerksbuchstaben
-    werden abgelehnt (Zip-Slip), auch wenn sie sonst übersprungen würden. Nur `bank.json` und Dateien unter
-    `samples/` werden entpackt; andere Dateien neben `bank.json` (z. B. `.DS_Store`, `Thumbs.db`,
-    `desktop.ini`), der `__MACOSX`-Ordner und `._*`-Dateien werden übersprungen, andere Unterordner abgelehnt.
-    Größenobergrenze gegen Zip-Bomben. Beim Export muss der Bank-Ordner einen gültigen Bank-Namen haben. Entpackt wird in
-    einen temporären Ordner im Preset-Ordner und erst nach vollständiger Prüfung an den Zielnamen verschoben.
-11. **Atomares Schreiben:** `bank.json` wird in eine Temp-Datei geschrieben und dann ersetzt, damit ein Abbruch die
-    Bank nicht beschädigt.
-12. **Kein Preset löschen oder umbenennen in dieser Version.** Die Bank-Datei ist lesbares JSON, das Menü kann den
-    Preset-Ordner im Dateimanager öffnen. Das ist ein bewusster Verzicht, kein Versehen.
-13. **Threading:** Alle Dateizugriffe laufen nie im Audio-Thread. Kopieren und Zippen dürfen die Oberfläche kurz
-    blockieren (Loops sind klein) oder im Hintergrund laufen, das entscheidet der Bauende.
-14. **Zuschnitt im Code (Vorschlag):** Die Logik für Banks (Lesen, Schreiben, Sample-Ablage, Zip, Namensregeln) liegt
-    in einer eigenen Einheit ohne UI (z. B. `plugin/presets/`), damit sie ohne Editor testbar ist. Die
-    Oberfläche (Leiste im Editor) bindet sie nur an.
+1. **File format (format JSON specified by the user):** The bank file is called `bank.json`. It contains an object with
+   `version` and a list `presets`; each preset has `name` and the same content as the session state
+   (both loops with file, hash, bars, region boundaries and labels, plus the rules), only with a relative
+   `path` (slashes `/`, relative to the bank folder). The session state in the host stays XML as before; the
+   bank gets its own JSON reader and writer (e.g. `juce::JSON`), which applies the same sanitizing rules and
+   upper limits as `deserialize` in `PluginState.cpp`. Any extension of the format that older
+   versions could not preserve when saving (new fields, new entry kinds) raises `version`; an
+   older version rejects such a bank with a message (too new) and never writes it. A bank with an unknown
+   higher version is skipped with a message, never overwritten. If a bank contains entries that the plugin
+   skips when reading (not an object, preset without a name, more than 1024 presets), saving is refused with a
+   message instead of losing them on write-back. Numbers are written with full precision (up to
+   17 significant digits) so that a saved preset exactly equals the state it was saved
+   from.
+2. **Preset folder:** default `Documents/Dubcycling/Presets` (`juce::File::userDocumentsDirectory`). Every
+   subfolder with `bank.json` is a bank.
+3. **Sample storage on save:** If the loop already lies in `samples` of this bank (e.g. after loading a
+   preset), nothing is copied. Otherwise it is copied under the original name, where characters that are not allowed in
+   file names on all systems are replaced by `_` (also trailing dots and spaces
+   removed, reserved Windows names prefixed with `_`, length limited); if the name already exists (in any
+   upper/lower case) with a different hash, a counter is appended (`name (2).wav`), with the same hash the
+   existing file is reused in its on-disk spelling.
+4. **Saving with a missing loop:** If a slot is Missing or Failed (file not readable), nothing is saved
+   and the plugin reports it. If a slot is empty, it is saved as empty.
+5. **Loading a preset:** Replaces the complete plugin state (both loops, rules) like restoring the
+   host state, with paths resolved absolutely into the bank folder. Loading and decoding the loops runs as
+   before in the background. A missing sample results in the existing state "Missing" for that slot, not a
+   crash. If the current state is unsaved, the plugin asks beforehand (see decision by the user
+   on the prompt). Unsaved means: the plugin state (loops, bars, boundaries, labels, rules) deviates
+   from the state that was last loaded or saved; without an active preset the empty state counts as the baseline,
+   so a setup with a loaded loop is unsaved. The state is compared, not the interface. A
+   permanent "modified" marker is not planned.
+6. **Active preset in the host state:** Bank name and preset name of the last loaded or saved preset
+   are stored as optional fields in the session state (version stays 1), so that SAVE keeps overwriting the right preset after
+   reopening the project. If it no longer exists, SAVE acts like SAVE AS.
+7. **Names:** Preset names: sanitized like labels (control characters removed, trimmed), at most 32 characters,
+   not empty, unique within a bank (if the name exists, the name field shows a message instead of
+   overwriting; SAVE is for overwriting). Bank names are folder names: invalid file name characters
+   (`\ / : * ? " < > |`), trailing dots and reserved Windows names are rejected or sanitized, at most 64
+   characters, unique in the preset folder (case-insensitive).
+8. **Order:** Presets are in the order in which they were created. Banks alphabetical.
+9. **Export:** The user picks the destination via a file dialog, suggestion `<Bank>.zip`. If a sample that a preset
+   needs is missing, the export aborts with a message and names the file, instead of writing an incomplete zip. Zip created with
+   `juce::ZipFile::Builder`.
+10. **Import:** Pick a zip via a file dialog and unpack it into the preset folder (this is the operation for "unpack the zip into
+    the preset folder"; a folder unpacked by hand works just the same). If a bank with
+    that name already exists, it is imported as `Name (2)`; never overwrite. When unpacking: exactly one top-level
+    folder (a `__MACOSX` folder does not count), entries with `..`, absolute paths or drive letters
+    are rejected (zip slip), even if they would otherwise be skipped. Only `bank.json` and files under
+    `samples/` are unpacked; other files next to `bank.json` (e.g. `.DS_Store`, `Thumbs.db`,
+    `desktop.ini`), the `__MACOSX` folder and `._*` files are skipped, other subfolders rejected.
+    Size upper limit against zip bombs. On export the bank folder must have a valid bank name. Unpacking goes into
+    a temporary folder in the preset folder and is only moved to the target name after complete verification.
+11. **Atomic writing:** `bank.json` is written to a temp file and then replaced, so that an abort does not
+    damage the bank.
+12. **No deleting or renaming of presets in this version.** The bank file is readable JSON, the menu can open the
+    preset folder in the file manager. This is a deliberate omission, not an oversight.
+13. **Threading:** File accesses never run in the audio thread. Copying and zipping may block the UI briefly
+    (loops are small) or run in the background, the builder decides.
+14. **Structure in the code (proposal):** The logic for banks (reading, writing, sample storage, zip, naming rules) lives
+    in a unit of its own without UI (e.g. `plugin/presets/`), so that it is testable without the editor. The
+    interface (bar in the editor) only hooks into it.
 
-15. **Bedeutung der Auswahllisten (Ergebnis der Gegenlese):** Die Bank-Auswahl wählt nur, welche Presets die
-    Preset-Liste zeigt und in welche Bank SAVE und SAVE AS schreiben; sie lädt nichts. Ein Preset wird erst
-    geladen, wenn der Nutzer es in der Preset-Liste wählt. Wechselt der Nutzer die Bank, ohne ein Preset zu wählen,
-    gibt es kein aktives Preset, und SAVE fragt wie SAVE AS nach einem Namen. Beim ersten Start gibt es keine Bank:
-    SAVE und SAVE AS fragen dann zusätzlich nach einem Bank-Namen und legen die Bank an ("Neue Bank…" im Menü
-    bleibt der direkte Weg). Die Rückfrage vor dem Laden vergleicht immer mit dem aktiven Preset (zuletzt
-    geladen oder gespeichert), auch wenn gerade eine andere Bank ausgewählt ist; die Bank-Auswahl allein ändert
-    den Vergleichsstand nicht.
-16. **Mehrere Plugin-Instanzen:** Die Bank-Logik hält keinen eigenen Zwischenspeicher. Jedes Speichern liest
-    `bank.json` unmittelbar davor neu ein, ändert das eine Preset und schreibt atomar zurück. Die Preset-Liste wird
-    beim Öffnen der Auswahl neu eingelesen. Gleichzeitiges Speichern in dieselbe Bank von zwei Instanzen im selben
-    Moment ist nicht abgesichert (letzter gewinnt).
-17. **Hash-Abweichung beim Laden:** Ein Sample, dessen Hash nicht zum gespeicherten passt, wird behandelt wie beim
-    Wiederherstellen eines Host-Zustands; der Bauende folgt dem vorhandenen Verhalten und erfindet keinen zweiten
-    Weg.
+15. **Meaning of the selection lists (result of the review):** The bank selection only chooses which presets the
+    preset list shows and which bank SAVE and SAVE AS write to; it loads nothing. A preset is only
+    loaded when the user picks it in the preset list. If the user switches the bank without picking a preset,
+    there is no active preset, and SAVE asks for a name like SAVE AS. On first start there is no bank:
+    SAVE and SAVE AS then additionally ask for a bank name and create the bank ("New bank…" in the menu
+    remains the direct way). The prompt before loading always compares with the active preset (last
+    loaded or saved), even if another bank is currently selected; the bank selection alone does not change
+    the comparison baseline.
+16. **Several plugin instances:** The bank logic keeps no cache of its own. Each save reads
+    `bank.json` anew immediately beforehand, changes the one preset and writes back atomically. The preset list is
+    re-read when the selection is opened. Saving into the same bank from two instances at the same
+    moment is not safeguarded (last one wins).
+17. **Hash mismatch on loading:** A sample whose hash does not match the stored one is treated like when
+    restoring a host state; the builder follows the existing behavior and does not invent a second
+    way.
 
-## Was der Bauende entscheidet
+## What the builder decides
 
-- Aufbau und Namen der Klassen, Dateiaufteilung, Test-Strategie (empfohlen: Bank-Logik mit temporären Ordnern
-  testen, UI-Test für die Leiste im Stil der bestehenden Editor-Tests).
-- Genaues Verhalten der Leiste bei schmalem Fenster und wie die Auswahllisten aussehen.
-- Ob Kopieren und Zippen im Hintergrund laufen.
-- Texte der Meldungen (Sprache wie im restlichen Plugin, Deutsch).
+- Structure and names of the classes, file split, test strategy (recommended: test the bank logic with temporary folders,
+  UI test for the bar in the style of the existing editor tests).
+- Exact behavior of the bar with a narrow window and what the selection lists look like.
+- Whether copying and zipping run in the background.
+- Texts of the messages (language like the rest of the plugin, English).
 
-## Randbedingungen
+## Constraints
 
-- C++20, JUCE 8.0.15, bestehende Struktur (`engine/` reines C++, `plugin/` mit Prozessor, State, UI).
-- Neue Tests laufen mit Catch2 in der bestehenden Suite; alle bisherigen Tests (217) bleiben grün.
-- VST3-Validierung (Steinberg-Validator und pluginval) bleibt grün; die Programmliste des Hosts bleibt
-  unverändert (ein Programm "Default").
-- Der bestehende Session-Zustand bleibt rückwärtskompatibel.
+- C++20, JUCE 8.0.15, existing structure (`engine/` pure C++, `plugin/` with processor, state, UI).
+- New tests run with Catch2 in the existing suite; all previous tests (217) stay green.
+- VST3 validation (Steinberg validator and pluginval) stays green; the host's program list stays
+  unchanged (one program "Default").
+- The existing session state stays backward compatible.

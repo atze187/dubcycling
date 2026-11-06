@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -150,7 +151,7 @@ TEST_CASE("Editor: an undecodable, too short or absent file on a Loaded slot cha
         CHECK(serialize(f.proc.getPluginState()) == before);
         CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
         CHECK(f.editor->lane(0).hasData());
-        CHECK(f.editor->statusText(0).startsWith("Nicht geladen: " + bad.getFileName()));
+        CHECK(f.editor->statusText(0).startsWith("Not loaded: " + bad.getFileName()));
     }
     CHECK(f.asked == 0);
 }
@@ -235,18 +236,18 @@ TEST_CASE("Editor: the bars field clamps typed values and writes them to the sta
     CHECK(f.proc.getPluginState().loop1.bars == 1);
     type("-4");
     CHECK(f.proc.getPluginState().loop1.bars == 1);
-    CHECK(f.editor->cycleText() == "Zyklus: 1 Takte");
+    CHECK(f.editor->cycleText() == "Cycle: 1 Bars");
 }
 
 // ---- Review round 2: re-validation on confirm, one pending confirmation per slot ----
 
 TEST_CASE("Editor: the confirmation names the slot and says all rules are deleted", "[LoopLane][editor]")
 {
-    CHECK(dc::ui::replaceConfirmTitle(0) == "Loop 1 ersetzen?");
-    CHECK(dc::ui::replaceConfirmTitle(1) == "Loop 2 ersetzen?");
+    CHECK(dc::ui::replaceConfirmTitle(0) == "Replace Loop 1?");
+    CHECK(dc::ui::replaceConfirmTitle(1) == "Replace Loop 2?");
     CHECK(dc::ui::replaceConfirmMessage()
           == juce::String(juce::CharPointer_UTF8(
-              "Dessen Regionen und alle Regeln (auch die zwischen Loop 1 und Loop 2) werden gel\xc3\xb6scht.")));
+              "Its regions and all rules (including those between Loop 1 and Loop 2) will be deleted.")));
 }
 
 TEST_CASE("Editor: a file that becomes unreadable before OK is rejected and changes nothing", "[LoopLane][editor]")
@@ -264,7 +265,7 @@ TEST_CASE("Editor: a file that becomes unreadable before OK is rejected and chan
 
     CHECK(serialize(f.proc.getPluginState()) == before);
     CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
-    CHECK(f.editor->statusText(0).startsWith("Nicht geladen: other.wav"));
+    CHECK(f.editor->statusText(0).startsWith("Not loaded: other.wav"));
     CHECK(f.asked == 1); // never asked again
     CHECK_FALSE(f.editor->isConfirmationPending(0));
 }
@@ -308,7 +309,7 @@ TEST_CASE("Editor: OK after the slot was edited in the meantime does not wipe it
     f.pendingAnswer(true);
     f.proc.waitForLoads();
     CHECK(serialize(f.proc.getPluginState()) == before);
-    CHECK(f.editor->statusText(0).startsWith("Nicht ersetzt"));
+    CHECK(f.editor->statusText(0).startsWith("Not replaced"));
     CHECK(f.asked == 1);
 }
 
@@ -368,7 +369,7 @@ juce::File clickWav(const juce::File& dir, const juce::String& name, int clicks 
 }
 } // namespace
 
-TEST_CASE("Editor: Vorschlag on a lane without boundaries sets them without asking", "[editor][suggest]")
+TEST_CASE("Editor: Suggest on a lane without boundaries sets them without asking", "[editor][suggest]")
 {
     EditorFixture f;
     f.proc.replaceLoop(0, clickWav(f.dir, "clicks.wav"), 2);
@@ -387,7 +388,7 @@ TEST_CASE("Editor: Vorschlag on a lane without boundaries sets them without aski
     CHECK(st.loop2.boundaries.empty());
 }
 
-TEST_CASE("Editor: Vorschlag on a lane with boundaries asks; cancel keeps, OK replaces, rules stay", "[editor][suggest]")
+TEST_CASE("Editor: Suggest on a lane with boundaries asks; cancel keeps, OK replaces, rules stay", "[editor][suggest]")
 {
     EditorFixture f;
     f.loadedWithRegionsAndRules(clickWav(f.dir, "clicks.wav")); // boundaries {0.25, 0.5}, one rule
@@ -415,7 +416,7 @@ TEST_CASE("Editor: Vorschlag on a lane with boundaries asks; cancel keeps, OK re
     CHECK(after.rules[0].targets[0].region2 == 0);
 }
 
-TEST_CASE("Editor: Vorschlag without loaded data does nothing", "[editor][suggest]")
+TEST_CASE("Editor: Suggest without loaded data does nothing", "[editor][suggest]")
 {
     EditorFixture f;
     f.editor->refresh();
@@ -442,7 +443,7 @@ TEST_CASE("Editor: an answer after the slot changed meanwhile does not overwrite
     CHECK(f.proc.getPluginState().loop1.boundaries == std::vector<double> { 0.1 });
 }
 
-TEST_CASE("Editor: Vorschlag without any transient changes nothing and says so", "[editor][suggest]")
+TEST_CASE("Editor: Suggest without any transient changes nothing and says so", "[editor][suggest]")
 {
     EditorFixture f;
     f.proc.replaceLoop(0, clickWav(f.dir, "silent.wav", 0), 2);
@@ -452,7 +453,7 @@ TEST_CASE("Editor: Vorschlag without any transient changes nothing and says so",
     f.editor->suggestRegions(0);
     CHECK(f.asked == 0);
     CHECK(serialize(f.proc.getPluginState()) == before);
-    CHECK(f.editor->statusText(0) == "Keine Transienten gefunden");
+    CHECK(f.editor->statusText(0) == "No transients found");
 }
 
 // ---- Hardening: Failed vs Missing, replace failures ----
@@ -472,10 +473,10 @@ TEST_CASE("Editor: a Failed slot shows the loader's error, a Missing slot says t
     f.editor->refresh();
     REQUIRE(f.proc.getSlotStatus(0) == Status::Failed);
     REQUIRE(f.proc.getSlotStatus(1) == Status::Missing);
-    CHECK(f.editor->statusText(0) == "Nicht lesbar: unsupported or damaged file");
-    CHECK(f.editor->statusText(1) == "Datei fehlt: gone.wav");
-    CHECK(f.editor->lane(0).hintText() == "Nicht lesbar");
-    CHECK(f.editor->lane(1).hintText() == "Datei fehlt");
+    CHECK(f.editor->statusText(0) == "Unreadable: unsupported or damaged file");
+    CHECK(f.editor->statusText(1) == "File missing: gone.wav");
+    CHECK(f.editor->lane(0).hintText() == "Unreadable");
+    CHECK(f.editor->lane(1).hintText() == "File missing");
 }
 
 TEST_CASE("Editor: a new file on a Failed slot goes through the replace flow", "[editor][hardening]")
@@ -515,10 +516,10 @@ TEST_CASE("Editor: a replace that fails to decode keeps the slot and shows a not
 
     CHECK(serialize(f.proc.getPluginState()) == before);
     CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
-    CHECK(f.editor->statusText(0) == "Nicht geladen: broken.wav (unsupported or damaged file)");
+    CHECK(f.editor->statusText(0) == "Not loaded: broken.wav (unsupported or damaged file)");
 }
 
-TEST_CASE("Editor: Vorschlag is only enabled for a Loaded slot", "[editor][suggest][hardening]")
+TEST_CASE("Editor: Suggest is only enabled for a Loaded slot", "[editor][suggest][hardening]")
 {
     EditorFixture f;
     f.proc.replaceLoop(0, clickWav(f.dir, "clicks.wav"), 2);
@@ -698,21 +699,21 @@ TEST_CASE("Editor: adding or removing a boundary in a lane moves the rules with 
     REQUIRE(f.editor->lane(1).hasData());
 
     // Loop 1: a boundary at 0.1 splits region 0 -> the entries move to 2 and 4.
-    f.editor->lane(0).doubleClickAt(w0 * 0.1f);
+    f.editor->lane(0).doubleClickAt(w0 * 0.1f, true);
     auto st = f.proc.getPluginState();
     REQUIRE(st.loop1.boundaries.size() == 4);
     CHECK(shapeOf(st.rules) == Shape { { 2, { 2 } }, { 4, { 3 } } });
 
     // Loop 2: a boundary at 0.6 splits region 2 -> target 3 becomes 4, target 2 stays.
     f.editor->refresh();
-    f.editor->lane(1).doubleClickAt(w1 * 0.6f);
+    f.editor->lane(1).doubleClickAt(w1 * 0.6f, true);
     st = f.proc.getPluginState();
     REQUIRE(st.loop2.boundaries.size() == 4);
     CHECK(shapeOf(st.rules) == Shape { { 2, { 2 } }, { 4, { 4 } } });
 
     // Loop 1: removing the boundary at 0.1 again -> back to 1 and 3.
     f.editor->refresh();
-    f.editor->lane(0).doubleClickAt(w0 * 0.1f);
+    f.editor->lane(0).doubleClickAt(w0 * 0.1f, true);
     st = f.proc.getPluginState();
     REQUIRE(st.loop1.boundaries.size() == 3);
     CHECK(shapeOf(st.rules) == Shape { { 1, { 2 } }, { 3, { 4 } } });
@@ -720,7 +721,7 @@ TEST_CASE("Editor: adding or removing a boundary in a lane moves the rules with 
     // Loop 2: removing 0.5 merges regions 1 and 2 -> target 2 is dropped, 4 becomes 3. Entry 1 is
     // left without targets, which the state sanitizer drops (same as "no rule").
     f.editor->refresh();
-    f.editor->lane(1).doubleClickAt(w1 * 0.5f);
+    f.editor->lane(1).doubleClickAt(w1 * 0.5f, true);
     st = f.proc.getPluginState();
     REQUIRE(st.loop2.boundaries.size() == 3);
     CHECK(shapeOf(st.rules) == Shape { { 3, { 3 } } });
@@ -730,7 +731,7 @@ TEST_CASE("Editor: adding or removing a boundary in a lane moves the rules with 
     const auto rulesBefore = shapeOf(f.proc.getPluginState().rules);
     f.editor->lane(0).pressAt(w0 * 0.25f);
     REQUIRE(f.editor->lane(0).isDragging());
-    f.editor->lane(0).dragTo(w0 * 0.3f);
+    f.editor->lane(0).dragTo(w0 * 0.3f, true);
     f.editor->lane(0).release();
     st = f.proc.getPluginState();
     CHECK(st.loop1.boundaries[0] != 0.25);
@@ -771,6 +772,334 @@ TEST_CASE("Editor: a name typed into a lane is stored and follows its region whe
     CHECK(f.proc.getPluginState().loop1.labels.empty());
 }
 
+// --- Effects: strip and panel in the editor --------------------------------------------------------
+namespace {
+using Masks = std::vector<std::uint8_t>;
+const std::vector<double> kThree { 0.25, 0.5 }; // regions 0..2
+
+// Both loops loaded, Loop 2 with boundaries `b2`, the editor refreshed.
+void bothLoaded(EditorFixture& f, const std::vector<double>& b2 = kThree)
+{
+    f.proc.replaceLoop(0, f.wav("a.wav"), 1);
+    f.proc.replaceLoop(1, f.wav("b.wav"), 1);
+    f.proc.waitForLoads();
+    auto s = f.proc.getPluginState();
+    s.loop2.boundaries = b2;
+    f.proc.applyEdit(s);
+    f.editor->refresh();
+}
+
+void requireDisjoint(const std::vector<std::pair<const char*, juce::Rectangle<int>>>& rects, juce::Rectangle<int> window)
+{
+    for (std::size_t i = 0; i < rects.size(); ++i)
+    {
+        CAPTURE(rects[i].first, rects[i].second.toString(), window.toString());
+        CHECK(!rects[i].second.isEmpty());
+        CHECK(window.contains(rects[i].second));
+        for (std::size_t j = i + 1; j < rects.size(); ++j)
+        {
+            CAPTURE(rects[j].first, rects[j].second.toString());
+            CHECK_FALSE(rects[i].second.intersects(rects[j].second));
+        }
+    }
+}
+} // namespace
+
+TEST_CASE("remapFxSwitchesForBoundaryEdit: inserting a boundary gives the new half the switches of the split region", "[editor][remap][fx]")
+{
+    using dc::ui::remapFxSwitchesForBoundaryEdit;
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1, 2, 4 }, kThree, { 0.25, 0.4, 0.5 }) == Masks { 1, 2, 2, 4 });
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1, 2, 4 }, kThree, { 0.1, 0.25, 0.5 }) == Masks { 1, 1, 2, 4 });
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1, 2, 4 }, kThree, { 0.25, 0.5, 0.9 }) == Masks { 1, 2, 4, 4 });
+}
+
+TEST_CASE("remapFxSwitchesForBoundaryEdit: removing a boundary keeps the left region's switches", "[editor][remap][fx]")
+{
+    using dc::ui::remapFxSwitchesForBoundaryEdit;
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1, 2, 4 }, kThree, { 0.5 }) == Masks { 1, 4 });
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1, 2, 4 }, kThree, { 0.25 }) == Masks { 1, 2 });
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1, 2, 0 }, kThree, { 0.25 }) == Masks { 1, 2 });
+}
+
+TEST_CASE("remapFxSwitchesForBoundaryEdit: a drag changes nothing", "[editor][remap][fx]")
+{
+    using dc::ui::remapFxSwitchesForBoundaryEdit;
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1, 2, 4 }, kThree, { 0.3, 0.5 }) == Masks { 1, 2, 4 });
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1, 2, 4 }, kThree, { 0.1, 0.3, 0.5 }) == Masks { 1, 2, 4 }); // +1 and a move
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1, 2, 4 }, kThree, {}) == Masks { 1, 2, 4 });                // -2
+}
+
+TEST_CASE("remapFxSwitchesForBoundaryEdit: no trailing zeros, short lists stay short", "[editor][remap][fx]")
+{
+    using dc::ui::remapFxSwitchesForBoundaryEdit;
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1 }, kThree, { 0.25, 0.5, 0.75 }) == Masks { 1 });
+    CHECK(remapFxSwitchesForBoundaryEdit({ 1, 0 }, kThree, { 0.25, 0.5, 0.75 }) == Masks { 1 });
+    CHECK(remapFxSwitchesForBoundaryEdit({}, kThree, { 0.1, 0.25, 0.5 }).empty());
+}
+
+TEST_CASE("Editor: a click on a strip marker toggles that switch in the processor state and selects the region", "[editor][fx]")
+{
+    EditorFixture f;
+    bothLoaded(f);
+    auto& strip = f.editor->fxStrip();
+    REQUIRE(f.editor->lane(1).selectedRegion() == 0);
+    const auto c = strip.markerBounds(2, FxInsert::Flanger).getCentre();
+    REQUIRE(!strip.markerBounds(2, FxInsert::Flanger).isEmpty());
+
+    strip.toggleAt(c.x, c.y);
+    auto st = f.proc.getPluginState();
+    CHECK(st.fx.switchOn(2, FxInsert::Flanger));
+    CHECK(st.fx.maskFor(2) == (1 << static_cast<int>(FxInsert::Flanger)));
+    CHECK(f.editor->lane(1).selectedRegion() == 2);
+    CHECK(strip.markerOn(2, FxInsert::Flanger));
+    CHECK(f.editor->fxPanel().switchOn(FxInsert::Flanger)); // the panel shows region 2 now
+    CHECK(f.editor->fxPanel().switchText(FxInsert::Flanger) == "Region C");
+
+    strip.toggleAt(c.x, c.y); // and off again
+    st = f.proc.getPluginState();
+    CHECK_FALSE(st.fx.switchOn(2, FxInsert::Flanger));
+    CHECK(st.fx.switches.empty());
+    CHECK_FALSE(f.editor->fxPanel().switchOn(FxInsert::Flanger));
+}
+
+TEST_CASE("Editor: without Loop-2 data the insert switches are disabled and the strip ignores clicks", "[editor][fx]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, f.wav("a.wav"), 1);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    REQUIRE(f.proc.getSlotStatus(1) == Status::Empty);
+    auto& strip = f.editor->fxStrip();
+    auto& panel = f.editor->fxPanel();
+    for (int i = 0; i < dc::kFxInserts; ++i)
+        CHECK_FALSE(panel.switchEnabled(static_cast<FxInsert>(i)));
+    CHECK(strip.markerBounds(0, FxInsert::Flanger).isEmpty());
+    const float y = 0.5f * static_cast<float>(strip.getHeight());
+    for (float x = 0.5f; x < static_cast<float>(strip.getWidth()); x += 2.0f)
+        strip.toggleAt(x, y);
+    CHECK(f.proc.getPluginState().fx.switches.empty());
+
+    f.proc.replaceLoop(1, f.wav("b.wav"), 1);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    REQUIRE(f.proc.getSlotStatus(1) == Status::Loaded);
+    CHECK(panel.switchEnabled(FxInsert::Flanger));
+    const auto c = strip.markerBounds(0, FxInsert::Flanger).getCentre();
+    REQUIRE(!strip.markerBounds(0, FxInsert::Flanger).isEmpty());
+    strip.toggleAt(c.x, c.y);
+    CHECK(f.proc.getPluginState().fx.switchOn(0, FxInsert::Flanger));
+}
+
+TEST_CASE("Editor: the panel switch toggles the selected Loop-2 region", "[editor][fx]")
+{
+    EditorFixture f;
+    bothLoaded(f);
+    auto& lane = f.editor->lane(1);
+    lane.pressAt(0.4f * static_cast<float>(lane.getWidth())); // selects region 1
+    lane.release();
+    REQUIRE(lane.selectedRegion() == 1);
+    auto& panel = f.editor->fxPanel();
+    CHECK(panel.switchText(FxInsert::Reverb) == "Region B"); // the selection reached the panel at once
+    REQUIRE(panel.switchEnabled(FxInsert::Reverb));
+
+    panel.setSwitch(FxInsert::Reverb, true);
+    auto st = f.proc.getPluginState();
+    CHECK(st.fx.switches == Masks { 0, 1 << static_cast<int>(FxInsert::Reverb) });
+    CHECK(f.editor->fxStrip().markerOn(1, FxInsert::Reverb));
+    CHECK_FALSE(f.editor->fxStrip().markerOn(0, FxInsert::Reverb));
+
+    panel.setSwitch(FxInsert::Reverb, false);
+    CHECK(f.proc.getPluginState().fx.switches.empty());
+}
+
+TEST_CASE("Editor: a knob change reaches the processor state and the published model", "[editor][fx]")
+{
+    EditorFixture f;
+    bothLoaded(f);
+    f.editor->fxPanel().setParam(FxParam::ReverbMix, 0.7);
+    f.editor->fxPanel().setParam(FxParam::FilterType, 1);
+    const auto st = f.proc.getPluginState();
+    CHECK(st.fx.params.get(FxParam::ReverbMix) == Catch::Approx(0.7));
+    CHECK(st.fx.params.get(FxParam::FilterType) == 1.0f);
+    const auto model = f.proc.getModel();
+    REQUIRE(model != nullptr);
+    CHECK(model->fx.params == st.fx.params);
+}
+
+TEST_CASE("Editor: adding a Loop-2 boundary keeps the sound of the split region", "[editor][fx][remap]")
+{
+    EditorFixture f;
+    bothLoaded(f);
+    auto s = f.proc.getPluginState();
+    s.fx.switches = { 1, 2, 4 };
+    s.rules = { RuleEntry { 0, { RuleTarget { 2, 1.0f } } } };
+    s.loop2.labels = { "", "", "Hat" };
+    f.proc.applyEdit(s);
+    f.editor->refresh();
+
+    auto& lane = f.editor->lane(1);
+    lane.doubleClickAt(0.4f * static_cast<float>(lane.getWidth()), true); // splits region 1
+    auto st = f.proc.getPluginState();
+    REQUIRE(st.loop2.boundaries.size() == 3);
+    CHECK(st.fx.switches == Masks { 1, 2, 2, 4 });
+    CHECK(shapeOf(st.rules) == Shape { { 0, { 3 } } }); // same edit moved rules and names
+    CHECK(st.loop2.labels == std::vector<juce::String> { "", "", "", "Hat" });
+    CHECK(f.proc.getModel()->fx.switches == st.fx.switches);
+
+    f.editor->refresh();
+    lane.doubleClickAt(0.25f * static_cast<float>(lane.getWidth()), true); // removes 0.25: 0 and 1 merge
+    st = f.proc.getPluginState();
+    REQUIRE(st.loop2.boundaries.size() == 2);
+    CHECK(st.fx.switches == Masks { 1, 2, 4 });
+}
+
+TEST_CASE("Editor: a Loop-1 boundary edit leaves the fx switches alone", "[editor][fx][remap]")
+{
+    EditorFixture f;
+    bothLoaded(f);
+    auto s = f.proc.getPluginState();
+    s.loop1.boundaries = kThree;
+    s.fx.switches = { 1, 2, 4 };
+    f.proc.applyEdit(s);
+    f.editor->refresh();
+
+    auto& lane = f.editor->lane(0);
+    lane.doubleClickAt(0.4f * static_cast<float>(lane.getWidth()), true);
+    REQUIRE(f.proc.getPluginState().loop1.boundaries.size() == 3);
+    CHECK(f.proc.getPluginState().fx.switches == Masks { 1, 2, 4 });
+    f.editor->refresh();
+    lane.doubleClickAt(0.25f * static_cast<float>(lane.getWidth()), true);
+    REQUIRE(f.proc.getPluginState().loop1.boundaries.size() == 2);
+    CHECK(f.proc.getPluginState().fx.switches == Masks { 1, 2, 4 });
+}
+
+TEST_CASE("Editor: loading a preset with fx updates strip and panel", "[editor][fx]")
+{
+    EditorFixture f;
+    bothLoaded(f);
+    auto s = f.proc.getPluginState();
+    s.fx.params.set(FxParam::FlangerMix, 0.8);
+    s.fx.switches = { 0, 0, 1 << static_cast<int>(FxInsert::Filter) };
+    f.proc.restoreState(s);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+
+    CHECK(f.editor->fxStrip().markerOn(2, FxInsert::Filter));
+    CHECK_FALSE(f.editor->fxStrip().markerOn(0, FxInsert::Filter));
+    CHECK(f.editor->fxPanel().param(FxParam::FlangerMix) == Catch::Approx(0.8));
+    f.editor->lane(1).setSelectedRegion(2);
+    f.editor->refresh();
+    CHECK(f.editor->fxPanel().switchOn(FxInsert::Filter));
+}
+
+TEST_CASE("Editor: strip, panels and lanes fit in the window without overlap", "[editor][fx][layout]")
+{
+    EditorFixture f;
+    bothLoaded(f, { 0.25, 0.5, 0.75, 0.985 });
+    auto s = f.proc.getPluginState();
+    s.fx.switches = { 1, 0b0110, 0, 0b1111, 0b1000 };
+    s.loop2.labels = { "Intro" };
+    f.proc.applyEdit(s);
+    f.editor->lane(1).setSelectedRegion(1);
+    f.editor->refresh();
+    REQUIRE(f.editor->getWidth() == 900);
+    REQUIRE(f.editor->getHeight() == 600);
+    for (const auto size : { juce::Point<int> { 0, 0 }, juce::Point<int> { 800, 540 }, juce::Point<int> { 1400, 900 } })
+    {
+        if (size.x > 0)
+            f.editor->setSize(size.x, size.y);
+        // Look at it: DC_SNAPSHOT_DIR=<dir> writes editor_fx_<w>x<h>.png (as in test_PresetBar).
+        if (const auto dir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {}); dir.isNotEmpty())
+        {
+            const auto img = f.editor->createComponentSnapshot(f.editor->getLocalBounds());
+            auto png = juce::File(dir).getChildFile("editor_fx_" + juce::String(f.editor->getWidth()) + "x"
+                                                    + juce::String(f.editor->getHeight()) + ".png");
+            png.deleteFile();
+            if (auto out = png.createOutputStream())
+                juce::PNGImageFormat().writeImageToStream(img, *out);
+        }
+        CAPTURE(f.editor->getWidth(), f.editor->getHeight());
+        const auto window = f.editor->getLocalBounds();
+        const auto strip = f.editor->fxStrip().getBounds();
+        const auto lane1 = f.editor->lane(1).getBounds();
+        const auto panel = f.editor->fxPanel().getBounds();
+        requireDisjoint({ { "lane0", f.editor->lane(0).getBounds() },
+                          { "lane1", lane1 },
+                          { "strip", strip },
+                          { "rules", f.editor->rulePanel().getBounds() },
+                          { "fx", panel },
+                          { "presetBar", f.editor->presetBar().getBounds() } },
+                        window);
+        // The strip sits right under the Loop-2 lane, over the same x range.
+        CHECK(strip.getX() == lane1.getX());
+        CHECK(strip.getWidth() == lane1.getWidth());
+        CHECK(strip.getY() >= lane1.getBottom());
+        CHECK(strip.getY() - lane1.getBottom() <= 2);
+        CHECK(strip.getHeight() >= 14);
+        CHECK(strip.getHeight() <= 18);
+        // Room for the four modules; the rule panel stays usable next to it.
+        CHECK(panel.getWidth() >= 440);
+        CHECK(panel.getHeight() >= 190);
+        CHECK(f.editor->rulePanel().getWidth() >= 300);
+        CHECK(f.editor->rulePanel().getHeight() >= 190);
+    }
+}
+
+TEST_CASE("Editor: a mix change reaches the processor state and the published model", "[editor][mix]")
+{
+    EditorFixture f;
+    bothLoaded(f);
+    auto s = f.proc.getPluginState();
+    s.rules = { RuleEntry { 0, { RuleTarget { 1, 0.5f, PlayMode::OneShot } } } };
+    f.proc.applyEdit(s);
+    f.editor->refresh();
+    REQUIRE(f.editor->rulePanel().rowCount() == 3);
+    f.editor->rulePanel().setMix(1, 0.2f);
+    f.editor->rulePanel().setMix(2, 0.9f); // weight 0, touched: stored
+    const auto st = f.proc.getPluginState();
+    REQUIRE(st.rules.size() == 1);
+    REQUIRE(st.rules[0].targets.size() == 2);
+    CHECK(st.rules[0].targets[0].region2 == 1);
+    CHECK(st.rules[0].targets[0].weight == 0.5f);
+    CHECK(st.rules[0].targets[0].mode == PlayMode::OneShot);
+    CHECK(st.rules[0].targets[0].mix == 0.2f);
+    CHECK(st.rules[0].targets[1].region2 == 2);
+    CHECK(st.rules[0].targets[1].mix == 0.9f);
+    const auto model = f.proc.getModel();
+    REQUIRE(model != nullptr);
+    const auto& targets = model->rules.targets(0);
+    REQUIRE(targets.size() == 2);
+    CHECK(targets[0].mix == 0.2f);
+    CHECK(targets[1].mix == 0.9f);
+    f.editor->refresh(); // the poll shows what was stored
+    CHECK(f.editor->rulePanel().mix(1) == 0.2f);
+    CHECK(f.editor->rulePanel().mixText(1) == "L2 40 %");
+}
+
+TEST_CASE("Editor: boundary edits of Loop 2 keep the mix of the targets", "[editor][mix][remap]")
+{
+    EditorFixture f;
+    bothLoaded(f, kFour);
+    auto s = f.proc.getPluginState();
+    s.rules = { RuleEntry { 0, { RuleTarget { 2, 0.5f, PlayMode::Gate, 0.3f }, RuleTarget { 0, 0.2f, PlayMode::Gate, 0.8f } } } };
+    f.proc.applyEdit(s);
+    f.editor->refresh();
+    const float w1 = static_cast<float>(f.editor->lane(1).getWidth());
+    REQUIRE(w1 > 100.0f);
+    f.editor->lane(1).doubleClickAt(w1 * 0.1f, true); // splits region 0: target 2 moves to 3
+    auto st = f.proc.getPluginState();
+    REQUIRE(st.loop2.boundaries.size() == 4);
+    REQUIRE(st.rules.size() == 1);
+    REQUIRE(st.rules[0].targets.size() == 2);
+    CHECK(st.rules[0].targets[0].region2 == 3);
+    CHECK(st.rules[0].targets[0].mix == 0.3f);
+    CHECK(st.rules[0].targets[1].region2 == 0);
+    CHECK(st.rules[0].targets[1].mix == 0.8f);
+    f.editor->refresh();
+    CHECK(f.editor->rulePanel().mix(3) == 0.3f);
+    CHECK(f.editor->rulePanel().mix(2) == 0.5f);
+}
+
 TEST_CASE("Editor: replacing a loop clears its names", "[editor][labels]")
 {
     EditorFixture f;
@@ -783,3 +1112,84 @@ TEST_CASE("Editor: replacing a loop clears its names", "[editor][labels]")
     f.proc.waitForLoads();
     CHECK(f.proc.getPluginState().loop1.labels.empty());
 }
+
+namespace {
+// 2 s stereo wav at 44.1 kHz with noise clicks at the given fractions of the loop.
+juce::File clicksAtWav(const juce::File& dir, const juce::String& name, const std::vector<double>& at)
+{
+    const auto file = dir.getChildFile(name);
+    juce::WavAudioFormat format;
+    std::unique_ptr<juce::OutputStream> out = std::make_unique<juce::FileOutputStream>(file);
+    auto writer = format.createWriterFor(out, juce::AudioFormatWriterOptions {}
+                                                  .withSampleRate(44100)
+                                                  .withNumChannels(2)
+                                                  .withBitsPerSample(16));
+    REQUIRE(writer != nullptr);
+    const int frames = 88200;
+    juce::AudioBuffer<float> buf(2, frames);
+    buf.clear();
+    juce::Random rnd(11);
+    for (const double a : at)
+        for (int i = 0; i < 130; ++i)
+        {
+            const float v = 0.8f * (rnd.nextFloat() * 2.0f - 1.0f);
+            const int pos = static_cast<int>(a * frames) + i;
+            buf.setSample(0, pos, v);
+            buf.setSample(1, pos, v);
+        }
+    REQUIRE(writer->writeFromAudioSampleBuffer(buf, 0, frames));
+    return file;
+}
+} // namespace
+
+TEST_CASE("Editor: both lanes get the grid of their own bars and the host beats per bar", "[editor][grid]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, f.wav("a.wav"), 4);
+    f.proc.replaceLoop(1, f.wav("b.wav"), 8);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    CHECK(f.editor->lane(0).gridStep() == Catch::Approx(1.0 / 16.0));
+    CHECK(f.editor->lane(1).gridStep() == Catch::Approx(1.0 / 32.0));
+}
+
+TEST_CASE("Editor: changing the bars field updates the grid", "[editor][grid]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, f.wav("a.wav"), 4);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    REQUIRE(f.editor->lane(0).gridStep() == Catch::Approx(1.0 / 16.0));
+    f.editor->barsField(0).setValue(2.0, juce::sendNotificationSync);
+    CHECK(f.editor->lane(0).gridStep() == Catch::Approx(1.0 / 8.0));
+}
+
+TEST_CASE("Editor: without a loaded file the lane has no grid", "[editor][grid]")
+{
+    EditorFixture f;
+    f.editor->refresh();
+    CHECK(f.editor->lane(0).gridStep() == 0.0);
+    CHECK(f.editor->lane(1).gridStep() == 0.0);
+}
+
+TEST_CASE("Editor: the suggestion snaps its boundaries to the grid", "[editor][grid][suggest]")
+{
+    EditorFixture f;
+    f.proc.replaceLoop(0, clicksAtWav(f.dir, "off.wav", { 0.11, 0.33, 0.61, 0.87 }), 2); // grid 1/8
+    f.proc.waitForLoads();
+    f.editor->refresh();
+    const double step = f.editor->lane(0).gridStep();
+    REQUIRE(step == Catch::Approx(0.125));
+    f.editor->suggestRegions(0);
+    const auto b = f.proc.getPluginState().loop1.boundaries;
+    REQUIRE_FALSE(b.empty());
+    CHECK(b.size() <= 4);
+    for (const double v : b)
+    {
+        const double k = v / step;
+        CHECK(std::abs(k - std::round(k)) < 1e-9);
+        CHECK(v > 0.0);
+        CHECK(v < 1.0);
+    }
+}
+

@@ -12,6 +12,7 @@ constexpr float kHit = 5.0f; // hit tolerance of a boundary, in pixels left and 
 constexpr float kCorner = 0.0f;
 constexpr float kLabelFont = 10.0f;
 constexpr float kLabelCharW = 6.2f; // monospace advance at kLabelFont, a little generous
+constexpr double kMinGridPx = 4.0;  // grid lines closer than this are not drawn and do not snap
 
 const juce::Colour kBackground { 0xff101215 };
 const juce::Colour kOutline { 0xff2a2e35 };
@@ -19,6 +20,8 @@ const juce::Colour kWave { 0xff6f94b3 };
 const juce::Colour kSelected { 0x245aa9e6 };
 const juce::Colour kBoundary { 0xffe8c26a };
 const juce::Colour kHint { 0xff7b828d };
+const juce::Colour kBeatLine = panel::kEdgeLight; // faint, but visible over the waveform
+const juce::Colour kBarLine { 0xff5a626d };         // clearly stronger, still far below the boundaries
 } // namespace
 
 std::vector<PeakColumn> computePeaks(const std::vector<float>& left, const std::vector<float>& right, int columns)
@@ -48,6 +51,22 @@ std::vector<PeakColumn> computePeaks(const std::vector<float>& left, const std::
         out[c] = any ? PeakColumn { lo, hi } : PeakColumn {};
     }
     return out;
+}
+
+std::vector<double> snapBoundariesToGrid(const std::vector<double>& boundaries, double step)
+{
+    if (!(step > 0.0))
+        return boundaries;
+    std::vector<double> snapped;
+    snapped.reserve(boundaries.size());
+    for (double b : boundaries)
+    {
+        const double s = std::round(b / step) * step;
+        if (s > 0.0 && s < 1.0)
+            snapped.push_back(s);
+    }
+    std::sort(snapped.begin(), snapped.end()); // which of two too-close values survives: the left one
+    return sanitizeBoundaries(snapped);
 }
 
 bool isAcceptedAudioFile(const juce::File& file)
@@ -210,15 +229,56 @@ void LoopLane::setPlayhead(double phase)
     repaint(before.getUnion(strip(p)));
 }
 
+void LoopLane::setGrid(int bars, int beatsPerBar)
+{
+    if (bars == gridBars_ && beatsPerBar == gridBeatsPerBar_)
+        return;
+    gridBars_ = bars;
+    gridBeatsPerBar_ = beatsPerBar;
+    repaint();
+}
+
+double LoopLane::beatPixels() const
+{
+    if (!hasData() || gridBars_ <= 0 || gridBeatsPerBar_ <= 0 || getWidth() <= 0)
+        return 0.0;
+    return static_cast<double>(getWidth()) / (static_cast<double>(gridBars_) * gridBeatsPerBar_);
+}
+
+bool LoopLane::beatLinesShown() const { return beatPixels() >= kMinGridPx; }
+
+bool LoopLane::barLinesShown() const
+{
+    const double beat = beatPixels();
+    return beat > 0.0 && beat * gridBeatsPerBar_ >= kMinGridPx;
+}
+
+double LoopLane::gridStep() const
+{
+    if (beatLinesShown())
+        return 1.0 / (static_cast<double>(gridBars_) * gridBeatsPerBar_);
+    if (barLinesShown()) // beats too dense to draw: snap to what is drawn
+        return 1.0 / gridBars_;
+    return 0.0;
+}
+
+double LoopLane::snapPhase(double phase) const
+{
+    const double step = gridStep();
+    if (step <= 0.0 || !std::isfinite(phase))
+        return phase;
+    return std::clamp(std::round(phase / step) * step, 0.0, 1.0);
+}
+
 juce::String LoopLane::hintText() const
 {
     if (hasData())
         return {};
     switch (status_)
     {
-        case Status::Loading: return juce::String(juce::CharPointer_UTF8("L\xc3\xa4" "dt\xe2\x80\xa6"));
-        case Status::Missing: return "Datei fehlt";
-        case Status::Failed:  return "Nicht lesbar";
+        case Status::Loading: return juce::String(juce::CharPointer_UTF8("Loading\xe2\x80\xa6"));
+        case Status::Missing: return "File missing";
+        case Status::Failed:  return "Unreadable";
         case Status::Empty:
         case Status::Loaded:  break;
     }
@@ -274,12 +334,13 @@ void LoopLane::auditionAt(float x)
     onRegionPreview(regions_.regionAt(std::clamp(phaseAt(x), 0.0, std::nextafter(1.0, 0.0))));
 }
 
-void LoopLane::dragTo(float x)
+void LoopLane::dragTo(float x, bool free)
 {
     if (!interactive() || !isDragging())
         return;
     const double before = regions_.boundaries[static_cast<std::size_t>(dragging_)];
-    if (regions_.moveBoundary(dragging_, phaseAt(x + grabOffset_))
+    const double target = phaseAt(x + grabOffset_);
+    if (regions_.moveBoundary(dragging_, free ? target : snapPhase(target))
         && regions_.boundaries[static_cast<std::size_t>(dragging_)] != before)
         repaint();
 }
@@ -302,7 +363,7 @@ void LoopLane::cancelDrag()
     repaint();
 }
 
-void LoopLane::doubleClickAt(float x, float y)
+void LoopLane::doubleClickAt(float x, float y, bool free)
 {
     if (const int r = labelAt(x, y); r >= 0)
     {
@@ -310,16 +371,16 @@ void LoopLane::doubleClickAt(float x, float y)
         beginLabelEdit(r);
         return;
     }
-    doubleClickAt(x);
+    doubleClickAt(x, free);
 }
 
-void LoopLane::doubleClickAt(float x)
+void LoopLane::doubleClickAt(float x, bool free)
 {
     release();
     if (!interactive())
         return;
     const int b = boundaryAt(x);
-    if (b >= 0 ? regions_.removeBoundary(b) : regions_.addBoundary(phaseAt(x)))
+    if (b >= 0 ? regions_.removeBoundary(b) : regions_.addBoundary(free ? phaseAt(x) : snapPhase(phaseAt(x))))
         changed();
 }
 
@@ -382,6 +443,18 @@ void LoopLane::paint(juce::Graphics& g)
             peaksWidth_ = w;
         }
 
+        // Beat grid behind everything else: faint beats, stronger bar starts (the ends are the loop edges).
+        if (barLinesShown())
+        {
+            const int perBar = beatLinesShown() ? gridBeatsPerBar_ : 1;
+            const int lines = gridBars_ * perBar;
+            for (int i = 1; i < lines; ++i)
+            {
+                g.setColour(i % perBar == 0 ? kBarLine : kBeatLine);
+                g.fillRect(xFor(static_cast<double>(i) / lines) - 0.5f, 0.0f, 1.0f, bounds.getHeight());
+            }
+        }
+
         const auto [lo, hi] = regions_.bounds(selected_);
         // Also for an unsplit loop: its single region spans the whole lane.
         g.setColour(kSelected);
@@ -409,7 +482,7 @@ void LoopLane::paint(juce::Graphics& g)
             g.fillRect(bounds);
             g.setColour(kHint.withAlpha(teaserP));
             g.setFont(panel::mono(10.0f));
-            g.drawText("STILLE", bounds.withTrimmedBottom(bounds.getHeight() * 0.5f), juce::Justification::centred);
+            g.drawText("SILENCE", bounds.withTrimmedBottom(bounds.getHeight() * 0.5f), juce::Justification::centred);
         }
 
         const float mid = bounds.getCentreY();

@@ -8,7 +8,7 @@ namespace dc {
 
 LoopLoader::~LoopLoader()
 {
-    // Laufende Auftraege greifen auf lock_ und results_ zu: ohne Timeout (-1) warten.
+    // Running jobs access lock_ and results_: wait without a timeout (-1).
     pool_.removeAllJobs(true, -1);
 }
 
@@ -33,7 +33,7 @@ std::unique_ptr<juce::AudioFormatReader> openChecked(const juce::File& file, juc
         error = "unsupported or damaged file";
         return nullptr;
     }
-    // Header-Werte sind nicht vertrauenswuerdig: vor dem Allokieren begrenzen.
+    // Header values are not trustworthy: bound them before allocating.
     if (static_cast<std::uint64_t>(reader->lengthInSamples) < kMinLoopFrames)
     {
         error = "file too short (under 1000 frames)";

@@ -190,3 +190,19 @@ TEST_CASE("SlotTracker: the slot's own load keeps running while a replace is sta
     CHECK(t.status(0) == SlotStatus::Loaded);
     CHECK(t.data(0)->frames() == 1000);
 }
+
+TEST_CASE("SlotTracker: replacing slot 1 clears the fx switches and keeps the parameters", "[SlotTracker][fx]")
+{
+    SlotTracker t;
+    PluginState s = withWork();
+    s.fx.params.set(FxParam::ReverbMix, 0.9);
+    s.fx.setSwitch(1, FxInsert::Reverb, true);
+    REQUIRE(t.apply(ok(1, t.beginLoad(1), frames(1000)), s));
+    CHECK(s.fx.maskFor(1) == 8); // a plain load keeps them
+    REQUIRE(t.apply(ok(1, t.beginReplace(1, newRef()), frames(3000)), s));
+    CHECK(s.fx.switches.empty());
+    CHECK(s.fx.params.get(FxParam::ReverbMix) == 0.9f);
+    s.fx.setSwitch(1, FxInsert::Reverb, true);
+    REQUIRE(t.apply(ok(0, t.beginReplace(0, newRef()), frames(3000)), s));
+    CHECK(s.fx.maskFor(1) == 8); // replacing Loop 1 leaves Loop-2 switches alone
+}

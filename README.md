@@ -8,30 +8,51 @@ Status: edit view, audio engine and presets implemented. The plugin has stereo o
 
 - **Load loops:** "Load…" next to Loop 1 / Loop 2, or drag and drop an audio file (wav, mp3, flac, aif, aiff)
   onto a lane. Replacing a loop that has regions or rules asks first (its regions and all rules are deleted).
-- **Bars ("Takte"):** length of each loop in bars; suggested from the file length and the host tempo on load.
-  The combined cycle ("Zyklus") is the least common multiple of both.
+- **Bars:** length of each loop in bars; suggested from the file length and the host tempo on load.
+  The combined cycle ("Cycle") is the least common multiple of both.
 - **Regions:** double-click in a lane adds a region boundary, double-click on a boundary removes it, drag a
   boundary to move it. Rules move with their regions when a boundary is added or removed (merging two regions
   keeps the left region's rule).
 - **Names, audition, playheads:** double-click a region's name (bottom left in the lane, or in the rule row of a Loop-2 region) to rename it (16 characters; empty = A, B, C). A right-click on a region plays it once (also with the host stopped; at the host's last tempo, mixed on top). A white line shows each loop's position; the Loop-2 region that sounds is tinted green.
-- **Teaser:** the draw for the next Loop-1 region is made 150 ms before it happens, and Loop 2 shows the result building up (the coming region fades in, "STILLE" dims the lane). What is shown is what plays, unless you edit or the transport jumps in between.
-- **"Vorschlag":** suggests boundaries at transients (meant for drum loops); replaces the lane's boundaries
+- **Teaser:** the draw for the next Loop-1 region is made 150 ms before it happens, and Loop 2 shows the result building up (the coming region fades in, "SILENCE" dims the lane). What is shown is what plays, unless you edit or the transport jumps in between.
+- **"Suggest":** suggests boundaries at transients (meant for drum loops); replaces the lane's boundaries
   after a confirmation.
 - **Rules:** select a Loop-1 region (click) to edit its rule rows, one per Loop-2 region: the slider is the
   probability that this Loop-2 region plays when Loop 1 enters the selected region, the GATE/ONESHOT toggle
-  sets the play mode (GATE repeats until Loop 1 leaves the region, ONESHOT plays the region once). "Stille"
+  sets the play mode (GATE repeats until Loop 1 leaves the region, ONESHOT plays the region once). "Silence"
   shows the remainder (probability that nothing new plays).
-- **Presets and banks:** the top row has BANK and PRESET. A bank is a folder in `Documents/Dubcycling/Presets/<Bank>/` with `bank.json` and the used samples in `samples/`. SAVE overwrites the active preset, SAVE AS makes a variant, a name field asks for new names. Loading a preset with unsaved changes asks first. The "⋯" menu creates a bank, exports a bank as a zip (only the samples in use), imports a zip (never overwrites, a name clash becomes "Name (2)") and opens the folder. Presets cannot be deleted or renamed in the plugin yet.
+- **Presets and banks:** the top row has BANK and PRESET. A bank is a folder in `Documents/Dubcycling/Presets/<Bank>/` with `bank.json` and the used samples in `samples/`. SAVE overwrites the active preset, SAVE AS makes a variant, a name field asks for new names. Loading a preset with unsaved changes asks first. The "⋯" menu creates a bank, exports a bank as a zip (only the samples in use), imports a zip (never overwrites, a name clash becomes "Name (2)") and opens the folder. Presets cannot be deleted or renamed in the plugin yet. Saving a preset into an existing bank rewrites it as `bank.json` version 3, which older plugin versions then refuse to open.
 - **Missing files:** when a saved project's loop file is gone, the plugin looks for a file with the same name
   and content (hash) in the folder of the other loop and the folder of the last loaded file (this session);
-  regions, rules and bars are always kept. If it is not found, the lane says "Datei fehlt" and "Neu zuordnen…" (or dropping a file)
+  regions, rules and bars are always kept. If it is not found, the lane says "File missing" and "RELINK" (or dropping a file)
   relinks it; relinking one loop also finds the other one if it was moved into the same folder.
+
+- **Effects:** Loop 2 runs through four inserts in this order: Bitcrush, Filter, Flanger, Reverb. Each insert has one
+  parameter set (the knobs in the insert panel) that is shared by all Loop-2 regions; what differs per region is
+  only whether an insert is on. The switches sit in the strip under the Loop-2 lane (one marker per region and
+  insert) and in the panel (select a region to see its switches). Toggling the switch of the region that sounds
+  is heard immediately. Reverb and Flanger tails ring out when a region ends or the host stops. Effects apply to
+  Loop 2 only; Loop 1 is dry. 1-bit Bitcrush has three levels (-1, 0, +1): material peaking below half scale
+  (-6 dBFS) becomes silent. Presets and projects store the effect settings. A project saved with effects and
+  re-saved by an older plugin version loses its effect settings (older versions ignore the Fx data). The bank
+  format is now `bank.json` version 2; older plugin versions refuse banks saved with the new one.
+
+- **Beat grid:** the loop lanes show a grid in quarter-note beats: faint lines per beat, stronger lines per bar. The
+  number of beats per bar is the numerator of the host time signature (4 without host info), so in 6/8 the grid has
+  six lines per bar. Adding and dragging region boundaries always snaps to the grid; hold Shift for free placement.
+  The "Suggest" (AUTO) boundaries snap to the grid as well. The lines are hidden when they would be too dense.
+- **Mix:** every rule row has a MIX control for the balance of the two loops while that Loop-2 region plays. Centre =
+  both loops at full level (as before), left = the Loop-2 region gets quieter, right = Loop 1 gets quieter, far right =
+  only Loop 2 is heard. The mix applies only while that Loop-2 region plays; otherwise Loop 1 is back at full level.
+  Auditioning (right-click) ignores the mix. The mix is stored per rule in projects and presets. The bank format is
+  now `bank.json` version 3; older plugin versions refuse banks saved with the new one, and a project with mix
+  values re-saved by an older plugin version loses them.
 
 ### Known limitations
 
 - Not tested in a real host yet on any platform; macOS and Linux are only built and unit-tested in CI.
 - No undo.
-- The effects slot and a performance view are not implemented.
+- Effect parameters are not exposed for host automation, Flanger rate has no tempo sync, and a performance view is not implemented.
 
 ## Build
 

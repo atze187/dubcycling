@@ -426,3 +426,108 @@ TEST_CASE("Processor: restoreState reduces a hostile fileName to its leaf", "[pr
     CHECK(st.loop1.fileName == "something.wav");
     CHECK(st.loop2.fileName == "other.wav");
 }
+
+TEST_CASE("Processor: fx edits are published in the model", "[processor][fx]")
+{
+    ProcFixture f;
+    auto s = f.proc.getPluginState();
+    s.loop2.boundaries = { 0.5 };
+    s.fx.params.set(FxParam::ReverbMix, 0.8);
+    s.fx.params.set(FxParam::FilterCutoff, 500.0);
+    s.fx.setSwitch(0, FxInsert::Reverb, true);
+    s.fx.setSwitch(1, FxInsert::Filter, true);
+    s.fx.setSwitch(5, FxInsert::Filter, true); // beyond the 2 regions: trimmed
+    f.proc.applyEdit(s);
+    FxSettings expected = s.fx;
+    expected.trimTo(2);
+    const auto m = f.proc.getModel();
+    REQUIRE(m != nullptr);
+    CHECK(m->fx == expected);
+    CHECK(m->fx.maskFor(1) == 2);
+    CHECK(f.proc.getPluginState().fx == expected);
+}
+
+TEST_CASE("Processor: replacing Loop 2 clears the switches but keeps the parameters", "[processor][fx]")
+{
+    ProcFixture f;
+    f.proc.replaceLoop(1, f.wav("l2.wav"), 2);
+    f.proc.waitForLoads();
+    auto s = f.proc.getPluginState();
+    s.loop2.boundaries = { 0.5 };
+    s.fx.params.set(FxParam::ReverbMix, 0.8);
+    s.fx.setSwitch(1, FxInsert::Reverb, true);
+    f.proc.applyEdit(s);
+    REQUIRE(f.proc.getModel()->fx.maskFor(1) == 8);
+
+    f.proc.replaceLoop(1, f.wav("l2b.wav", 32000), 4);
+    f.proc.waitForLoads();
+    const auto after = f.proc.getPluginState();
+    CHECK(after.fx.switches.empty());
+    CHECK(after.fx.params.get(FxParam::ReverbMix) == 0.8f);
+    CHECK(f.proc.getModel()->fx.switches.empty());
+    CHECK(f.proc.getModel()->fx.params.get(FxParam::ReverbMix) == 0.8f);
+}
+
+TEST_CASE("Processor: an old state without fx plays like before", "[processor][fx]")
+{
+    ProcFixture f;
+    const juce::String xml = "<DubcyclingState version=\"1\"><Loop1 bars=\"1\"/><Loop2 bars=\"1\" boundaries=\"0.5\"/></DubcyclingState>";
+    f.proc.setStateInformation(xml.toRawUTF8(), static_cast<int>(xml.getNumBytesAsUTF8()));
+    const auto m = f.proc.getModel();
+    REQUIRE(m != nullptr);
+    CHECK(m->fx.switches.empty());
+    CHECK(m->fx == FxSettings {});
+}
+
+TEST_CASE("Processor: the mix is published in the model", "[processor][mix]")
+{
+    ProcFixture f;
+    auto s = f.proc.getPluginState();
+    s.loop1.boundaries = { 0.5 };
+    s.rules = { RuleEntry { 0, { RuleTarget { 0, 1.0f, PlayMode::Gate, 0.3f } } } };
+    f.proc.applyEdit(s);
+    const auto m = f.proc.getModel();
+    REQUIRE(m != nullptr);
+    REQUIRE(m->rules.targets(0).size() == 1);
+    CHECK(m->rules.targets(0)[0].mix == 0.3f);
+    CHECK(f.proc.getPluginState().rules[0].targets[0].mix == 0.3f);
+}
+
+namespace {
+struct FixedPlayHead : juce::AudioPlayHead
+{
+    juce::Optional<PositionInfo> pos;
+    juce::Optional<PositionInfo> getPosition() const override { return pos; }
+};
+
+void runBlock(DubcyclingProcessor& proc, FixedPlayHead& head, int numerator)
+{
+    juce::AudioPlayHead::PositionInfo info;
+    info.setBpm(120.0);
+    info.setPpqPosition(0.0);
+    info.setTimeSignature(juce::AudioPlayHead::TimeSignature { numerator, 4 });
+    head.pos = info;
+    juce::AudioBuffer<float> buf(2, 64);
+    buf.clear();
+    juce::MidiBuffer midi;
+    proc.processBlock(buf, midi);
+}
+} // namespace
+
+TEST_CASE("Processor: hostBeatsPerBar defaults to 4 and follows the host time signature", "[processor][grid]")
+{
+    ProcFixture f;
+    f.proc.prepareToPlay(44100.0, 64);
+    FixedPlayHead head;
+    f.proc.setPlayHead(&head);
+    CHECK(f.proc.hostBeatsPerBar() == 4);
+    runBlock(f.proc, head, 7);
+    CHECK(f.proc.hostBeatsPerBar() == 7);
+    runBlock(f.proc, head, 0); // out of range: keeps the last value
+    CHECK(f.proc.hostBeatsPerBar() == 7);
+    runBlock(f.proc, head, 65);
+    CHECK(f.proc.hostBeatsPerBar() == 7);
+    runBlock(f.proc, head, 64);
+    CHECK(f.proc.hostBeatsPerBar() == 64);
+    f.proc.setPlayHead(nullptr);
+}

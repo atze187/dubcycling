@@ -48,8 +48,8 @@ bool allZero(const std::vector<float>& v)
     return std::all_of(v.begin(), v.end(), [](float x) { return x == 0.0f; });
 }
 
-// Median der Abstände aufsteigender Nulldurchgänge (linear interpoliert) -> Frequenz in Hz.
-// Der Median ignoriert die wenigen Perioden, in denen eine Überblendung die Phase versetzt.
+// Median of the distances between rising zero crossings (linearly interpolated) -> frequency in Hz.
+// The median ignores the few periods in which a crossfade shifts the phase.
 double medianZeroCrossFreq(const std::vector<float>& y, size_t from, double rate)
 {
     std::vector<double> crossings;
@@ -76,7 +76,7 @@ TEST_CASE("LoopReader silence without data", "[LoopReader]")
     REQUIRE(allZero(l));
     REQUIRE(allZero(rr));
 
-    // Leere Daten zählen ebenfalls als "keine Daten".
+    // Empty data also counts as "no data".
     r.setData(std::make_shared<dc::StereoData>());
     std::fill(l.begin(), l.end(), 1.0f);
     std::fill(rr.begin(), rr.end(), 1.0f);
@@ -87,7 +87,7 @@ TEST_CASE("LoopReader silence without data", "[LoopReader]")
 
 TEST_CASE("LoopReader sine keeps pitch at double tempo", "[LoopReader]")
 {
-    // 2 s Sinus = 4 Beats bei 120 BPM; der Host spielt 240 BPM, die Phase läuft also doppelt so schnell.
+    // 2 s sine = 4 beats at 120 BPM; the host plays 240 BPM, so the phase runs twice as fast.
     const size_t frames = static_cast<size_t>(2.0 * kRate);
     dc::LoopReader r;
     r.prepare(kRate);
@@ -98,7 +98,7 @@ TEST_CASE("LoopReader sine keeps pitch at double tempo", "[LoopReader]")
     const double phaseStep = 2.0 / static_cast<double>(frames);
 
     const int block = 512;
-    const int total = static_cast<int>(kRate); // 1 s Ausgabe
+    const int total = static_cast<int>(kRate); // 1 s of output
     std::vector<float> l(static_cast<size_t>(total)), rr(static_cast<size_t>(total));
     double phase = 0.0;
     for (int pos = 0; pos < total; pos += block)
@@ -126,7 +126,7 @@ TEST_CASE("LoopReader position follows phase after a jump", "[LoopReader]")
     r.setData(makeData(frames, kRate, ramp));
     const double phaseStep = 1.0 / static_cast<double>(frames);
     const int g = r.grainLength();
-    REQUIRE(g == 1920); // 40 ms bei 48 kHz
+    REQUIRE(g == 1920); // 40 ms at 48 kHz
 
     std::vector<float> l(1000), rr(1000);
     r.render(l.data(), rr.data(), 1000, 0.1, phaseStep, 1.0);
@@ -137,7 +137,7 @@ TEST_CASE("LoopReader position follows phase after a jump", "[LoopReader]")
     rr.assign(static_cast<size_t>(n), 0.0f);
     r.render(l.data(), rr.data(), n, 0.6, phaseStep, 1.0);
     REQUIRE(allFinite(l));
-    // Spätestens nach einer halben Grain-Länge muss die Ausgabe dem Quellmaterial bei 0.6 folgen.
+    // After half a grain length at the latest, the output must follow the source material at 0.6.
     for (int i = g / 2; i < n; ++i)
     {
         const float expected = static_cast<float>((28800.0 + i) / static_cast<double>(frames));
@@ -213,7 +213,7 @@ TEST_CASE("LoopReader no NaN with step 0 or phase outside 0..1", "[LoopReader]")
 
 TEST_CASE("LoopReader retrigger during a fade keeps at most two grains", "[LoopReader]")
 {
-    // Sprünge alle 64 Samples über 1 s: Jeder Sprung trifft eine laufende Überblendung.
+    // Jumps every 64 samples over 1 s: every jump hits a running crossfade.
     const size_t frames = 96000;
     std::vector<float> x(frames);
     for (size_t i = 0; i < frames; ++i)
@@ -241,7 +241,7 @@ TEST_CASE("LoopReader retrigger during a fade keeps at most two grains", "[LoopR
         REQUIRE(g.slotCollisions() == 0);
     }
 
-    // Dasselbe über den LoopReader (64er-Blöcke, Phase springt jeden Block): endliche Ausgabe.
+    // The same through the LoopReader (blocks of 64, phase jumps every block): finite output.
     dc::LoopReader r;
     r.prepare(kRate);
     r.setData(makeData(frames, kRate, sine440));

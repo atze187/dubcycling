@@ -17,7 +17,7 @@ struct TempDir
     ~TempDir() { dir.deleteRecursively(); }
 };
 
-// Schreibt konstante Werte pro Kanal (channelValues[c]).
+// Writes constant values per channel (channelValues[c]).
 void writeConst(juce::AudioFormat& format, const juce::File& file, double sampleRate, int numSamples,
                 std::vector<float> channelValues)
 {

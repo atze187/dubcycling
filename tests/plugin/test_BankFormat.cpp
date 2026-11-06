@@ -1,5 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/catch_approx.hpp>
 #include <juce_core/juce_core.h>
+#include "engine/FxSettings.h"
 #include "plugin/PluginState.h"
 #include "plugin/presets/BankFormat.h"
 
@@ -142,7 +145,7 @@ TEST_CASE("BankFormat: json carries version and a presets list")
 {
     const auto v = juce::JSON::parse(bankToJson(sampleBank()));
     REQUIRE(v.isObject());
-    CHECK(static_cast<int>(v["version"]) == 1);
+    CHECK(static_cast<int>(v["version"]) == 3);
     REQUIRE(v["presets"].isArray());
     CHECK(v["presets"].size() == 2);
 }
@@ -183,7 +186,7 @@ TEST_CASE("BankFormat: json nested deeper than kMaxJsonDepth gives no bank witho
 
 TEST_CASE("BankFormat: a newer version is flagged tooNew")
 {
-    const auto r = bankFromJson("{\"version\": 2, \"presets\": []}");
+    const auto r = bankFromJson("{\"version\": 4, \"presets\": []}");
     CHECK_FALSE(r.bank.has_value());
     CHECK(r.tooNew);
 }
@@ -278,4 +281,214 @@ TEST_CASE("BankFormat: fingerprint ignores paths and active fields but not rules
     auto e = a;
     e.loop1.labels[0] = "Other";
     CHECK(presetFingerprint(a) != presetFingerprint(e));
+}
+
+namespace {
+Preset fxPreset()
+{
+    auto p = makePreset("Fx", "loops/a.wav");
+    p.state.loop2.boundaries = { 0.25, 0.5 }; // 3 regions
+    p.state.fx.params.set(FxParam::ReverbMix, 0.37);
+    p.state.fx.params.set(FxParam::FilterCutoff, 1234.5);
+    p.state.fx.params.set(FxParam::FilterType, 2);
+    p.state.fx.setSwitch(0, FxInsert::Reverb, true);
+    p.state.fx.setSwitch(2, FxInsert::Bitcrush, true);
+    p.state.fx.setSwitch(2, FxInsert::Filter, true);
+    return p;
+}
+
+BankParseResult parseOnePreset(const juce::String& fxJson, const juce::String& loop2 = "{\"boundaries\":[0.5]}")
+{
+    return bankFromJson("{\"version\":2,\"presets\":[{\"name\":\"P\",\"loop2\":" + loop2 + ",\"fx\":" + fxJson + "}]}");
+}
+}
+
+TEST_CASE("Bank: bankToJson writes version 3")
+{
+    CHECK(kBankVersion == 3);
+    Bank b;
+    b.presets.push_back(makePreset("A", "a.wav"));
+    const auto v = juce::JSON::parse(bankToJson(b));
+    CHECK(static_cast<int>(v["version"]) == 3);
+    CHECK(v["presets"][0]["fx"].isObject()); // written even for default fx
+    CHECK(v["presets"][0]["fx"]["params"].isObject());
+    CHECK(v["presets"][0]["fx"]["switches"].isObject());
+}
+
+TEST_CASE("Bank: version 2 round trips fx params and switches")
+{
+    Bank bank;
+    bank.presets.push_back(fxPreset());
+    const auto json = bankToJson(bank);
+    const auto v = juce::JSON::parse(json);
+    CHECK(static_cast<double>(v["presets"][0]["fx"]["params"][fxParamInfo(FxParam::ReverbMix).id]) == Catch::Approx(0.37).margin(1e-6));
+    CHECK(static_cast<int>(v["presets"][0]["fx"]["switches"]["2"]) == 3);
+
+    const auto r = bankFromJson(json);
+    REQUIRE(r.bank.has_value());
+    REQUIRE(r.bank->presets.size() == 1);
+    CHECK(r.bank->presets[0].state.fx == bank.presets[0].state.fx);
+    CHECK(presetFingerprint(r.bank->presets[0].state) == presetFingerprint(bank.presets[0].state));
+}
+
+TEST_CASE("Bank: a version 1 file still loads, with default fx")
+{
+    const auto r = bankFromJson(
+        "{\"version\":1,\"presets\":[{\"name\":\"Old\",\"loop1\":{\"bars\":2},\"loop2\":{\"boundaries\":[0.5]},\"rules\":[]}]}");
+    REQUIRE(r.bank.has_value());
+    CHECK_FALSE(r.tooNew);
+    REQUIRE(r.bank->presets.size() == 1);
+    CHECK(r.bank->presets[0].state.fx == FxSettings {});
+    CHECK(r.bank->version == 3); // saving it writes version 3
+
+    const auto noFx = bankFromJson("{\"version\":2,\"presets\":[{\"name\":\"X\"}]}");
+    REQUIRE(noFx.bank.has_value());
+    CHECK(noFx.bank->presets[0].state.fx == FxSettings {});
+}
+
+TEST_CASE("Bank: a version 4 file is refused as too new")
+{
+    const auto r = bankFromJson("{\"version\":4,\"presets\":[{\"name\":\"X\"}]}");
+    CHECK(r.tooNew);
+    CHECK_FALSE(r.bank.has_value());
+}
+
+TEST_CASE("Bank: invalid fx numbers are sanitized")
+{
+    const auto cutoffId = juce::String(fxParamInfo(FxParam::FilterCutoff).id);
+    const auto mixId = juce::String(fxParamInfo(FxParam::ReverbMix).id);
+    const auto sizeId = juce::String(fxParamInfo(FxParam::ReverbSize).id);
+    const auto dampId = juce::String(fxParamInfo(FxParam::ReverbDamping).id);
+    const auto r = parseOnePreset("{\"params\":{\"" + cutoffId + "\":\"abc\",\"" + mixId + "\":null,\"" + sizeId + "\":1e99,\""
+                                  + dampId + "\":-1e99},\"switches\":{}}");
+    REQUIRE(r.bank.has_value());
+    const auto& fx = r.bank->presets[0].state.fx;
+    CHECK(fx.params.get(FxParam::FilterCutoff) == sanitizeFxParam(FxParam::FilterCutoff, fxParamInfo(FxParam::FilterCutoff).def));
+    CHECK(fx.params.get(FxParam::ReverbMix) == sanitizeFxParam(FxParam::ReverbMix, fxParamInfo(FxParam::ReverbMix).def));
+    CHECK(fx.params.get(FxParam::ReverbSize) == static_cast<float>(fxParamInfo(FxParam::ReverbSize).max));
+    CHECK(fx.params.get(FxParam::ReverbDamping) == static_cast<float>(fxParamInfo(FxParam::ReverbDamping).min));
+
+    // bad switch keys and masks
+    const auto s = parseOnePreset(
+        "{\"switches\":{\"-3\":5,\"abc\":5,\"100000\":5,\"0\":256,\"1\":-1,\"2\":\"x\"}}", "{\"boundaries\":[0.25,0.5]}");
+    REQUIRE(s.bank.has_value());
+    const auto& sw = s.bank->presets[0].state.fx;
+    CHECK(sw.maskFor(0) == 15);
+    CHECK(sw.maskFor(1) == 0);
+    CHECK(sw.maskFor(2) == 0);
+    CHECK(sw.switches.size() == 1);
+
+    // fx of the wrong shape
+    const auto bad = parseOnePreset("[1,2]");
+    REQUIRE(bad.bank.has_value());
+    CHECK(bad.bank->presets[0].state.fx == FxSettings {});
+}
+
+TEST_CASE("Bank: surplus switches beyond the preset's Loop-2 regions are dropped")
+{
+    const auto r = parseOnePreset("{\"switches\":{\"0\":1,\"1\":2,\"2\":4,\"7\":8}}", "{\"boundaries\":[0.5]}"); // 2 regions
+    REQUIRE(r.bank.has_value());
+    const auto& fx = r.bank->presets[0].state.fx;
+    CHECK(fx.maskFor(0) == 1);
+    CHECK(fx.maskFor(1) == 2);
+    CHECK(fx.maskFor(2) == 0);
+    CHECK(fx.maskFor(7) == 0);
+    CHECK(fx.switches.size() <= 2);
+}
+
+TEST_CASE("Bank: a changed switch or knob changes the fingerprint, a default fx state does not")
+{
+    auto base = makePreset("A", "a.wav").state;
+    base.loop2.boundaries = { 0.5 };
+    auto untouched = base;
+    auto explicitDefault = base;
+    explicitDefault.fx = FxSettings {};
+    explicitDefault.fx.setSwitch(0, FxInsert::Reverb, true);
+    explicitDefault.fx.setSwitch(0, FxInsert::Reverb, false);
+    explicitDefault.fx.params.set(FxParam::ReverbMix, fxParamInfo(FxParam::ReverbMix).def);
+    CHECK(presetFingerprint(untouched) == presetFingerprint(explicitDefault));
+    CHECK_FALSE(presetFingerprint(base).contains("F|"));
+
+    auto knob = base;
+    knob.fx.params.set(FxParam::ReverbMix, 0.9);
+    CHECK(presetFingerprint(knob) != presetFingerprint(base));
+    auto sw = base;
+    sw.fx.setSwitch(1, FxInsert::Filter, true);
+    CHECK(presetFingerprint(sw) != presetFingerprint(base));
+    auto sw2 = base;
+    sw2.fx.setSwitch(1, FxInsert::Flanger, true);
+    CHECK(presetFingerprint(sw2) != presetFingerprint(sw));
+}
+
+TEST_CASE("Bank: saving a loaded version 1 or 2 bank writes version 3")
+{
+    for (const char* v : { "1", "2" })
+    {
+        const auto r = bankFromJson("{\"version\":" + juce::String(v) + ",\"presets\":[{\"name\":\"Old\"}]}");
+        REQUIRE(r.bank.has_value());
+        CHECK(static_cast<int>(juce::JSON::parse(bankToJson(*r.bank))["version"]) == 3);
+    }
+}
+
+TEST_CASE("Bank: version 3 round trips the mix of a target")
+{
+    Bank bank;
+    bank.presets.push_back(makePreset("A", "a.wav"));
+    bank.presets[0].state.rules[0].targets[0].mix = 0.25f;
+    bank.presets[0].state.rules[0].targets[1].mix = 1.0f;
+    const auto json = bankToJson(bank);
+    const auto v = juce::JSON::parse(json);
+    CHECK(static_cast<double>(v["presets"][0]["rules"][0]["targets"][0]["mix"]) == Catch::Approx(0.25));
+    CHECK_FALSE(v["presets"][0]["rules"][1]["targets"][0].hasProperty("mix")); // default mix is not written
+    const auto r = bankFromJson(json);
+    REQUIRE(r.bank.has_value());
+    const auto& rules = r.bank->presets[0].state.rules;
+    CHECK(rules[0].targets[0].mix == 0.25f);
+    CHECK(rules[0].targets[1].mix == 1.0f);
+    CHECK(rules[1].targets[0].mix == 0.5f);
+    CHECK(presetFingerprint(r.bank->presets[0].state) == presetFingerprint(bank.presets[0].state));
+}
+
+TEST_CASE("Bank: version 1 and 2 files still load, with mix 0.5")
+{
+    for (const char* v : { "1", "2" })
+    {
+        const auto r = bankFromJson("{\"version\":" + juce::String(v)
+                                    + ",\"presets\":[{\"name\":\"P\",\"rules\":[{\"region1\":0,\"targets\":[{\"region2\":1,\"weight\":1}]}]}]}");
+        REQUIRE(r.bank.has_value());
+        REQUIRE(r.bank->presets[0].state.rules.size() == 1);
+        CHECK(r.bank->presets[0].state.rules[0].targets[0].mix == 0.5f);
+    }
+}
+
+TEST_CASE("Bank: invalid mix numbers are sanitized")
+{
+    const auto mixOf = [](const juce::String& mixJson) {
+        const auto r = bankFromJson("{\"version\":3,\"presets\":[{\"name\":\"P\",\"rules\":[{\"region1\":0,\"targets\":[{\"region2\":1,\"weight\":1,\"mix\":"
+                                    + mixJson + "}]}]}]}");
+        REQUIRE(r.bank.has_value());
+        REQUIRE(r.bank->presets[0].state.rules.size() == 1);
+        return r.bank->presets[0].state.rules[0].targets[0].mix;
+    };
+    CHECK(mixOf("\"abc\"") == 0.5f);
+    CHECK(mixOf("null") == 0.5f);
+    CHECK(mixOf("1e99") == 1.0f);
+    CHECK(mixOf("-1e99") == 0.0f);
+    CHECK(mixOf("0.75") == 0.75f);
+}
+
+TEST_CASE("Bank: a changed mix changes the fingerprint, a default mix does not")
+{
+    auto base = makePreset("A", "a.wav").state;
+    auto explicitDefault = base;
+    explicitDefault.rules[0].targets[0].mix = 0.5f;
+    CHECK(presetFingerprint(base) == presetFingerprint(explicitDefault));
+    CHECK_FALSE(presetFingerprint(base).contains("mix"));
+
+    auto changed = base;
+    changed.rules[0].targets[0].mix = 0.2f;
+    CHECK(presetFingerprint(changed) != presetFingerprint(base));
+    auto other = changed;
+    other.rules[0].targets[0].mix = 0.8f;
+    CHECK(presetFingerprint(other) != presetFingerprint(changed));
 }

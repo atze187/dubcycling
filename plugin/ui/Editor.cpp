@@ -16,6 +16,12 @@ constexpr int kGap = 6;
 constexpr int kMargin = 8;
 constexpr int kLogoW = 88;
 constexpr int kCycleW = 130;
+constexpr int kFxStripH = 17;     // incl. the 1 px bottom border of the Loop-2 box
+constexpr int kFxPanelMinW = 440; // four modules
+constexpr int kFxPanelMaxW = 600;
+constexpr int kBottomMinH = 190;  // FxPanel: title, switch and four knob rows
+constexpr int kMinW = 800;
+constexpr int kMinH = 540;
 
 using namespace panel;
 
@@ -153,6 +159,25 @@ std::vector<juce::String> remapLabelsForBoundaryEdit(std::vector<juce::String> l
     return labels;
 }
 
+std::vector<std::uint8_t> remapFxSwitchesForBoundaryEdit(std::vector<std::uint8_t> masks,
+                                                         const std::vector<double>& before,
+                                                         const std::vector<double>& after)
+{
+    if (const int k = singleInsertIndex(before, after); k >= 0)
+    {
+        if (masks.size() > static_cast<std::size_t>(k))
+            masks.insert(masks.begin() + k + 1, masks[static_cast<std::size_t>(k)]);
+    }
+    else if (const int k2 = singleInsertIndex(after, before); k2 >= 0)
+    {
+        if (masks.size() > static_cast<std::size_t>(k2) + 1)
+            masks.erase(masks.begin() + k2 + 1);
+    }
+    while (!masks.empty() && masks.back() == 0)
+        masks.pop_back();
+    return masks;
+}
+
 Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
     : juce::AudioProcessorEditor(proc), proc_(proc), store_(std::move(presetsRoot)), presetBar_(proc, store_)
 {
@@ -200,12 +225,12 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
         addAndMakeVisible(bars_[i]);
 
         load_[i].setButtonText("LOAD");
-        load_[i].setTooltip("Audiodatei laden (wav, mp3, flac, aif)");
+        load_[i].setTooltip("Load audio file (wav, mp3, flac, aif)");
         load_[i].onClick = [this, i] { openChooser(i); };
         addAndMakeVisible(load_[i]);
 
         suggest_[i].setButtonText("AUTO");
-        suggest_[i].setTooltip("Grenzen an Transienten vorschlagen (f" + utf8("\xc3\xbc") + "r Drum-Loops)");
+        suggest_[i].setTooltip("Suggest boundaries at transients (for drum loops)");
         suggest_[i].onClick = [this, i] { suggestRegions(i); };
         suggest_[i].setEnabled(false);
         addAndMakeVisible(suggest_[i]);
@@ -227,9 +252,21 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
     rules_.onLabelEdited = [this](int region, juce::String text) { labelEdited(1, region, text); };
     addAndMakeVisible(rules_);
 
+    // A strip click selects the region in the lane and flips that switch; the panel switches the
+    // selected region (it reports the region it was given).
+    lanes_[1].onRegionSelected = [this](int) { updateFx(proc_.getPluginState()); };
+    fxStrip_.onToggled = [this](int region, FxInsert insert) {
+        lanes_[1].setSelectedRegion(region);
+        switchEdited(region, insert, !proc_.getPluginState().fx.switchOn(region, insert));
+    };
+    fxPanel_.onSwitchChanged = [this](int region, FxInsert insert, bool on) { switchEdited(region, insert, on); };
+    fxPanel_.onParamsChanged = [this](const FxParams& params) { paramsEdited(params); };
+    addAndMakeVisible(fxStrip_);
+    addAndMakeVisible(fxPanel_);
+
     setResizable(true, true);
-    setResizeLimits(640, 400, 1800, 1400);
-    setSize(760, 480);
+    setResizeLimits(kMinW, kMinH, 1800, 1400);
+    setSize(900, 600);
     for (int i = 0; i < 2; ++i)
         seenFailure_[i] = proc_.replaceFailure(i).id; // only failures from now on are shown
     refresh();
@@ -258,13 +295,14 @@ void Editor::refresh()
         lanes_[i].setLabels(ref.labels);
         suggest_[i].setEnabled(status == DubcyclingProcessor::SlotStatus::Loaded && lanes_[i].hasData());
         bars_[i].setValue(static_cast<double>(ref.bars), juce::dontSendNotification);
+        lanes_[i].setGrid(ref.bars, proc_.hostBeatsPerBar());
 
         // A staged replace that failed to decode: the slot is unchanged, say so once.
         const auto failure = proc_.replaceFailure(i);
         if (failure.id > seenFailure_[i])
         {
             seenFailure_[i] = failure.id;
-            notice_[i] = "Nicht geladen: " + failure.fileName + " (" + failure.error + ")";
+            notice_[i] = "Not loaded: " + failure.fileName + " (" + failure.error + ")";
             noticeUntil_[i] = juce::Time::getMillisecondCounter() + 5000;
         }
 
@@ -273,22 +311,22 @@ void Editor::refresh()
         juce::Colour led = kGreen;
         switch (status)
         {
-            case DubcyclingProcessor::SlotStatus::Empty:   text = "Leer"; led = kDim; break;
+            case DubcyclingProcessor::SlotStatus::Empty:   text = "Empty"; led = kDim; break;
             case DubcyclingProcessor::SlotStatus::Loading:
             {
                 const auto pending = proc_.pendingReplaceFileName(i);
-                text = utf8("L\xc3\xa4" "dt\xe2\x80\xa6 ") + (pending.isNotEmpty() ? pending : ref.fileName);
+                text = utf8("Loading\xe2\x80\xa6 ") + (pending.isNotEmpty() ? pending : ref.fileName);
                 led = kAmber;
                 break;
             }
             case DubcyclingProcessor::SlotStatus::Loaded:  text = ref.fileName; break;
             case DubcyclingProcessor::SlotStatus::Missing:
-                text = "Datei fehlt: " + ref.fileName;
+                text = "File missing: " + ref.fileName;
                 colour = kWarn;
                 led = kWarn;
                 break;
             case DubcyclingProcessor::SlotStatus::Failed:
-                text = "Nicht lesbar: " + proc_.slotError(i);
+                text = "Unreadable: " + proc_.slotError(i);
                 colour = kWarn;
                 led = kWarn;
                 break;
@@ -311,14 +349,15 @@ void Editor::refresh()
         status_[i].setColour(juce::Label::textColourId, colour);
         const bool relink = fileIsMissing(status, ref);
         load_[i].setButtonText(relink ? "RELINK" : "LOAD");
-        load_[i].setTooltip(relink ? "Datei neu zuordnen" : "Audiodatei laden (wav, mp3, flac, aif)");
+        load_[i].setTooltip(relink ? "Relink file" : "Load audio file (wav, mp3, flac, aif)");
     }
     const double bpm = proc_.hostBpm();
     bpm_.setText(std::isfinite(bpm) && bpm > 0.0 ? juce::String(bpm, 1) : juce::String("--"),
                  juce::dontSendNotification);
     rules_.setLabels(st.loop1.labels, st.loop2.labels);
     updateRules(st);
-    cycle_.setText("Zyklus: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Takte",
+    updateFx(st);
+    cycle_.setText("Cycle: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Bars",
                    juce::dontSendNotification);
     presetBar_.refresh();
 }
@@ -345,7 +384,41 @@ void Editor::regionsEdited(int slot, const RegionMap& regions)
     st.rules = remapRulesForBoundaryEdit(std::move(st.rules), slot, refOf(st, slot).boundaries, regions.boundaries);
     refOf(st, slot).labels = remapLabelsForBoundaryEdit(std::move(refOf(st, slot).labels),
                                                         refOf(st, slot).boundaries, regions.boundaries);
+    if (slot == 1) // insert switches are per Loop-2 region
+        st.fx.switches = remapFxSwitchesForBoundaryEdit(std::move(st.fx.switches), st.loop2.boundaries,
+                                                        regions.boundaries);
     refOf(st, slot).boundaries = regions.boundaries;
+    proc_.applyEdit(st);
+    if (slot == 1)
+        updateFx(proc_.getPluginState()); // the strip follows the lane at once, not on the next poll
+}
+
+void Editor::updateFx(const PluginState& st)
+{
+    const auto& regions = lanes_[1].regions();
+    const int selected = lanes_[1].selectedRegion();
+    // Without Loop-2 data there is nothing to switch (as in updateRules): panel switches disabled,
+    // strip empty.
+    const bool loop2 = proc_.getSlotStatus(1) == DubcyclingProcessor::SlotStatus::Loaded;
+    fxStrip_.setRegions(regions);
+    fxStrip_.setSwitches(st.fx.switches);
+    fxStrip_.setSelectedRegion(selected);
+    fxStrip_.setLive(loop2);
+    fxPanel_.setContext(selected, loop2 ? regions.regionCount() : 0, st.loop2.labels, st.fx);
+}
+
+void Editor::switchEdited(int region2, FxInsert insert, bool on)
+{
+    PluginState st = proc_.getPluginState();
+    st.fx.setSwitch(region2, insert, on);
+    proc_.applyEdit(st);
+    refresh();
+}
+
+void Editor::paramsEdited(const FxParams& params)
+{
+    PluginState st = proc_.getPluginState();
+    st.fx.params = params;
     proc_.applyEdit(st);
 }
 
@@ -413,23 +486,23 @@ void Editor::barsEdited(int slot)
 
 juce::String replaceConfirmTitle(int slot)
 {
-    return "Loop " + juce::String(slot == 0 ? 1 : 2) + " ersetzen?";
+    return "Replace Loop " + juce::String(slot == 0 ? 1 : 2) + "?";
 }
 
 juce::String replaceConfirmMessage()
 {
-    return utf8("Dessen Regionen und alle Regeln (auch die zwischen Loop 1 und Loop 2) werden gel\xc3\xb6scht.");
+    return "Its regions and all rules (including those between Loop 1 and Loop 2) will be deleted.";
 }
 
 juce::String suggestConfirmTitle(int slot)
 {
-    return "Regionen von Loop " + juce::String(slot == 0 ? 1 : 2) + " ersetzen?";
+    return "Replace regions of Loop " + juce::String(slot == 0 ? 1 : 2) + "?";
 }
 
 juce::String suggestConfirmMessage()
 {
-    return utf8("Die vorhandenen Grenzen werden durch den Vorschlag ersetzt. Regeln bleiben erhalten, "
-                "k\xc3\xb6nnen danach aber auf nicht mehr vorhandene Regionen zeigen.");
+    return "The existing boundaries will be replaced by the suggestion. Rules are kept, "
+           "but may then point to regions that no longer exist.";
 }
 
 void Editor::suggestRegions(int slot)
@@ -441,10 +514,16 @@ void Editor::suggestRegions(int slot)
     const auto data = model == nullptr ? nullptr : (slot == 0 ? model->loop1.data : model->loop2.data);
     if (data == nullptr || data->frames() == 0)
         return;
-    const std::vector<double> found = suggestBoundaries(*data, kSuggestMaxBoundaries);
+    const std::vector<double> raw = suggestBoundaries(*data, kSuggestMaxBoundaries);
+    if (raw.empty())
+    {
+        showNotice(slot, "No transients found");
+        return;
+    }
+    const std::vector<double> found = snapBoundariesToGrid(raw, lanes_[slot].gridStep());
     if (found.empty())
     {
-        showNotice(slot, "Keine Transienten gefunden");
+        showNotice(slot, "No boundaries on the grid");
         return;
     }
     const PluginState st = proc_.getPluginState();
@@ -474,8 +553,7 @@ void Editor::suggestRegions(int slot)
         if (serialize(safe->proc_.getPluginState()) == asked)
             commit();
         else
-            safe->showNotice(slot, "Nicht ersetzt: Loop " + juce::String(slot + 1) + " wurde inzwischen ge"
-                                       + utf8("\xc3\xa4") + "ndert");
+            safe->showNotice(slot, "Not replaced: Loop " + juce::String(slot + 1) + " changed in the meantime");
     };
     if (confirmReplace)
     {
@@ -484,7 +562,7 @@ void Editor::suggestRegions(int slot)
     }
     auto options = juce::MessageBoxOptions::makeOptionsOkCancel(juce::MessageBoxIconType::WarningIcon,
                                                                 suggestConfirmTitle(slot), suggestConfirmMessage(),
-                                                                "Ersetzen", "Abbrechen", this);
+                                                                "Replace", "Cancel", this);
     juce::AlertWindow::showAsync(options, [answer](int result) { answer(result == 1); });
 }
 
@@ -506,12 +584,12 @@ void Editor::handleFile(int slot, const juce::File& file, const juce::MemoryBloc
     switch (action)
     {
         case LoopFileAction::Reject:
-            showNotice(slot, "Nicht geladen: " + file.getFileName() + " (" + error + ")");
+            showNotice(slot, "Not loaded: " + file.getFileName() + " (" + error + ")");
             return;
         case LoopFileAction::Relink:
             if (!proc_.loadLoop(slot, file)) // keeps regions, rules and bars
             {
-                showNotice(slot, "Nicht geladen: " + file.getFileName());
+                showNotice(slot, "Not loaded: " + file.getFileName());
                 return;
             }
             noticeUntil_[slot] = 0;
@@ -527,8 +605,7 @@ void Editor::handleFile(int slot, const juce::File& file, const juce::MemoryBloc
                 if (serialize(st) == *confirmedState)
                     replace(slot, file);
                 else
-                    showNotice(slot, "Nicht ersetzt: Loop " + juce::String(slot + 1) + " wurde inzwischen ge"
-                                         + utf8("\xc3\xa4") + "ndert");
+                    showNotice(slot, "Not replaced: Loop " + juce::String(slot + 1) + " changed in the meantime");
                 return;
             }
             askReplace(slot, file, serialize(st));
@@ -556,7 +633,7 @@ void Editor::askReplace(int slot, const juce::File& file, const juce::MemoryBloc
     }
     auto options = juce::MessageBoxOptions::makeOptionsOkCancel(juce::MessageBoxIconType::WarningIcon,
                                                                 replaceConfirmTitle(slot), replaceConfirmMessage(),
-                                                                "Ersetzen", "Abbrechen", this);
+                                                                "Replace", "Cancel", this);
     juce::AlertWindow::showAsync(options, [answer](int result) { answer(result == 1); });
 }
 
@@ -564,7 +641,7 @@ void Editor::replace(int slot, const juce::File& file)
 {
     if (!proc_.replaceLoop(slot, file, suggestedBarsFor(file, proc_.hostBpm())))
     {
-        showNotice(slot, "Nicht geladen: " + file.getFileName());
+        showNotice(slot, "Not loaded: " + file.getFileName());
         return;
     }
     noticeUntil_[slot] = 0;
@@ -634,17 +711,18 @@ void Editor::resized()
     presetBar_.setBounds(top);
     area.removeFromTop(kGap + 3);
 
-    // Lanes and the rule panel share what is left: the rule panel gets about a third, the rest goes
-    // to Loop 1 (58 %) and Loop 2 (42 %).
-    const int shared = area.getHeight() - 2 * kHeaderH - 2 * kGap;
-    const int rulesH = std::clamp(shared * 38 / 100, 100, 320);
+    // Lanes and the bottom row (rule panel, effects panel) share what is left: the bottom row gets
+    // about a third (at least what the effects panel needs), the rest goes to Loop 1 (58 %) and
+    // Loop 2 (42 %). The insert strip sits inside the Loop-2 box, right under the lane.
+    const int shared = area.getHeight() - 2 * kHeaderH - 2 * kGap - kFxStripH;
+    const int rulesH = std::clamp(shared * 38 / 100, kBottomMinH, 320);
     const int laneSpace = std::max(shared - rulesH, 80);
     const int lane0H = std::max(laneSpace * 58 / 100, 40);
     const int laneH[2] = { lane0H, std::max(laneSpace - lane0H, 40) };
 
     for (int i = 0; i < 2; ++i)
     {
-        auto strip = area.removeFromTop(kHeaderH + laneH[i]);
+        auto strip = area.removeFromTop(kHeaderH + laneH[i] + (i == 1 ? kFxStripH : 0));
         stripBounds_[i] = strip;
         auto header = strip.removeFromTop(kHeaderH).reduced(6, 3);
         ledBounds_[i] = juce::Rectangle<float>(7.0f, 7.0f)
@@ -660,9 +738,21 @@ void Editor::resized()
         barsLabel_[i].setBounds(header.removeFromRight(46));
         header.removeFromRight(kGap);
         status_[i].setBounds(header);
-        lanes_[i].setBounds(strip.reduced(1, 0).withTrimmedBottom(1));
+        if (i == 1)
+        {
+            // Same x range as the lane above: the markers line up with the regions.
+            lanes_[i].setBounds(strip.removeFromTop(laneH[i]).reduced(1, 0));
+            fxStrip_.setBounds(strip.reduced(1, 0).withTrimmedBottom(1));
+        }
+        else
+        {
+            lanes_[i].setBounds(strip.reduced(1, 0).withTrimmedBottom(1));
+        }
         area.removeFromTop(kGap);
     }
+    const int fxW = std::clamp(area.getWidth() / 2, kFxPanelMinW, kFxPanelMaxW);
+    fxPanel_.setBounds(area.removeFromRight(fxW));
+    area.removeFromRight(kGap);
     rules_.setBounds(area);
 }
 

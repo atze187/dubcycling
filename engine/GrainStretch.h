@@ -4,34 +4,34 @@
 
 namespace dc {
 
-// Lesebereich und Geschwindigkeit der Stücke für einen Aufruf von GrainStretch::process.
+// Read range and speed of the grains for one call of GrainStretch::process.
 struct GrainFrame
 {
-    double step = 1.0;  // Quellsamples pro Ausgabesample (inklusive Tune und Pitch)
-    double dir = 1.0;   // +1 vorwärts, -1 rückwärts
-    bool cycle = false; // true: Lesepositionen in [lo, hi) umbrechen; false: auf [lo, hi - 1] halten
+    double step = 1.0;  // source samples per output sample (including tune and pitch)
+    double dir = 1.0;   // +1 forward, -1 backward
+    bool cycle = false; // true: wrap read positions into [lo, hi); false: hold at [lo, hi - 1]
     double lo = 0.0;
     double hi = 0.0;
 };
 
-// Zyklischer Stretch im Stil des Akai S950: Alle grainLen Ausgabesamples startet an der Quellposition
-// ein neues Stück, das alte läuft ein Viertel der Stückdauer weiter und wird linear übergeblendet.
-// Die Tonhöhe kommt allein aus GrainFrame::step; die Quellposition liefert der Aufrufer.
-// Mit jedem neuen Stück laufen alle älteren innerhalb der neuen Überblendzeit aus; es leben daher
-// höchstens zwei Stücke, und die Gewichte bleiben auch bei wechselnder Stückgröße stetig.
+// Cyclic stretch in the style of the Akai S950: every grainLen output samples a
+// new grain starts at the source position; the old one runs on for a quarter of the grain duration and is crossfaded linearly.
+// The pitch comes solely from GrainFrame::step; the caller supplies the source position.
+// With each new grain all older ones run out within the new crossfade time; so at most
+// two grains live, and the weights stay continuous even when the grain size changes.
 class GrainStretch
 {
 public:
     void reset();
-    // Beginnt das erste Stück sofort bei srcPos, ohne Einblendung (der Aufrufer überblendet selbst).
+    // Starts the first grain immediately at srcPos, without a fade-in (the caller crossfades itself).
     void start(double srcPos, double dir, int grainLen);
-    // Zieht das nächste Stück vor (Sprung der Quellposition): Es startet, sobald kein Stück mehr
-    // ausblendet, und blendet dann über die normale Überblendzeit über. Hält „höchstens zwei“ ein.
+    // Brings the next grain forward (source position jump): it starts as soon as no grain is
+    // fading out any more, and then crossfades over the normal crossfade time. Keeps "at most two".
     void retrigger();
     float process(const std::vector<float>& x, double srcPos, int grainLen, const GrainFrame& f);
-    // Anzahl der gerade hörbaren Stücke (für Tests der Invariante „höchstens zwei“).
+    // Number of currently audible grains (for tests of the "at most two" invariant).
     int activeGrains() const;
-    // Starts, bei denen beide Plätze belegt waren (Verletzung der Invariante; muss 0 bleiben).
+    // Starts where both slots were occupied (invariant violation; must stay 0).
     int slotCollisions() const { return collisions_; }
 
 private:
@@ -42,10 +42,10 @@ private:
         double pos = 0.0;
         double dir = 1.0;
         float gain = 1.0f;
-        float delta = 0.0f; // Gewichtsänderung pro Ausgabesample
-        int remaining = 0;  // Samples bis zum Beginn der Ausblendung
-        int fade = 1;       // Länge der Ausblendung in Samples
-        int fadeLeft = 0;   // verbleibende Ausblend-Samples; bei 0 endet das Stück (ganzzahlig, exakt)
+        float delta = 0.0f; // weight change per output sample
+        int remaining = 0;  // samples until the fade-out begins
+        int fade = 1;       // length of the fade-out in samples
+        int fadeLeft = 0;   // remaining fade-out samples; at 0 the grain ends (integer, exact)
     };
 
     void launch(double srcPos, double dir, int grainLen, bool fadeIn);

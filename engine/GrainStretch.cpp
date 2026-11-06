@@ -37,9 +37,9 @@ int GrainStretch::activeGrains() const
 void GrainStretch::launch(double srcPos, double dir, int grainLen, bool fadeIn)
 {
     const int fade = std::max(1, grainLen / 4);
-    // Alle älteren Stücke laufen genau innerhalb der neuen Überblendzeit aus. Ihre Gewichte fallen
-    // dann zusammen mit 1/fade pro Sample, das neue steigt mit 1/fade: Die Summe bleibt eins, auch
-    // wenn ein schon ausblendendes Stück mit kürzerer Überblendzeit begonnen hat.
+    // All older grains run out exactly within the new crossfade time. Their weights fall
+    // together by 1/fade per sample, the new one rises by 1/fade: the sum stays one, even
+    // if a grain that is already fading out started with a shorter crossfade time.
     for (auto& g : grains_)
     {
         if (!g.active)
@@ -55,11 +55,11 @@ void GrainStretch::launch(double srcPos, double dir, int grainLen, bool fadeIn)
             slot = &g;
             break;
         }
-    // Siehe Klassenkommentar: Es leben höchstens zwei Stücke, ein freier Platz ist also garantiert.
+    // See the class comment: at most two grains live, so a free slot is guaranteed.
     assert(slot != nullptr && "GrainStretch: both slots busy on launch");
     if (slot == nullptr)
     {
-        // Notfall (darf nicht eintreten): das leisere Stück ersetzen.
+        // Emergency (must not happen): replace the quieter grain.
         ++collisions_;
         slot = grains_[0].gain <= grains_[1].gain ? &grains_[0] : &grains_[1];
     }
@@ -105,7 +105,7 @@ float GrainStretch::process(const std::vector<float>& x, double srcPos, int grai
         if (g.fadingOut)
         {
             g.gain += g.delta;
-            // Ganzzahliges Ende: Float-Rest im Gewicht kann das Stück nicht über fadeLeft hinaus halten.
+            // Integer end: a float remainder in the weight cannot keep the grain alive beyond fadeLeft.
             if (--g.fadeLeft <= 0 || g.gain <= 0.0f)
                 g.active = false;
         }
@@ -115,7 +115,7 @@ float GrainStretch::process(const std::vector<float>& x, double srcPos, int grai
                 g.gain = std::min(1.0f, g.gain + g.delta);
             if (--g.remaining <= 0)
             {
-                // Ausblenden über ein Viertel der Stückdauer, ab dem aktuellen Gewicht.
+                // Fade out over a quarter of the grain duration, from the current weight.
                 g.fadingOut = true;
                 g.delta = -g.gain / static_cast<float>(g.fade);
                 g.fadeLeft = g.fade;

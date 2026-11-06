@@ -1,4 +1,4 @@
-# Plugin-Code ohne Processor/Editor, den auch die Tests linken koennen.
+# Plugin code without Processor/Editor, which the tests can link too.
 add_library(dc_plugin_shared STATIC
     LoopLoader.h LoopLoader.cpp
     HostTransport.h HostTransport.cpp
@@ -27,8 +27,8 @@ target_link_libraries(dc_plugin_shared PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 
-# Processor und Editor als Quellen, die jedes Ziel mit seinen eigenen Flags uebersetzt
-# (Plugin und dc_plugin_tests), damit die Tests den Editor instanziieren koennen.
+# Processor and Editor as sources that each target compiles with its own flags
+# (plugin and dc_plugin_tests), so the tests can instantiate the editor.
 add_library(dc_plugin_ui INTERFACE)
 target_sources(dc_plugin_ui INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/DubcyclingProcessor.h
@@ -37,6 +37,10 @@ target_sources(dc_plugin_ui INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PanelLook.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/LoopLane.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/LoopLane.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/FxStrip.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/FxStrip.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/FxPanel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/FxPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/RulePanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/RulePanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PresetBar.h

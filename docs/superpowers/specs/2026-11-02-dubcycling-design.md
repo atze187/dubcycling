@@ -1,155 +1,155 @@
 # Dubcycling – Design
 
-Stand: 2026-11-02. Aussagen von atze187 sind unmarkiert. Alles mit **[Annahme]** ist eine Entscheidung des Entwurfs-Autors, die noch bestätigt werden muss.
+As of: 2026-11-02. Statements by atze187 are unmarked. Everything marked **[Assumption]** is a decision by the design author that still needs to be confirmed.
 
-## Worum es geht
+## What it is about
 
-Dubcycling ist ein VST3-Plugin, in dem zwei Audio-Loops geladen und in Regionen geteilt werden. Loop 1 ist der Master und läuft immer hörbar durch. Loop 2 ist der Slave: Er spielt nur, wenn eine Regel es auslöst. Erreicht Loop 1 eine bestimmte Region, wird per Zufall (nach Gewichten) entschieden, welche Region aus Loop 2 dazu erklingt. Die Regionen können eigene Effekte bekommen. Das Tempo richtet sich nach dem Host-BPM.
+Dubcycling is a VST3 plugin in which two audio loops are loaded and split into regions. Loop 1 is the master and always keeps playing audibly. Loop 2 is the slave: it only plays when a rule triggers it. When loop 1 reaches a certain region, chance (by weights) decides which region from loop 2 sounds along with it. The regions can get their own effects. The tempo follows the host BPM.
 
-Der Reiz liegt darin, dass ein Loop-Paar bei jedem Durchlauf ein bisschen anders klingt, ohne dass man es von Hand neu arrangiert.
+The appeal is that a loop pair sounds a little different on every pass, without having to rearrange it by hand.
 
-## Ziele
+## Goals
 
-- Zwei Loops als Audiodateien von der Platte laden (WAV, MP3, FLAC, AIFF), in Stereo.
-- Beide Loops auf ganze Takte quantisieren und auf das Host-BPM strecken.
-- Beide Loops in Regionen teilen, die nicht ans Raster gebunden sind.
-- Regeln pro Loop-1-Region: Welche Loop-2-Regionen mit welcher Wahrscheinlichkeit.
-- Effekte direkt auf den Regionen (Details später).
-- Ein Stereo-Ausgang.
-- Start und Stopp folgen dem Host-Transport.
-- Zustand wird in der DAW-Session gespeichert. Presets und Banken (Stand 2026-11-04) ergänzen das, siehe `2026-11-04-presets-design.md`.
+- Load two audio loops from disk (WAV, MP3, FLAC, AIFF), in stereo.
+- Quantize both loops to whole bars and stretch them to the host BPM.
+- Split both loops into regions that are not bound to the grid.
+- Rules per loop 1 region: which loop 2 regions with which probability.
+- Effects directly on the regions (details later).
+- One stereo output.
+- Start and stop follow the host transport.
+- State is saved in the DAW session. Presets and banks (as of 2026-11-04) add to this, see `2026-11-04-presets-design.md`.
 
-## Nicht-Ziele (vorerst)
+## Non-goals (for now)
 
-- Kein Performance-Modus in der ersten Phase. Er entsteht erst, wenn alle Funktionen im Edit-Modus stehen; dann wird entschieden, was darin relevant ist.
-- Kein MIDI-Instrument und keine Pads.
-- Keine getrennten Ausgänge für Loop 1 und Loop 2.
-- Keine Aufnahme aus dem Host, nur Dateien von der Platte.
-- Keine Audio-Einbettung in die Session (kann später als Option pro Loop kommen).
-- Keine externen VST-Plugins als Effekte, nur eingebaute.
-- Regionsvorschläge für Nicht-Drum-Loops bleiben offen.
-- Plattformen in dieser Reihenfolge: zuerst Windows, danach macOS, danach Linux, jeweils als VST3. Andere Plugin-Formate sind nicht geplant.
+- No performance mode in the first phase. It only comes once all functions are in place in edit mode; then it is decided what is relevant in it.
+- No MIDI instrument and no pads.
+- No separate outputs for loop 1 and loop 2.
+- No recording from the host, only files from disk.
+- No audio embedding in the session (can come later as an option per loop).
+- No external VST plugins as effects, only built-in ones.
+- Region suggestions for non-drum loops stay open.
+- Platforms in this order: Windows first, then macOS, then Linux, each as VST3. Other plugin formats are not planned.
 
-## Anti-Ziele
+## Anti-goals
 
-Die Frage, woran atze187 ein Scheitern erkennen würde, wurde so beantwortet: „durch Benutzen“. Es gibt also keine vorab festgelegten Ausschlusskriterien. Daraus folgt für die Umsetzung: früh etwas Benutzbares liefern und im Gebrauch nachschärfen, statt alles vorab zu perfektionieren.
+The question of how atze187 would recognize a failure was answered like this: "by using it". So there are no exclusion criteria defined up front. For the implementation this means: deliver something usable early and sharpen it in use, instead of perfecting everything beforehand.
 
-## Loops und Tempo
+## Loops and tempo
 
-- Jeder Loop wird beim Laden auf ganze Takte quantisiert und auf das Host-BPM gestreckt.
-- Haben die Loops unterschiedliche Längen in Takten, werden beide auf das kleinste gemeinsame Vielfache (KGV) vervielfacht, damit sie synchron bleiben. Beispiel: 3 und 4 Takte ergeben 12 Takte.
-- Beide Loops sind Stereo. Das ist eine Abweichung von dubgefahren, wo `SampleData` Mono ist und auf 60 Sekunden begrenzt.
-- Start, Stopp und Position kommen vom Host-Transport.
-- Ändert sich das BPM im Host (auch mitten im Song), spiegelt sich das in beiden Loops wider: Sie folgen dem neuen Tempo live. Das ist eine Entscheidung von atze187. Folge für die Umsetzung: Das Strecken muss auf BPM-Änderungen reagieren, sei es in Echtzeit oder durch Neuberechnung im Hintergrund. Ein Limit für das Streckverhältnis ist nötig und liegt beim Builder.
-- **[Annahme]** Wie die Taktzahl eines Loops bestimmt wird (automatisch aus der Länge und dem Host-BPM geraten oder vom Nutzer eingegeben), ist nicht festgelegt. Siehe „Dem Builder überlassen“.
+- Each loop is quantized to whole bars on loading and stretched to the host BPM.
+- If the loops have different lengths in bars, both are multiplied up to the least common multiple (LCM) so they stay in sync. Example: 3 and 4 bars give 12 bars.
+- Both loops are stereo. This deviates from dubgefahren, where `SampleData` is mono and limited to 60 seconds.
+- Start, stop and position come from the host transport.
+- If the BPM changes in the host (even mid-song), this is reflected in both loops: they follow the new tempo live. This is a decision by atze187. Consequence for the implementation: the stretching has to react to BPM changes, whether in real time or by recomputing in the background. A limit for the stretch ratio is needed and is up to the builder.
+- **[Assumption]** How the bar count of a loop is determined (guessed automatically from the length and the host BPM, or entered by the user) is not fixed. See "Left to the builder".
 
-## Regionen
+## Regions
 
-- Beide Loops werden in Regionen geteilt. Die Regionsgrenzen liegen frei und sind nicht ans Takt- oder Beat-Raster gebunden.
-- Regionen werden per Maus gesetzt.
-- Das Plugin macht außerdem Vorschläge für Grenzen, zunächst optimiert für Drum-Loops (zum Beispiel an Transienten). Wie das für Nicht-Drum-Loops aussehen soll, bleibt offen.
+- Both loops are split into regions. The region boundaries are free and not bound to the bar or beat grid.
+- Regions are set with the mouse.
+- The plugin also makes suggestions for boundaries, initially optimized for drum loops (for example at transients). What this should look like for non-drum loops stays open.
 
-## Regeln
+## Rules
 
-- Eine Regel gehört zu einer Loop-1-Region. Wählt man im Editor eine Loop-1-Region aus, erscheint darunter die Regel dazu.
-- Die Regel besteht aus einer Zeile pro Loop-2-Region, in dieser Form:
+- A rule belongs to a loop 1 region. If you select a loop 1 region in the editor, its rule appears below.
+- The rule consists of one row per loop 2 region, in this form:
 
   `A  |-------------o-------|  70%  [GATE/ONESHOT]`
 
-  Ein Regler für das Gewicht, der Prozentwert und ein Umschalter zwischen Gate und One-Shot. Der Modus gilt pro Zielregion, nicht pro Regel.
-- Erreicht Loop 1 eine Region mit Regel, wird bei jedem Durchlauf neu gezogen: genau eine Loop-2-Region nach Gewicht. Die Gewichte ergeben zusammen höchstens 100 %. Der Rest bis 100 % ist die Wahrscheinlichkeit für Stille.
-- Hat eine Loop-1-Region keine Regel, spielt Loop 2 dort nicht.
-- **Gate:** Die gewählte Loop-2-Region spielt so lange, wie die auslösende Loop-1-Region läuft.
-- **One-Shot:** Die gewählte Loop-2-Region spielt einmal ganz aus, auch über die Grenze der Loop-1-Region hinaus.
-- Die Regionen aus Loop 2 haben unabhängig von Loop 1 eigene Längen, daher sind beide Modi nötig.
+  A knob for the weight, the percentage and a switch between gate and one-shot. The mode applies per target region, not per rule.
+- When loop 1 reaches a region with a rule, a new draw is made on every pass: exactly one loop 2 region by weight. The weights add up to at most 100 %. The remainder up to 100 % is the probability of silence.
+- If a loop 1 region has no rule, loop 2 does not play there.
+- **Gate:** The chosen loop 2 region plays for as long as the triggering loop 1 region runs.
+- **One-shot:** The chosen loop 2 region plays through once completely, even beyond the boundary of the loop 1 region.
+- The regions from loop 2 have their own lengths independent of loop 1, so both modes are needed.
 
-## Effekte
+## Effects
 
-Entschieden ist bisher nur:
-- Es gibt eingebaute Effekte.
-- Sie liegen direkt auf den Regionen (nicht als gemeinsamer Send).
-- Die Details werden später besprochen (welche Effekte, wie viele Slots, ob auch pro Loop).
+So far only this is decided:
+- There are built-in effects.
+- They sit directly on the regions (not as a shared send).
+- The details will be discussed later (which effects, how many slots, whether also per loop).
 
-Offener Punkt für diese Besprechung: Mit Effekten direkt auf der Region können Hall- und Echo-Schweife an der Regionsgrenze abgeschnitten werden. Eine Send-Lösung hätte das vermieden; sie wurde zurückgestellt.
+Open point for that discussion: with effects directly on the region, reverb and echo tails can be cut off at the region boundary. A send solution would have avoided that; it was put on hold.
 
-Der ursprüngliche Wunsch nannte außerdem Effekt-Slots auf einzelnen Regionen oder auf ganzen Loops. Ob Loops als Ganzes Effekte bekommen, ist noch zu klären.
+The original wish also mentioned effect slots on individual regions or on whole loops. Whether whole loops get effects still has to be clarified.
 
-## Oberfläche
+## User interface
 
-- Es gibt einen Edit-Modus und später einen Performance-Modus. Zuerst wird nur der Edit-Modus gebaut.
-- Der Edit-Modus zeigt beide Loops als Wellenformen übereinander (Loop 1 oben, Loop 2 darunter, beide mit ihren Regionen). Darunter erscheint die Regel der gewählten Loop-1-Region.
-- Beide Loops sind im Editor gleichzeitig sichtbar und bearbeitbar.
-- Das Aussehen folgt der Skizze „Variante A“ aus dem Gespräch: Spuren übereinander, Regel-Zeilen darunter.
+- There is an edit mode and, later, a performance mode. Only the edit mode is built first.
+- The edit mode shows both loops as waveforms one above the other (loop 1 on top, loop 2 below, both with their regions). Below that appears the rule of the selected loop 1 region.
+- Both loops are visible and editable in the editor at the same time.
+- The look follows the "Variant A" sketch from the conversation: tracks one above the other, rule rows below.
 
-## Speichern und Laden
+## Saving and loading
 
-- Der Zustand liegt im Plugin-State der DAW-Session (die DAW legt ihn in der Projektdatei ab).
-- Die Loops werden dort nur als Referenz gespeichert: Dateipfad, Dateiname und Prüfsumme.
-- Regionen, Regeln und Effekt-Einstellungen sind im Plugin-State und gehen nicht verloren, wenn eine Audiodatei fehlt.
-- Presets: Eine Bank ist ein Ordner mit `bank.json` und `samples/`. Ein Preset hält Regionen, Regeln, Labels, Takte und die Sample-Verweise der Bank. Die Preset-Leiste (BANK, PRESET, SAVE, SAVE AS, ⋯ mit Export und Import als Zip) lädt und speichert sie, bei ungespeicherten Änderungen fragt sie zurück. Die Session speichert weiter Pfad und Prüfsumme der Loops. Einzelheiten: `2026-11-04-presets-design.md`.
-- Ist ein Pfad ungültig, sucht das Plugin den Loop selbst (zum Beispiel im Ordner der Session oder per Dateiname und Prüfsumme). Findet es ihn nicht, meldet es „Datei fehlt“, und der Nutzer ordnet neu zu.
+- The state lives in the plugin state of the DAW session (the DAW stores it in the project file).
+- The loops are stored there only as a reference: file path, file name and checksum.
+- Regions, rules and effect settings are in the plugin state and are not lost when an audio file is missing.
+- Presets: A bank is a folder with `bank.json` and `samples/`. A preset holds regions, rules, labels, bars and the bank's sample references. The preset bar (BANK, PRESET, SAVE, SAVE AS, ⋯ with export and import as zip) loads and saves them, and prompts on unsaved changes. The session keeps storing path and checksum of the loops. Details: `2026-11-04-presets-design.md`.
+- If a path is invalid, the plugin looks for the loop itself (for example in the session folder or by file name and checksum). If it does not find it, it reports "File missing", and the user reassigns it.
 
-## Technik (Entscheidung des Autors)
+## Technology (author's decision)
 
-Alles in diesem Abschnitt ist eine **[Annahme]**:
-- C++20, JUCE 8, CMake, VST3, Catch2-Tests.
-- Plattformen: Windows, dann macOS, dann Linux (Entscheidung von atze187). Der Code bleibt von Anfang an plattformneutral (kein Windows-spezifischer Code in `engine/` und `plugin/`), die Build-Presets für macOS und Linux kommen mit den jeweiligen Phasen.
-- Aufbau wie dubgefahren: `engine/` (reines DSP, ohne JUCE-GUI) und `plugin/` (Prozessor, UI), mit `build.ps1` und CMake-Presets.
+Everything in this section is an **[Assumption]**:
+- C++20, JUCE 8, CMake, VST3, Catch2 tests.
+- Platforms: Windows, then macOS, then Linux (decision by atze187). The code stays platform-neutral from the start (no Windows-specific code in `engine/` and `plugin/`), the build presets for macOS and Linux come with the respective phases.
+- Structure like dubgefahren: `engine/` (pure DSP, without JUCE GUI) and `plugin/` (processor, UI), with `build.ps1` and CMake presets.
 
-### Was aus dubgefahren übernommen werden kann
+### What can be taken over from dubgefahren
 
-Dubgefahren liegt unter `E:\Repos\dubgefahren` (GitHub: atze187/dubgefahren). Geprüft wurde: Projektgerüst, `SampleLoader`, `GrainStretch`, die Effekt-Bausteine, `computePeaks` und `WaveformView`, `DgLookAndFeel`. Die Teile werden in das neue Repo kopiert, nicht verlinkt.
+Dubgefahren lives at `E:\Repos\dubgefahren` (GitHub: atze187/dubgefahren). Checked: project skeleton, `SampleLoader`, `GrainStretch`, the effect building blocks, `computePeaks` and `WaveformView`, `DgLookAndFeel`. The parts are copied into the new repo, not linked.
 
-| Teil | Übernahme |
+| Part | Takeover |
 |------|-----------|
-| CMake, Presets, `build.ps1`, Tests-Aufbau | direkt |
-| `SampleLoader` (WAV, AIFF, FLAC u. a., eigener Thread) | mit Änderung: Stereo statt Mono-Mittelwert, 60-Sekunden-Grenze prüfen |
-| `GrainStretch` (Strecken im S950-Stil) | brauchbar, klingt nach Hardware-Sampler; ob es für Drum-Loops reicht, ist zu hören |
-| `Saturator`, `SvFilter`, `TapeDelay`, `Phaser`, `SpringReverb`, `Limiter` | einzeln übernehmbar; die feste Verkabelung `FxChain` wird neu gebaut |
-| `computePeaks`, `WaveformView` | Anzeige übertragbar, aber Marker-Logik muss von 3 festen Markern auf beliebig viele Regionsgrenzen erweitert werden |
-| `DgLookAndFeel`, Controls, Fonts | übernehmbar |
+| CMake, presets, `build.ps1`, test setup | directly |
+| `SampleLoader` (WAV, AIFF, FLAC etc., own thread) | with a change: stereo instead of the mono average, check the 60-second limit |
+| `GrainStretch` (stretching in S950 style) | usable, sounds like a hardware sampler; whether it is enough for drum loops has to be heard |
+| `Saturator`, `SvFilter`, `TapeDelay`, `Phaser`, `SpringReverb`, `Limiter` | individually portable; the fixed wiring `FxChain` is rebuilt |
+| `computePeaks`, `WaveformView` | display transferable, but the marker logic has to be extended from 3 fixed markers to any number of region boundaries |
+| `DgLookAndFeel`, controls, fonts | portable |
 
-Nicht übernommen: `PadRouter`, `NoteMap`, `Kit` (MIDI-Pads), `SampleRegion` (nur eine Region pro Sample).
+Not taken over: `PadRouter`, `NoteMap`, `Kit` (MIDI pads), `SampleRegion` (only one region per sample).
 
-Nicht geprüft: ob dubgefahren schon Transienten-Erkennung oder Tempo-Analyse enthält.
+Not checked: whether dubgefahren already contains transient detection or tempo analysis.
 
-## Dem Builder überlassen
+## Left to the builder
 
-- Wie die Taktzahl eines Loops bestimmt wird (Auto-Erkennung, Eingabe oder beides).
-- Welches Verfahren zur Transienten-Erkennung für die Drum-Vorschläge.
-- Qualität des Strecken-Verfahrens (`GrainStretch` oder ein anderes), solange Drum-Loops brauchbar klingen.
-- Wie der Zufall realisiert wird (Zufallsquelle, ob reproduzierbar).
-- Wie Übergänge an Regionsgrenzen geglättet werden (Fades gegen Knackser).
-- Wie viele Regionen pro Loop maximal.
-- Aufbau des Plugin-States und der Versionierung (der State führt seit den Presets zusätzlich die aktive Bank und das aktive Preset).
-- Genaue Gestaltung der Oberfläche innerhalb der Skizze.
+- How the bar count of a loop is determined (auto-detection, input or both).
+- Which method for transient detection for the drum suggestions.
+- Quality of the stretching method (`GrainStretch` or another), as long as drum loops sound usable.
+- How the randomness is realized (random source, whether reproducible).
+- How transitions at region boundaries are smoothed (fades against clicks).
+- How many regions per loop at most.
+- Structure of the plugin state and versioning (since the presets, the state additionally carries the active bank and the active preset).
+- Exact design of the interface within the sketch.
 
-## Abspiellogik (Präzisierungen des Autors)
+## Playback logic (author's clarifications)
 
-Alle Punkte hier sind eine **[Annahme]** und ergänzen die Regeln oben:
-- Gezogen wird bei jedem Eintritt von Loop 1 in eine Region mit Regel, auch nach dem Loop-Wrap und nach einem Sprung des Transports.
-- Die gezogene Loop-2-Region startet an ihrem eigenen Anfang, nicht an einer vom Host-Positionsversatz abgeleiteten Stelle.
-- Loop 2 hat höchstens eine Stimme. Eine neue Ziehung bricht die laufende Loop-2-Region ab, auch einen noch laufenden One-Shot, und spielt die neu gezogene Region. Das ist eine Entscheidung von atze187. Der Abbruch geschieht mit einem kurzen Fade (Annahme des Autors, gegen Knackser).
-- Springt oder loopt der Host-Transport, wird die Position von Loop 1 neu berechnet und Loop 2 beendet.
-- Ohne laufenden Transport ist das Plugin stumm.
-- Es ist kein bestimmter Host als Ziel festgelegt. Welche DAWs zum Testen herangezogen werden, entscheidet der Builder.
+All points here are an **[Assumption]** and supplement the rules above:
+- A draw is made each time loop 1 enters a region with a rule, also after the loop wrap and after a jump of the transport.
+- The drawn loop 2 region starts at its own beginning, not at a point derived from the host position offset.
+- Loop 2 has at most one voice. A new draw aborts the running loop 2 region, including a still-running one-shot, and plays the newly drawn region. This is a decision by atze187. The abort happens with a short fade (author's assumption, against clicks).
+- If the host transport jumps or loops, the position of loop 1 is recomputed and loop 2 is ended.
+- Without a running transport the plugin is silent.
+- No particular host is set as a target. Which DAWs are used for testing is up to the builder.
 
-## Umfang der ersten Version (Annahme des Autors)
+## Scope of the first version (author's assumption)
 
-- Die erste Version enthält Laden, Quantisieren und Strecken, Regionen, Regeln, Abspiellogik, Zustand in der Session und den Edit-Modus.
-- Effekte sind nicht Teil der ersten Version. Der Plan reserviert nur Haken im Signalweg. Die Effekte werden wie vereinbart nach einer eigenen Besprechung eingeplant.
-- Als erster benutzbarer Stand zählt: zwei Loops laden, Regionen setzen, Regeln bearbeiten, mit dem Host-Transport abspielen.
-- Transienten-Vorschläge und der Relink bei fehlender Datei kommen nach diesem Stand.
+- The first version contains loading, quantizing and stretching, regions, rules, playback logic, state in the session and the edit mode.
+- Effects are not part of the first version. The plan only reserves hooks in the signal path. The effects will be scheduled after a separate discussion, as agreed.
+- The first usable state is: load two loops, set regions, edit rules, play along with the host transport.
+- Transient suggestions and the relink for a missing file come after this state.
 
-## Dateien und Speicher (Annahmen des Autors)
+## Files and memory (author's assumptions)
 
-- Die 60-Sekunden-Grenze aus dubgefahren entfällt; es gilt stattdessen ein Speicherbudget für die gestreckten und vervielfachten Loops, das der Builder festlegt.
-- Die Prüfsumme ist ein Hash der gesamten Datei.
-- Gesucht wird im Ordner der Session und im zuletzt gespeicherten Ordner der Datei.
-- Der Builder prüft vor der Übernahme, ob `GrainStretch` echtzeitfähig ist und ob die Lizenz die Kopie erlaubt (gleicher Autor, daher vermutlich unproblematisch).
+- The 60-second limit from dubgefahren is dropped; instead a memory budget applies to the stretched and multiplied loops, which the builder sets.
+- The checksum is a hash of the entire file.
+- The search covers the session folder and the file's last saved folder.
+- Before taking it over, the builder checks whether `GrainStretch` is real-time capable and whether the license allows the copy (same author, so probably unproblematic).
 
-## Reihenfolge der Arbeit
+## Order of work
 
-1. Dieses Dokument bestätigen.
-2. Umsetzungsplan (für Software: `superpowers:writing-plans`).
-3. Danach Effekte im Detail und der Performance-Modus als eigene Runden.
+1. Confirm this document.
+2. Implementation plan (for software: `superpowers:writing-plans`).
+3. Afterwards effects in detail and the performance mode as separate rounds.

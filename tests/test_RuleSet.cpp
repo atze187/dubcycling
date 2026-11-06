@@ -127,3 +127,17 @@ TEST_CASE("RuleSet weights summing to 1 never leave a sliver of silence near u=1
     CHECK_FALSE(partial.draw(0, justBelowOne).has_value());
     CHECK_FALSE(partial.draw(0, 0.99995f).has_value());
 }
+
+TEST_CASE("RuleSet: mix defaults to 0.5 and is sanitized in setTargets", "[RuleSet]")
+{
+    REQUIRE(dc::RuleTarget{}.mix == 0.5f);
+    dc::RuleSet rs;
+    dc::RuleTarget a = T(1, 0.3f);
+    a.mix = std::numeric_limits<float>::quiet_NaN();
+    dc::RuleTarget b = T(2, 0.3f);
+    b.mix = 2.0f;
+    rs.setTargets(0, { T(0, 0.3f), a, b });
+    REQUIRE(rs.targets(0)[0].mix == 0.5f);
+    REQUIRE(rs.targets(0)[1].mix == 0.5f);
+    REQUIRE(rs.targets(0)[2].mix == 1.0f);
+}

@@ -1,6 +1,7 @@
 #include "plugin/ui/RulePanel.h"
 #include <algorithm>
 #include <cmath>
+#include "engine/MixGain.h"
 #include "plugin/PluginState.h"
 #include "plugin/ui/PanelLook.h"
 
@@ -31,13 +32,63 @@ float toPercent(float weight)
 
 juce::String percentString(float percent) { return juce::String(juce::roundToInt(percent)) + " %"; }
 
+// Readout of a mix value: the level of the quieter loop, both at full level in the centre.
+juce::String mixString(float mix)
+{
+    const auto g = mixGains(mix);
+    const int l1 = juce::roundToInt(g.loop1 * 100.0f);
+    const int l2 = juce::roundToInt(g.loop2 * 100.0f);
+    if (l2 <= 0)
+        return "L1 only";
+    if (l1 <= 0)
+        return "L2 only";
+    if (l2 < 100)
+        return "L2 " + juce::String(l2) + " %";
+    if (l1 < 100)
+        return "L1 " + juce::String(l1) + " %";
+    return "L1 | L2";
+}
+
+// Columns of a rule row (row bounds without the 2 px top/bottom inset):
+//   name | weight slider | percent | GATE/1-SHOT | mix slider | mix readout
+// The two sliders share what the fixed columns leave, the mix slider gets two fifths of it.
+constexpr int kNameW = 60;
+constexpr int kPercentW = 34;
+constexpr int kModeW = 72;
+constexpr int kMixValueW = 46;
+constexpr int kNear = 3;  // slider to its readout
+constexpr int kApart = 6; // between column groups
+
+struct RowColumns
+{
+    juce::Rectangle<int> name, weight, percent, mode, mix, mixValue;
+};
+
+RowColumns rowColumns(juce::Rectangle<int> r)
+{
+    RowColumns c;
+    c.name = r.removeFromLeft(kNameW);
+    const int flex = std::max(0, r.getWidth() - (kNear + kPercentW + kApart + kModeW + kApart + kNear + kMixValueW));
+    const int mixW = std::clamp(flex * 2 / 5, 36, 96);
+    c.mixValue = r.removeFromRight(kMixValueW);
+    r.removeFromRight(kNear);
+    c.mix = r.removeFromRight(mixW);
+    r.removeFromRight(kApart);
+    c.mode = r.removeFromRight(kModeW);
+    r.removeFromRight(kApart);
+    c.percent = r.removeFromRight(kPercentW);
+    r.removeFromRight(kNear);
+    c.weight = r;
+    return c;
+}
+
 // Two-position switch: GATE | 1-SHOT, the active side lit. A click anywhere flips it.
 struct ModeSwitch final : public juce::Component, public juce::SettableTooltipClient
 {
     ModeSwitch()
     {
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
-        setTooltip("Gate: l" + utf8("\xc3\xa4") + "uft so lange wie die Loop-1-Region. One-Shot: einmal, dann Ende.");
+        setTooltip("Gate: plays as long as the Loop 1 region. One-Shot: once, then ends.");
     }
 
     void paint(juce::Graphics& g) override
@@ -49,7 +100,7 @@ struct ModeSwitch final : public juce::Component, public juce::SettableTooltipCl
             g.fillRect(area);
             g.setColour(active ? onText : kDim);
             g.setFont(mono(10.0f));
-            g.drawText(text, area, juce::Justification::centred);
+            g.drawFittedText(text, area.toNearestInt(), juce::Justification::centred, 1, 0.8f);
         };
         auto left = r.removeFromLeft(r.getWidth() * 0.5f);
         cell(left, "GATE", mode == PlayMode::Gate, kEdgeLight, kText);
@@ -73,7 +124,8 @@ bool same(const std::vector<RuleTarget>& a, const std::vector<RuleTarget>& b)
     if (a.size() != b.size())
         return false;
     for (std::size_t i = 0; i < a.size(); ++i)
-        if (a[i].region2 != b[i].region2 || a[i].weight != b[i].weight || a[i].mode != b[i].mode)
+        if (a[i].region2 != b[i].region2 || a[i].weight != b[i].weight || a[i].mode != b[i].mode
+            || sanitizeMix(a[i].mix) != sanitizeMix(b[i].mix))
             return false;
     return true;
 }
@@ -98,8 +150,10 @@ struct RulePanel::Row final : public juce::Component
 {
     Row(RulePanel& owner, int index) : owner_(owner), index_(index)
     {
+        setComponentID("row" + juce::String(index));
+        letter.setComponentID("name");
         letter.setText(regionLabel(owner.labels2_, index), juce::dontSendNotification);
-        letter.setTooltip("Loop 2, Region " + juce::String(index + 1) + utf8(" \xe2\x80\x93 Doppelklick zum Umbenennen"));
+        letter.setTooltip("Loop 2, Region " + juce::String(index + 1) + utf8(" \xe2\x80\x93 double-click to rename"));
         letter.setColour(juce::Label::textColourId, kText);
         letter.setColour(juce::Label::textWhenEditingColourId, kAmber);
         letter.setColour(juce::Label::backgroundWhenEditingColourId, kLcd);
@@ -118,6 +172,7 @@ struct RulePanel::Row final : public juce::Component
         };
         addAndMakeVisible(letter);
 
+        slider.setComponentID("weight");
         slider.setSliderStyle(juce::Slider::LinearHorizontal);
         slider.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
         slider.setRange(0.0, 100.0, 1.0);
@@ -135,25 +190,60 @@ struct RulePanel::Row final : public juce::Component
         slider.onDragEnd = [this] { owner_.endDrag(); };
         addAndMakeVisible(slider);
 
+        value.setComponentID("percent");
         value.setJustificationType(juce::Justification::centredRight);
+        value.setBorderSize(juce::BorderSize<int>(0, 1, 0, 1));
+        value.setMinimumHorizontalScale(0.8f);
         value.setColour(juce::Label::textColourId, kText);
         value.setFont(mono(11.0f));
         addAndMakeVisible(value);
 
+        toggle.setComponentID("mode");
         toggle.onClick = [this] {
             owner_.setMode(index_, mode == PlayMode::Gate ? PlayMode::OneShot : PlayMode::Gate);
         };
         addAndMakeVisible(toggle);
+
+        mixSlider.setComponentID("mix");
+        mixSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+        mixSlider.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
+        mixSlider.setRange(0.0, 1.0, 0.01);
+        mixSlider.setDoubleClickReturnValue(true, 0.5);
+        mixSlider.getProperties().set(PanelLook::kBipolar, true);
+        mixSlider.setColour(juce::Slider::trackColourId, kGreen);
+        mixSlider.setColour(juce::Slider::thumbColourId, kText);
+        mixSlider.setColour(juce::Slider::backgroundColourId, kOutline);
+        mixSlider.setTooltip("Mix Loop 1 / Loop 2: left lowers Loop 2, right lowers Loop 1. Double-click: centre");
+        mixSlider.onDragStart = [this] { owner_.beginMixDrag(index_); };
+        mixSlider.onValueChange = [this] {
+            if (updating)
+                return;
+            owner_.applyMix(index_, static_cast<float>(mixSlider.getValue()));
+            if (owner_.dragRow_ < 0 && owner_.dirty_) // wheel / keyboard: no drag around it
+                owner_.publish();
+        };
+        mixSlider.onDragEnd = [this] { owner_.endMixDrag(); };
+        addAndMakeVisible(mixSlider);
+
+        mixValue.setComponentID("mixValue");
+        mixValue.setJustificationType(juce::Justification::centredLeft);
+        mixValue.setBorderSize(juce::BorderSize<int>(0, 1, 0, 1));
+        mixValue.setMinimumHorizontalScale(0.8f);
+        mixValue.setColour(juce::Label::textColourId, kText);
+        mixValue.setFont(mono(10.0f));
+        addAndMakeVisible(mixValue);
         show();
     }
 
-    // Brings slider, value label and toggle in line with percent / mode.
+    // Brings sliders, readouts and toggle in line with percent / mode / mix.
     void show()
     {
         updating = true;
         slider.setValue(static_cast<double>(percent), juce::dontSendNotification);
+        mixSlider.setValue(static_cast<double>(mix), juce::dontSendNotification);
         updating = false;
         value.setText(percentString(percent), juce::dontSendNotification);
+        mixValue.setText(mixString(mix), juce::dontSendNotification);
         toggle.mode = mode;
         toggle.repaint();
     }
@@ -169,22 +259,23 @@ struct RulePanel::Row final : public juce::Component
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced(0, 2);
-        letter.setBounds(r.removeFromLeft(kLabelW));
-        toggle.setBounds(r.removeFromRight(84));
-        r.removeFromRight(8);
-        value.setBounds(r.removeFromRight(42));
-        r.removeFromRight(4);
-        slider.setBounds(r);
+        const auto c = rowColumns(getLocalBounds().reduced(0, 2));
+        letter.setBounds(c.name);
+        slider.setBounds(c.weight);
+        value.setBounds(c.percent);
+        toggle.setBounds(c.mode);
+        mixSlider.setBounds(c.mix);
+        mixValue.setBounds(c.mixValue);
     }
 
     RulePanel& owner_;
     int index_;
-    juce::Label letter, value;
-    juce::Slider slider;
+    juce::Label letter, value, mixValue;
+    juce::Slider slider, mixSlider;
     ModeSwitch toggle;
     float percent = 0.0f;
     PlayMode mode = PlayMode::Gate;
+    float mix = 0.5f;
     bool touched = false; // edited since the last setContext/publish and not yet in stored_
     bool updating = false;
 };
@@ -200,14 +291,15 @@ RulePanel::RulePanel()
     staleHint_.setColour(juce::Label::textColourId, kOneShot);
     staleHint_.setJustificationType(juce::Justification::centredRight);
     addChildComponent(staleHint_);
-    staleReset_.setButtonText(utf8("Zur\xc3\xbc" "cksetzen"));
-    staleReset_.setTooltip("Entfernt die Regeln auf Regionen, die es nicht mehr gibt");
+    staleReset_.setButtonText("Reset");
+    staleReset_.setTooltip("Removes the rules on regions that no longer exist");
     staleReset_.onClick = [this] { resetStale(); };
     addChildComponent(staleReset_);
     addAndMakeVisible(silence_);
 
     viewport_.setViewedComponent(&holder_, false);
     viewport_.setScrollBarsShown(true, false);
+    viewport_.setScrollBarThickness(8);
     addAndMakeVisible(viewport_);
     setContext(0, 0, {});
 }
@@ -239,7 +331,7 @@ void RulePanel::setLabels(const std::vector<juce::String>& loop1Labels, const st
 
 void RulePanel::updateTitle()
 {
-    title_.setText(utf8("Regeln f\xc3\xbcr Loop 1 \xe2\x80\x93 ") + regionLabel(labels1_, region1_),
+    title_.setText(utf8("Rules for Loop 1 \xe2\x80\x93 ") + regionLabel(labels1_, region1_),
                    juce::dontSendNotification);
 }
 
@@ -256,6 +348,16 @@ PlayMode RulePanel::mode(int row) const
 juce::String RulePanel::percentText(int row) const
 {
     return row >= 0 && row < rowCount() ? rows_[static_cast<std::size_t>(row)]->value.getText() : juce::String();
+}
+
+float RulePanel::mix(int row) const
+{
+    return row >= 0 && row < rowCount() ? rows_[static_cast<std::size_t>(row)]->mix : 0.5f;
+}
+
+juce::String RulePanel::mixText(int row) const
+{
+    return row >= 0 && row < rowCount() ? rows_[static_cast<std::size_t>(row)]->mixValue.getText() : juce::String();
 }
 
 void RulePanel::rebuildRows(int count)
@@ -296,12 +398,14 @@ void RulePanel::setContext(int region1, int region2Count, const std::vector<Rule
         auto& row = *rows_[static_cast<std::size_t>(i)];
         row.percent = 0.0f;
         row.mode = PlayMode::Gate;
+        row.mix = 0.5f;
         row.touched = false;
         for (const auto& t : stored_)
             if (t.region2 == i)
             {
                 row.percent = toPercent(t.weight);
                 row.mode = t.mode;
+                row.mix = sanitizeMix(t.mix);
                 break; // duplicates beyond the first count as "other" targets
             }
         row.show();
@@ -357,7 +461,7 @@ void RulePanel::resetStale()
 void RulePanel::updateSilence()
 {
     const float rest = std::max(0.0f, snap(100.0f - otherPercent(-1)));
-    silence_.setText("Stille: " + juce::String(juce::roundToInt(rest)) + " %", juce::dontSendNotification);
+    silence_.setText("Silence: " + juce::String(juce::roundToInt(rest)) + " %", juce::dontSendNotification);
     bool stale = false;
     std::vector<bool> seen(static_cast<std::size_t>(rowCount()), false);
     for (const auto& t : stored_)
@@ -368,7 +472,7 @@ void RulePanel::updateSilence()
         else
             stale = true;
     }
-    staleHint_.setText("davon " + juce::String(juce::roundToInt(stalePercent())) + " % auf entfernte Regionen",
+    staleHint_.setText(juce::String(juce::roundToInt(stalePercent())) + " % of it on removed regions",
                        juce::dontSendNotification);
     if (stale != staleHint_.isVisible())
     {
@@ -416,6 +520,37 @@ void RulePanel::setMode(int row, PlayMode newMode)
     publish();
 }
 
+void RulePanel::applyMix(int row, float newMix)
+{
+    if (row < 0 || row >= rowCount())
+        return;
+    auto& r = *rows_[static_cast<std::size_t>(row)];
+    const float m = sanitizeMix(newMix);
+    if (m != r.mix)
+    {
+        r.mix = m;
+        r.touched = true;
+        dirty_ = true;
+    }
+    r.show();
+}
+
+void RulePanel::setMix(int row, float newMix)
+{
+    applyMix(row, newMix);
+    if (dirty_)
+        publish();
+}
+
+void RulePanel::beginMixDrag(int row) { beginDrag(row); }
+
+void RulePanel::dragMix(int row, float newMix)
+{
+    applyMix(row, newMix); // local only, as dragWeight
+}
+
+void RulePanel::endMixDrag() { endDrag(); }
+
 void RulePanel::beginDrag(int row)
 {
     if (row >= 0 && row < rowCount())
@@ -449,6 +584,7 @@ std::vector<RuleTarget> RulePanel::buildTargets() const
             {
                 n.weight = r.percent / 100.0f;
                 n.mode = r.mode;
+                n.mix = r.mix;
             }
         }
         out.push_back(n); // stale and duplicate entries pass through untouched
@@ -457,7 +593,7 @@ std::vector<RuleTarget> RulePanel::buildTargets() const
     {
         const auto& r = *rows_[static_cast<std::size_t>(i)];
         if (!seen[static_cast<std::size_t>(i)] && r.touched)
-            out.push_back(RuleTarget { i, r.percent / 100.0f, r.mode });
+            out.push_back(RuleTarget { i, r.percent / 100.0f, r.mode, r.mix });
     }
     return out;
 }
@@ -479,6 +615,20 @@ void RulePanel::paint(juce::Graphics& g)
     g.setColour(kOutline);
     g.drawRect(getLocalBounds(), 1);
     g.drawHorizontalLine(kHeaderH + 3, 1.0f, static_cast<float>(getWidth() - 1));
+    if (rowCount() == 0)
+        return;
+    // Column captions, aligned with the rows' columns.
+    const auto v = viewport_.getBounds();
+    const auto c = rowColumns(juce::Rectangle<int>(v.getX(), 0, holder_.getWidth(), kRowH).reduced(0, 2));
+    const int y = v.getY() - kCaptionH;
+    g.setColour(kDim);
+    g.setFont(mono(9.0f));
+    const auto caption = [&](juce::Rectangle<int> col, const char* text) {
+        g.drawFittedText(text, col.withY(y).withHeight(kCaptionH), juce::Justification::centredLeft, 1, 0.8f);
+    };
+    caption(c.weight, "GEWICHT");
+    caption(c.mode, "MODUS");
+    caption(c.mix, "MIX");
 }
 
 void RulePanel::resized()
@@ -496,8 +646,12 @@ void RulePanel::resized()
         staleHint_.setBounds(line);
     }
     r.removeFromTop(2);
+    if (rowCount() > 0)
+        r.removeFromTop(kCaptionH);
     viewport_.setBounds(r);
-    const int w = viewport_.getMaximumVisibleWidth();
+    // The vertical scrollbar takes its width from the rows when they do not fit; reserve it up front.
+    const bool scrolls = rowCount() * kRowH > viewport_.getMaximumVisibleHeight();
+    const int w = viewport_.getMaximumVisibleWidth() - (scrolls ? viewport_.getScrollBarThickness() : 0);
     holder_.setSize(std::max(w, 100), std::max(rowCount() * kRowH, 1));
     for (int i = 0; i < rowCount(); ++i)
         rows_[static_cast<std::size_t>(i)]->setBounds(0, i * kRowH, holder_.getWidth(), kRowH);

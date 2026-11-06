@@ -289,7 +289,7 @@ TEST_CASE("PresetBar: a too-new or damaged bank shows a message and changes noth
     REQUIRE(bankFile.replaceWithText("{\"version\": 99, \"presets\": []}"));
     f.bar().requestLoad("Eins");
     CHECK(f.bar().mode() == PresetBar::Mode::Normal);
-    CHECK(f.bar().message().contains("neueren Version"));
+    CHECK(f.bar().message().contains("newer version"));
     CHECK(f.fingerprint() == before);
     CHECK(f.proc.getPluginState().activePreset.isEmpty());
     CHECK(bankFile.loadFileAsString() == "{\"version\": 99, \"presets\": []}");
@@ -297,7 +297,7 @@ TEST_CASE("PresetBar: a too-new or damaged bank shows a message and changes noth
     REQUIRE(bankFile.replaceWithText("not json"));
     f.bar().requestLoad("Eins");
     CHECK(f.bar().mode() == PresetBar::Mode::Normal);
-    CHECK(f.bar().message().contains("Bank-Datei"));
+    CHECK(f.bar().message().contains("bank file"));
     CHECK(f.fingerprint() == before);
 
     // Opening the damaged bank's list: no presets, a message, nothing else changes.
@@ -309,7 +309,7 @@ TEST_CASE("PresetBar: a too-new or damaged bank shows a message and changes noth
     f.savePreset("B", "Zwei", {});
     f.bar().refresh();
     f.bar().selectBank("B");
-    f.bar().requestLoad("Gibt es nicht");
+    f.bar().requestLoad("Does not exist");
     CHECK(f.bar().mode() == PresetBar::Mode::Normal);
     CHECK(f.bar().message().isNotEmpty());
     CHECK(f.fingerprint() == before);
@@ -321,10 +321,10 @@ TEST_CASE("PresetBar: the bar fits next to the BPM readout at the default editor
     f.savePreset("Meine Bank", "Eins", { 0.5 });
     LoopPair loops(f.proc);
     f.open();
-    REQUIRE(f.editor->getWidth() == 760);
-    REQUIRE(f.editor->getHeight() == 480);
+    REQUIRE(f.editor->getWidth() == 900); // grown for the effects panel (was 760x480)
+    REQUIRE(f.editor->getHeight() == 600);
     f.editor->refresh();
-    CHECK(f.editor->cycleText() == "Zyklus: 2 Takte");
+    CHECK(f.editor->cycleText() == "Cycle: 2 Bars");
 
     checkNoOverlap(*f.editor);
     checkNoOverlap(f.bar());
@@ -357,7 +357,7 @@ TEST_CASE("PresetBar: the bar fits next to the BPM readout at the default editor
     bool cycleShown = false;
     for (auto* c : f.editor->getChildren())
         if (auto* label = dynamic_cast<juce::Label*>(c); label != nullptr && label->isVisible())
-            cycleShown = cycleShown || label->getText().startsWith("Zyklus");
+            cycleShown = cycleShown || label->getText().startsWith("Cycle");
     CHECK(cycleShown);
 }
 
@@ -376,9 +376,9 @@ TEST_CASE("PresetBar: the more menu offers the bank actions", "[PresetBar]")
     BarFixture f;
     f.open();
     CHECK(itemTexts(f.bar().moreMenu())
-          == juce::StringArray { juce::String::fromUTF8("Neue Bank\xe2\x80\xa6"), juce::String::fromUTF8("Bank exportieren\xe2\x80\xa6"),
-                                 juce::String::fromUTF8("Bank importieren\xe2\x80\xa6"),
-                                 juce::String::fromUTF8("Preset-Ordner \xc3\xb6" "ffnen") });
+          == juce::StringArray { juce::String::fromUTF8("New bank\xe2\x80\xa6"), juce::String::fromUTF8("Export bank\xe2\x80\xa6"),
+                                 juce::String::fromUTF8("Import bank\xe2\x80\xa6"),
+                                 juce::String("Open presets folder") });
 }
 
 TEST_CASE("PresetBar: SAVE overwrites the active preset of the selected bank", "[PresetBar]")
@@ -539,13 +539,13 @@ TEST_CASE("PresetBar: a taken name keeps the prompt open with a message and does
     f.bar().requestSaveAs();
     f.bar().submitName("eins");
     CHECK(f.bar().mode() == PresetBar::Mode::NamePrompt);
-    CHECK(f.bar().message().contains("gibt es schon"));
+    CHECK(f.bar().message().contains("already exists"));
     CHECK(f.bankText("A") == before);
     CHECK(f.proc.getPluginState().activePreset.isEmpty());
 
     f.bar().submitName("   ");
     CHECK(f.bar().mode() == PresetBar::Mode::NamePrompt);
-    CHECK(f.bar().message().contains("leer"));
+    CHECK(f.bar().message().contains("empty"));
     CHECK(f.bankText("A") == before);
 
     f.bar().submitName("Zwei");
@@ -592,12 +592,12 @@ TEST_CASE("PresetBar: on a fresh install SAVE also asks for a bank name and crea
 
     f.bar().submitName("Erstes", "con"); // reserved Windows name
     CHECK(f.bar().mode() == PresetBar::Mode::NamePrompt);
-    CHECK(f.bar().message().contains("reserviert"));
+    CHECK(f.bar().message().contains("reserved"));
     CHECK(BankStore(f.root).listBanks().isEmpty());
 
     f.bar().submitName("", "Live"); // a bad preset name creates no bank either
     CHECK(f.bar().mode() == PresetBar::Mode::NamePrompt);
-    CHECK(f.bar().message().contains("leer"));
+    CHECK(f.bar().message().contains("empty"));
     CHECK(BankStore(f.root).listBanks().isEmpty());
 
     f.bar().submitName("Erstes", "Live");
@@ -680,10 +680,10 @@ TEST_CASE("PresetBar: createBank adds a bank and a bad name shows a message", "[
     CHECK(f.bar().presetNames().isEmpty());
 
     f.bar().createBank("a"); // taken, case-insensitive
-    CHECK(f.bar().message().contains("gibt es schon"));
+    CHECK(f.bar().message().contains("already exists"));
     CHECK(f.bar().bankNames() == juce::StringArray { "A", "Neu" });
     f.bar().createBank("x/y");
-    CHECK(f.bar().message().contains("Zeichen"));
+    CHECK(f.bar().message().contains("characters"));
     CHECK(BankStore(f.root).listBanks() == juce::StringArray { "A", "Neu" });
 
     // Through the menu entry: the name field stays open on a bad name.
@@ -691,7 +691,7 @@ TEST_CASE("PresetBar: createBank adds a bank and a bad name shows a message", "[
     REQUIRE(f.bar().mode() == PresetBar::Mode::NamePrompt);
     f.bar().createBank("");
     CHECK(f.bar().mode() == PresetBar::Mode::NamePrompt);
-    CHECK(f.bar().message().contains("leer"));
+    CHECK(f.bar().message().contains("empty"));
     f.bar().createBank("Dritte");
     CHECK(f.bar().mode() == PresetBar::Mode::Normal);
     CHECK(f.bar().selectedBank() == "Dritte");
@@ -722,7 +722,7 @@ TEST_CASE("PresetBar: exportBankTo and importBankFrom round trip through the bar
     REQUIRE(junk.replaceWithText("not a zip"));
     f.bar().importBankFrom(junk);
     CHECK(f.bar().message().isNotEmpty());
-    CHECK_FALSE(f.bar().message().contains("Importiert"));
+    CHECK_FALSE(f.bar().message().contains("Imported"));
     CHECK(f.bar().bankNames() == juce::StringArray { "Live", "Live (2)" });
 
     f.bar().selectBank("Live");
