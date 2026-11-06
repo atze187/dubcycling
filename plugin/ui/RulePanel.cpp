@@ -649,7 +649,9 @@ void RulePanel::resized()
     if (rowCount() > 0)
         r.removeFromTop(kCaptionH);
     viewport_.setBounds(r);
-    const int w = viewport_.getMaximumVisibleWidth();
+    // The vertical scrollbar takes its width from the rows when they do not fit; reserve it up front.
+    const bool scrolls = rowCount() * kRowH > viewport_.getMaximumVisibleHeight();
+    const int w = viewport_.getMaximumVisibleWidth() - (scrolls ? viewport_.getScrollBarThickness() : 0);
     holder_.setSize(std::max(w, 100), std::max(rowCount() * kRowH, 1));
     for (int i = 0; i < rowCount(); ++i)
         rows_[static_cast<std::size_t>(i)]->setBounds(0, i * kRowH, holder_.getWidth(), kRowH);

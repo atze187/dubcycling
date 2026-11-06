@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -120,9 +121,24 @@ public:
         if (e.mods.isPopupMenu())
             auditionAt(e.position.x);
         else
+        {
             pressAt(e.position.x);
+            pressX_ = e.position.x;
+            dragStarted_ = false;
+        }
     }
-    void mouseDrag(const juce::MouseEvent& e) override { dragTo(e.position.x, e.mods.isShiftDown()); }
+    // A drag starts only once the pointer moved kDragThreshold px from the press, so a click (or the first
+    // click of a double-click) never moves an off-grid boundary onto the grid.
+    void mouseDrag(const juce::MouseEvent& e) override
+    {
+        if (!dragStarted_)
+        {
+            if (std::abs(e.position.x - pressX_) < kDragThreshold)
+                return;
+            dragStarted_ = true;
+        }
+        dragTo(e.position.x, e.mods.isShiftDown());
+    }
     void mouseUp(const juce::MouseEvent&) override { release(); }
     void mouseDoubleClick(const juce::MouseEvent& e) override
     {
@@ -152,6 +168,9 @@ private:
     int gridBars_ = 0;
     int gridBeatsPerBar_ = 0;
     int dragging_ = -1;
+    static constexpr float kDragThreshold = 3.0f;
+    float pressX_ = 0.0f;
+    bool dragStarted_ = false;
     float grabOffset_ = 0.0f; // boundary x minus cursor x at the press
     RegionMap dragStart_;     // regions at the press, to detect a real move and to cancel
     juce::Rectangle<float> labelRect(int region) const; // empty when the name is not drawn

@@ -680,3 +680,66 @@ TEST_CASE("snapBoundariesToGrid: rounds, drops duplicates and values at the ends
     CHECK(snapBoundariesToGrid({ 0.3 }, -1.0) == std::vector<double> { 0.3 });
     CHECK(snapBoundariesToGrid({}, 0.25).empty());
 }
+
+// --- Real mouse path: a drag starts only after the pointer moved a few pixels ---------------------
+
+namespace {
+
+struct MouseLane : GridFixture
+{
+    juce::MouseInputSource source = juce::Desktop::getInstance().getMainMouseSource();
+    // 1 beat = 25 px; the boundary sits at 0.3 * 800 = 240 px, which is off the grid.
+    MouseLane() { lane.setRegions(regions({ 0.3 })); }
+
+    juce::MouseEvent ev(float x, juce::ModifierKeys mods, float downX, int clicks = 1)
+    {
+        const juce::Point<float> pos(x, 50.0f);
+        const juce::Point<float> down(downX, 50.0f);
+        return juce::MouseEvent(source, pos, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &lane, &lane,
+                                juce::Time::getCurrentTime(), down, juce::Time::getCurrentTime(), clicks, false);
+    }
+    static juce::ModifierKeys left() { return juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier); }
+    static juce::ModifierKeys shift()
+    {
+        return juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::shiftModifier);
+    }
+};
+
+} // namespace
+
+TEST_CASE("LoopLane mouse: a 1 px jitter on an off-grid boundary moves nothing", "[LoopLane][grid][mouse]")
+{
+    MouseLane f;
+    f.lane.mouseDown(f.ev(240.0f, MouseLane::left(), 240.0f));
+    f.lane.mouseDrag(f.ev(241.0f, MouseLane::left(), 240.0f));
+    f.lane.mouseUp(f.ev(241.0f, MouseLane::left(), 240.0f));
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(0.3, 1e-12));
+    CHECK(f.changes == 0);
+}
+
+TEST_CASE("LoopLane mouse: a drag of 10 px moves and snaps", "[LoopLane][grid][mouse]")
+{
+    MouseLane f;
+    f.lane.mouseDown(f.ev(240.0f, MouseLane::left(), 240.0f));
+    f.lane.mouseDrag(f.ev(250.0f, MouseLane::left(), 240.0f));
+    f.lane.mouseUp(f.ev(250.0f, MouseLane::left(), 240.0f));
+    CHECK(f.changes == 1);
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(10.0 / 32.0, 1e-12)); // 250 px = beat 10
+}
+
+TEST_CASE("LoopLane mouse: Shift while dragging is free", "[LoopLane][grid][mouse]")
+{
+    MouseLane f;
+    f.lane.mouseDown(f.ev(240.0f, MouseLane::left(), 240.0f));
+    f.lane.mouseDrag(f.ev(252.0f, MouseLane::shift(), 240.0f));
+    f.lane.mouseUp(f.ev(252.0f, MouseLane::shift(), 240.0f));
+    CHECK_THAT(f.lane.regions().boundaries[0], WithinAbs(252.0 / 800.0, 1e-12));
+}
+
+TEST_CASE("LoopLane mouse: Shift at a double click adds a boundary freely", "[LoopLane][grid][mouse]")
+{
+    MouseLane f;
+    f.lane.mouseDoubleClick(f.ev(517.0f, MouseLane::shift(), 517.0f, 2));
+    REQUIRE(f.lane.regions().boundaries.size() == 2);
+    CHECK_THAT(f.lane.regions().boundaries[1], WithinAbs(517.0 / 800.0, 1e-12));
+}

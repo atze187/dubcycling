@@ -805,3 +805,26 @@ TEST_CASE("RulePanel: controls do not overlap at the editor's panel width", "[Ru
                 juce::PNGImageFormat().writeImageToStream(img, *o);
         }
 }
+
+TEST_CASE("RulePanel: with many rows the scrollbar does not hide the rightmost column", "[RulePanel][mix][layout]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    p.setSize(440, 200); // ten 20 px rows do not fit: the vertical scrollbar appears
+    p.setContext(0, 10, {});
+    juce::Viewport* vp = nullptr;
+    for (auto* c : p.getChildren())
+        if ((vp = dynamic_cast<juce::Viewport*>(c)) != nullptr)
+            break;
+    REQUIRE(vp != nullptr);
+    REQUIRE(vp->isVerticalScrollBarShown());
+    for (int row = 0; row < 10; ++row)
+    {
+        CAPTURE(row);
+        auto* r = findById(p, "row" + juce::String(row));
+        REQUIRE(r != nullptr);
+        const int right = r->getX() + control(p, row, "mixValue").getRight();
+        CHECK(right <= vp->getViewWidth());
+        CHECK(r->getRight() <= vp->getViewWidth());
+    }
+}

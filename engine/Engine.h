@@ -201,7 +201,7 @@ private:
 
     // Linear per-sample ramp of a gain towards a target, kMixRampMs for a full 0..1 swing. It lands
     // exactly on the target, so a centre mix stays at exactly 1 (bit-identical output).
-    static constexpr double kMixRampMs = 7.0;
+    static constexpr double kMixRampMs = 5.0;
     static float rampTowards(float value, float target, float step)
     {
         const float d = target - value;
