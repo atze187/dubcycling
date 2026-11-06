@@ -34,14 +34,14 @@ juce::String paramName(FxParam p)
     switch (p)
     {
         case FxParam::ReverbMix: case FxParam::BitcrushMix: case FxParam::FlangerMix: return "Mix";
-        case FxParam::ReverbSize: return utf8("Gr\xc3\xb6\xc3\x9f" "e");
-        case FxParam::ReverbDamping: return utf8("D\xc3\xa4mpfung");
-        case FxParam::FilterType: return "Typ";
+        case FxParam::ReverbSize: return "Size";
+        case FxParam::ReverbDamping: return "Damping";
+        case FxParam::FilterType: return "Type";
         case FxParam::FilterCutoff: return "Cutoff";
-        case FxParam::FilterResonance: return "Resonanz";
+        case FxParam::FilterResonance: return "Resonance";
         case FxParam::BitcrushBits: return "Bits";
         case FxParam::BitcrushRate: case FxParam::FlangerRate: return "Rate";
-        case FxParam::FlangerDepth: return "Tiefe";
+        case FxParam::FlangerDepth: return "Depth";
         case FxParam::FlangerFeedback: return "Feedback";
     }
     return "";
@@ -53,7 +53,7 @@ juce::String valueText(FxParam p, double v)
     {
         case FxParam::FilterType:
         {
-            static const char* const names[] = { "TP", "HP", "BP" };
+            static const char* const names[] = { "LP", "HP", "BP" };
             return names[juce::jlimit(0, 2, juce::roundToInt(v))];
         }
         case FxParam::FilterCutoff:
@@ -274,10 +274,10 @@ void FxPanel::setContext(int region2, int regionCount, const std::vector<juce::S
         auto& on = modules_[static_cast<std::size_t>(i)]->on;
         on.setEnabled(valid);
         on.setToggleState(valid && fx.switchOn(region2_, ins), juce::dontSendNotification);
-        on.setButtonText(valid ? "Region " + regionLabel(labels, region2_) : juce::String("keine Region"));
-        on.setTooltip(valid ? juce::String(insertTitle(ins)) + utf8(" f\xc3\xbcr Region ") + regionLabel(labels, region2_)
-                                  + " an/aus"
-                            : utf8("Erst eine Loop-2-Region w\xc3\xa4hlen"));
+        on.setButtonText(valid ? "Region " + regionLabel(labels, region2_) : juce::String("no region"));
+        on.setTooltip(valid ? juce::String(insertTitle(ins)) + " for region " + regionLabel(labels, region2_)
+                                  + " on/off"
+                            : "Select a Loop 2 region first");
     }
     if (dragging_)
         return; // the editor's poll must not pull the slider out of the user's hand

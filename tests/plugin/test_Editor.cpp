@@ -151,7 +151,7 @@ TEST_CASE("Editor: an undecodable, too short or absent file on a Loaded slot cha
         CHECK(serialize(f.proc.getPluginState()) == before);
         CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
         CHECK(f.editor->lane(0).hasData());
-        CHECK(f.editor->statusText(0).startsWith("Nicht geladen: " + bad.getFileName()));
+        CHECK(f.editor->statusText(0).startsWith("Not loaded: " + bad.getFileName()));
     }
     CHECK(f.asked == 0);
 }
@@ -236,18 +236,18 @@ TEST_CASE("Editor: the bars field clamps typed values and writes them to the sta
     CHECK(f.proc.getPluginState().loop1.bars == 1);
     type("-4");
     CHECK(f.proc.getPluginState().loop1.bars == 1);
-    CHECK(f.editor->cycleText() == "Zyklus: 1 Takte");
+    CHECK(f.editor->cycleText() == "Cycle: 1 Bars");
 }
 
 // ---- Review round 2: re-validation on confirm, one pending confirmation per slot ----
 
 TEST_CASE("Editor: the confirmation names the slot and says all rules are deleted", "[LoopLane][editor]")
 {
-    CHECK(dc::ui::replaceConfirmTitle(0) == "Loop 1 ersetzen?");
-    CHECK(dc::ui::replaceConfirmTitle(1) == "Loop 2 ersetzen?");
+    CHECK(dc::ui::replaceConfirmTitle(0) == "Replace Loop 1?");
+    CHECK(dc::ui::replaceConfirmTitle(1) == "Replace Loop 2?");
     CHECK(dc::ui::replaceConfirmMessage()
           == juce::String(juce::CharPointer_UTF8(
-              "Dessen Regionen und alle Regeln (auch die zwischen Loop 1 und Loop 2) werden gel\xc3\xb6scht.")));
+              "Its regions and all rules (including those between Loop 1 and Loop 2) will be deleted.")));
 }
 
 TEST_CASE("Editor: a file that becomes unreadable before OK is rejected and changes nothing", "[LoopLane][editor]")
@@ -265,7 +265,7 @@ TEST_CASE("Editor: a file that becomes unreadable before OK is rejected and chan
 
     CHECK(serialize(f.proc.getPluginState()) == before);
     CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
-    CHECK(f.editor->statusText(0).startsWith("Nicht geladen: other.wav"));
+    CHECK(f.editor->statusText(0).startsWith("Not loaded: other.wav"));
     CHECK(f.asked == 1); // never asked again
     CHECK_FALSE(f.editor->isConfirmationPending(0));
 }
@@ -309,7 +309,7 @@ TEST_CASE("Editor: OK after the slot was edited in the meantime does not wipe it
     f.pendingAnswer(true);
     f.proc.waitForLoads();
     CHECK(serialize(f.proc.getPluginState()) == before);
-    CHECK(f.editor->statusText(0).startsWith("Nicht ersetzt"));
+    CHECK(f.editor->statusText(0).startsWith("Not replaced"));
     CHECK(f.asked == 1);
 }
 
@@ -369,7 +369,7 @@ juce::File clickWav(const juce::File& dir, const juce::String& name, int clicks 
 }
 } // namespace
 
-TEST_CASE("Editor: Vorschlag on a lane without boundaries sets them without asking", "[editor][suggest]")
+TEST_CASE("Editor: Suggest on a lane without boundaries sets them without asking", "[editor][suggest]")
 {
     EditorFixture f;
     f.proc.replaceLoop(0, clickWav(f.dir, "clicks.wav"), 2);
@@ -388,7 +388,7 @@ TEST_CASE("Editor: Vorschlag on a lane without boundaries sets them without aski
     CHECK(st.loop2.boundaries.empty());
 }
 
-TEST_CASE("Editor: Vorschlag on a lane with boundaries asks; cancel keeps, OK replaces, rules stay", "[editor][suggest]")
+TEST_CASE("Editor: Suggest on a lane with boundaries asks; cancel keeps, OK replaces, rules stay", "[editor][suggest]")
 {
     EditorFixture f;
     f.loadedWithRegionsAndRules(clickWav(f.dir, "clicks.wav")); // boundaries {0.25, 0.5}, one rule
@@ -416,7 +416,7 @@ TEST_CASE("Editor: Vorschlag on a lane with boundaries asks; cancel keeps, OK re
     CHECK(after.rules[0].targets[0].region2 == 0);
 }
 
-TEST_CASE("Editor: Vorschlag without loaded data does nothing", "[editor][suggest]")
+TEST_CASE("Editor: Suggest without loaded data does nothing", "[editor][suggest]")
 {
     EditorFixture f;
     f.editor->refresh();
@@ -443,7 +443,7 @@ TEST_CASE("Editor: an answer after the slot changed meanwhile does not overwrite
     CHECK(f.proc.getPluginState().loop1.boundaries == std::vector<double> { 0.1 });
 }
 
-TEST_CASE("Editor: Vorschlag without any transient changes nothing and says so", "[editor][suggest]")
+TEST_CASE("Editor: Suggest without any transient changes nothing and says so", "[editor][suggest]")
 {
     EditorFixture f;
     f.proc.replaceLoop(0, clickWav(f.dir, "silent.wav", 0), 2);
@@ -453,7 +453,7 @@ TEST_CASE("Editor: Vorschlag without any transient changes nothing and says so",
     f.editor->suggestRegions(0);
     CHECK(f.asked == 0);
     CHECK(serialize(f.proc.getPluginState()) == before);
-    CHECK(f.editor->statusText(0) == "Keine Transienten gefunden");
+    CHECK(f.editor->statusText(0) == "No transients found");
 }
 
 // ---- Hardening: Failed vs Missing, replace failures ----
@@ -473,10 +473,10 @@ TEST_CASE("Editor: a Failed slot shows the loader's error, a Missing slot says t
     f.editor->refresh();
     REQUIRE(f.proc.getSlotStatus(0) == Status::Failed);
     REQUIRE(f.proc.getSlotStatus(1) == Status::Missing);
-    CHECK(f.editor->statusText(0) == "Nicht lesbar: unsupported or damaged file");
-    CHECK(f.editor->statusText(1) == "Datei fehlt: gone.wav");
-    CHECK(f.editor->lane(0).hintText() == "Nicht lesbar");
-    CHECK(f.editor->lane(1).hintText() == "Datei fehlt");
+    CHECK(f.editor->statusText(0) == "Unreadable: unsupported or damaged file");
+    CHECK(f.editor->statusText(1) == "File missing: gone.wav");
+    CHECK(f.editor->lane(0).hintText() == "Unreadable");
+    CHECK(f.editor->lane(1).hintText() == "File missing");
 }
 
 TEST_CASE("Editor: a new file on a Failed slot goes through the replace flow", "[editor][hardening]")
@@ -516,10 +516,10 @@ TEST_CASE("Editor: a replace that fails to decode keeps the slot and shows a not
 
     CHECK(serialize(f.proc.getPluginState()) == before);
     CHECK(f.proc.getSlotStatus(0) == Status::Loaded);
-    CHECK(f.editor->statusText(0) == "Nicht geladen: broken.wav (unsupported or damaged file)");
+    CHECK(f.editor->statusText(0) == "Not loaded: broken.wav (unsupported or damaged file)");
 }
 
-TEST_CASE("Editor: Vorschlag is only enabled for a Loaded slot", "[editor][suggest][hardening]")
+TEST_CASE("Editor: Suggest is only enabled for a Loaded slot", "[editor][suggest][hardening]")
 {
     EditorFixture f;
     f.proc.replaceLoop(0, clickWav(f.dir, "clicks.wav"), 2);

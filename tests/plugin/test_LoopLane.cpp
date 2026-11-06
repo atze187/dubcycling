@@ -203,9 +203,9 @@ TEST_CASE("LoopLane: empty data shows hint text and ignores clicks", "[LoopLane]
 
     CHECK(lane.hintText() == "Drop an audio file here");
     lane.setStatus(LoopLane::Status::Loading);
-    CHECK(lane.hintText() == juce::String(juce::CharPointer_UTF8("L\xc3\xa4" "dt\xe2\x80\xa6")));
+    CHECK(lane.hintText() == juce::String(juce::CharPointer_UTF8("Loading\xe2\x80\xa6")));
     lane.setStatus(LoopLane::Status::Missing);
-    CHECK(lane.hintText() == "Datei fehlt");
+    CHECK(lane.hintText() == "File missing");
 
     lane.setRegions(regions({ 0.5 }));
     lane.doubleClickAt(250.0f);
@@ -283,7 +283,7 @@ TEST_CASE("Editor: opens, paints and exposes the Loop-1 selection", "[LoopLane][
     auto img = ed->createComponentSnapshot(ed->getLocalBounds());
     CHECK(img.isValid());
     CHECK(editor->selectedRegion1() == 0);
-    CHECK(editor->cycleText() == "Zyklus: 1 Takte");
+    CHECK(editor->cycleText() == "Cycle: 1 Bars");
 
     const auto dir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {});
     if (dir.isNotEmpty())
@@ -308,7 +308,7 @@ TEST_CASE("Editor: cycle length follows the bars of both loops", "[LoopLane][edi
     auto* editor = dynamic_cast<dc::ui::Editor*>(ed.get());
     REQUIRE(editor != nullptr);
     editor->refresh();
-    CHECK(editor->cycleText() == "Zyklus: 12 Takte");
+    CHECK(editor->cycleText() == "Cycle: 12 Bars");
 }
 
 TEST_CASE("Editor: a loaded loop shows its waveform, regions and file name", "[LoopLane][editor]")
@@ -353,7 +353,7 @@ TEST_CASE("Editor: a loaded loop shows its waveform, regions and file name", "[L
     CHECK(editor->lane(0).hintText().isEmpty());
     CHECK(editor->lane(0).regions().regionCount() == 4);
     CHECK_FALSE(editor->lane(1).hasData());
-    CHECK(editor->cycleText() == "Zyklus: 3 Takte");
+    CHECK(editor->cycleText() == "Cycle: 3 Bars");
 
     auto img = ed->createComponentSnapshot(ed->getLocalBounds());
     CHECK(img.isValid());

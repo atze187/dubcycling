@@ -276,9 +276,9 @@ juce::String LoopLane::hintText() const
         return {};
     switch (status_)
     {
-        case Status::Loading: return juce::String(juce::CharPointer_UTF8("L\xc3\xa4" "dt\xe2\x80\xa6"));
-        case Status::Missing: return "Datei fehlt";
-        case Status::Failed:  return "Nicht lesbar";
+        case Status::Loading: return juce::String(juce::CharPointer_UTF8("Loading\xe2\x80\xa6"));
+        case Status::Missing: return "File missing";
+        case Status::Failed:  return "Unreadable";
         case Status::Empty:
         case Status::Loaded:  break;
     }
@@ -482,7 +482,7 @@ void LoopLane::paint(juce::Graphics& g)
             g.fillRect(bounds);
             g.setColour(kHint.withAlpha(teaserP));
             g.setFont(panel::mono(10.0f));
-            g.drawText("STILLE", bounds.withTrimmedBottom(bounds.getHeight() * 0.5f), juce::Justification::centred);
+            g.drawText("SILENCE", bounds.withTrimmedBottom(bounds.getHeight() * 0.5f), juce::Justification::centred);
         }
 
         const float mid = bounds.getCentreY();

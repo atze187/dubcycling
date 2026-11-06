@@ -18,7 +18,7 @@ function Find-CMake {
         $c = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
         if (Test-Path $c) { return $c }
     }
-    throw 'cmake nicht gefunden (weder im PATH noch in Visual Studio).'
+    throw 'cmake not found (neither on PATH nor in Visual Studio).'
 }
 
 $cmake = Find-CMake
@@ -26,7 +26,7 @@ $ctest = Join-Path (Split-Path $cmake) 'ctest.exe'
 
 function Invoke-Checked([string]$what, [scriptblock]$block) {
     & $block
-    if ($LASTEXITCODE -ne 0) { throw "$what fehlgeschlagen (Exit $LASTEXITCODE)" }
+    if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE)" }
 }
 
 $preset = "windows-$($Config.ToLower())"
@@ -48,14 +48,14 @@ function Do-Validate {
         Invoke-Checked 'validator build' { & $cmake --build --preset validator-windows --parallel }
     } finally { Pop-Location }
     $validator = Get-ChildItem -Path $vDir -Recurse -Filter 'validator.exe' | Select-Object -First 1
-    if (-not $validator) { throw 'validator.exe nicht gefunden' }
+    if (-not $validator) { throw 'validator.exe not found' }
     Invoke-Checked 'VST3 validator' { & $validator.FullName $bundle }
 
     $pluginval = Join-Path $root 'tools\bin\pluginval.exe'
     if (Test-Path $pluginval) {
         Invoke-Checked 'pluginval' { & $pluginval --strictness-level 5 --validate-in-process --validate $bundle }
     } else {
-        Write-Host "pluginval nicht gefunden ($pluginval) - uebersprungen."
+        Write-Host "pluginval not found ($pluginval) - skipped."
     }
 }
 

@@ -4,7 +4,7 @@
 
 namespace dc {
 
-// Dekodierter Stereo-Loop. Beide Kanaele sind gleich lang.
+// Decoded stereo loop. Both channels have the same length.
 struct StereoData
 {
     std::vector<float> left, right;

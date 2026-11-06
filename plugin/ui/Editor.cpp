@@ -225,12 +225,12 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
         addAndMakeVisible(bars_[i]);
 
         load_[i].setButtonText("LOAD");
-        load_[i].setTooltip("Audiodatei laden (wav, mp3, flac, aif)");
+        load_[i].setTooltip("Load audio file (wav, mp3, flac, aif)");
         load_[i].onClick = [this, i] { openChooser(i); };
         addAndMakeVisible(load_[i]);
 
         suggest_[i].setButtonText("AUTO");
-        suggest_[i].setTooltip("Grenzen an Transienten vorschlagen (f" + utf8("\xc3\xbc") + "r Drum-Loops)");
+        suggest_[i].setTooltip("Suggest boundaries at transients (for drum loops)");
         suggest_[i].onClick = [this, i] { suggestRegions(i); };
         suggest_[i].setEnabled(false);
         addAndMakeVisible(suggest_[i]);
@@ -302,7 +302,7 @@ void Editor::refresh()
         if (failure.id > seenFailure_[i])
         {
             seenFailure_[i] = failure.id;
-            notice_[i] = "Nicht geladen: " + failure.fileName + " (" + failure.error + ")";
+            notice_[i] = "Not loaded: " + failure.fileName + " (" + failure.error + ")";
             noticeUntil_[i] = juce::Time::getMillisecondCounter() + 5000;
         }
 
@@ -311,22 +311,22 @@ void Editor::refresh()
         juce::Colour led = kGreen;
         switch (status)
         {
-            case DubcyclingProcessor::SlotStatus::Empty:   text = "Leer"; led = kDim; break;
+            case DubcyclingProcessor::SlotStatus::Empty:   text = "Empty"; led = kDim; break;
             case DubcyclingProcessor::SlotStatus::Loading:
             {
                 const auto pending = proc_.pendingReplaceFileName(i);
-                text = utf8("L\xc3\xa4" "dt\xe2\x80\xa6 ") + (pending.isNotEmpty() ? pending : ref.fileName);
+                text = utf8("Loading\xe2\x80\xa6 ") + (pending.isNotEmpty() ? pending : ref.fileName);
                 led = kAmber;
                 break;
             }
             case DubcyclingProcessor::SlotStatus::Loaded:  text = ref.fileName; break;
             case DubcyclingProcessor::SlotStatus::Missing:
-                text = "Datei fehlt: " + ref.fileName;
+                text = "File missing: " + ref.fileName;
                 colour = kWarn;
                 led = kWarn;
                 break;
             case DubcyclingProcessor::SlotStatus::Failed:
-                text = "Nicht lesbar: " + proc_.slotError(i);
+                text = "Unreadable: " + proc_.slotError(i);
                 colour = kWarn;
                 led = kWarn;
                 break;
@@ -349,7 +349,7 @@ void Editor::refresh()
         status_[i].setColour(juce::Label::textColourId, colour);
         const bool relink = fileIsMissing(status, ref);
         load_[i].setButtonText(relink ? "RELINK" : "LOAD");
-        load_[i].setTooltip(relink ? "Datei neu zuordnen" : "Audiodatei laden (wav, mp3, flac, aif)");
+        load_[i].setTooltip(relink ? "Relink file" : "Load audio file (wav, mp3, flac, aif)");
     }
     const double bpm = proc_.hostBpm();
     bpm_.setText(std::isfinite(bpm) && bpm > 0.0 ? juce::String(bpm, 1) : juce::String("--"),
@@ -357,7 +357,7 @@ void Editor::refresh()
     rules_.setLabels(st.loop1.labels, st.loop2.labels);
     updateRules(st);
     updateFx(st);
-    cycle_.setText("Zyklus: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Takte",
+    cycle_.setText("Cycle: " + juce::String(lcmBars(st.loop1.bars, st.loop2.bars)) + " Bars",
                    juce::dontSendNotification);
     presetBar_.refresh();
 }
@@ -486,23 +486,23 @@ void Editor::barsEdited(int slot)
 
 juce::String replaceConfirmTitle(int slot)
 {
-    return "Loop " + juce::String(slot == 0 ? 1 : 2) + " ersetzen?";
+    return "Replace Loop " + juce::String(slot == 0 ? 1 : 2) + "?";
 }
 
 juce::String replaceConfirmMessage()
 {
-    return utf8("Dessen Regionen und alle Regeln (auch die zwischen Loop 1 und Loop 2) werden gel\xc3\xb6scht.");
+    return "Its regions and all rules (including those between Loop 1 and Loop 2) will be deleted.";
 }
 
 juce::String suggestConfirmTitle(int slot)
 {
-    return "Regionen von Loop " + juce::String(slot == 0 ? 1 : 2) + " ersetzen?";
+    return "Replace regions of Loop " + juce::String(slot == 0 ? 1 : 2) + "?";
 }
 
 juce::String suggestConfirmMessage()
 {
-    return utf8("Die vorhandenen Grenzen werden durch den Vorschlag ersetzt. Regeln bleiben erhalten, "
-                "k\xc3\xb6nnen danach aber auf nicht mehr vorhandene Regionen zeigen.");
+    return "The existing boundaries will be replaced by the suggestion. Rules are kept, "
+           "but may then point to regions that no longer exist.";
 }
 
 void Editor::suggestRegions(int slot)
@@ -517,13 +517,13 @@ void Editor::suggestRegions(int slot)
     const std::vector<double> raw = suggestBoundaries(*data, kSuggestMaxBoundaries);
     if (raw.empty())
     {
-        showNotice(slot, "Keine Transienten gefunden");
+        showNotice(slot, "No transients found");
         return;
     }
     const std::vector<double> found = snapBoundariesToGrid(raw, lanes_[slot].gridStep());
     if (found.empty())
     {
-        showNotice(slot, "Keine Grenzen auf dem Raster");
+        showNotice(slot, "No boundaries on the grid");
         return;
     }
     const PluginState st = proc_.getPluginState();
@@ -553,8 +553,7 @@ void Editor::suggestRegions(int slot)
         if (serialize(safe->proc_.getPluginState()) == asked)
             commit();
         else
-            safe->showNotice(slot, "Nicht ersetzt: Loop " + juce::String(slot + 1) + " wurde inzwischen ge"
-                                       + utf8("\xc3\xa4") + "ndert");
+            safe->showNotice(slot, "Not replaced: Loop " + juce::String(slot + 1) + " changed in the meantime");
     };
     if (confirmReplace)
     {
@@ -563,7 +562,7 @@ void Editor::suggestRegions(int slot)
     }
     auto options = juce::MessageBoxOptions::makeOptionsOkCancel(juce::MessageBoxIconType::WarningIcon,
                                                                 suggestConfirmTitle(slot), suggestConfirmMessage(),
-                                                                "Ersetzen", "Abbrechen", this);
+                                                                "Replace", "Cancel", this);
     juce::AlertWindow::showAsync(options, [answer](int result) { answer(result == 1); });
 }
 
@@ -585,12 +584,12 @@ void Editor::handleFile(int slot, const juce::File& file, const juce::MemoryBloc
     switch (action)
     {
         case LoopFileAction::Reject:
-            showNotice(slot, "Nicht geladen: " + file.getFileName() + " (" + error + ")");
+            showNotice(slot, "Not loaded: " + file.getFileName() + " (" + error + ")");
             return;
         case LoopFileAction::Relink:
             if (!proc_.loadLoop(slot, file)) // keeps regions, rules and bars
             {
-                showNotice(slot, "Nicht geladen: " + file.getFileName());
+                showNotice(slot, "Not loaded: " + file.getFileName());
                 return;
             }
             noticeUntil_[slot] = 0;
@@ -606,8 +605,7 @@ void Editor::handleFile(int slot, const juce::File& file, const juce::MemoryBloc
                 if (serialize(st) == *confirmedState)
                     replace(slot, file);
                 else
-                    showNotice(slot, "Nicht ersetzt: Loop " + juce::String(slot + 1) + " wurde inzwischen ge"
-                                         + utf8("\xc3\xa4") + "ndert");
+                    showNotice(slot, "Not replaced: Loop " + juce::String(slot + 1) + " changed in the meantime");
                 return;
             }
             askReplace(slot, file, serialize(st));
@@ -635,7 +633,7 @@ void Editor::askReplace(int slot, const juce::File& file, const juce::MemoryBloc
     }
     auto options = juce::MessageBoxOptions::makeOptionsOkCancel(juce::MessageBoxIconType::WarningIcon,
                                                                 replaceConfirmTitle(slot), replaceConfirmMessage(),
-                                                                "Ersetzen", "Abbrechen", this);
+                                                                "Replace", "Cancel", this);
     juce::AlertWindow::showAsync(options, [answer](int result) { answer(result == 1); });
 }
 
@@ -643,7 +641,7 @@ void Editor::replace(int slot, const juce::File& file)
 {
     if (!proc_.replaceLoop(slot, file, suggestedBarsFor(file, proc_.hostBpm())))
     {
-        showNotice(slot, "Nicht geladen: " + file.getFileName());
+        showNotice(slot, "Not loaded: " + file.getFileName());
         return;
     }
     noticeUntil_[slot] = 0;

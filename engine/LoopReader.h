@@ -5,21 +5,21 @@
 
 namespace dc {
 
-// Spielt einen Stereo-Loop phasengekoppelt ab: Die Position im Loop kommt vom Aufrufer (Host-Phase),
-// die Tonhöhe bleibt durch den Grain-Stretch erhalten.
+// Plays a stereo loop phase-locked: the position in the loop comes from the caller (host phase),
+// the pitch is preserved by the grain stretch.
 class LoopReader
 {
 public:
     static constexpr double kGrainMs = 40.0;
 
-    // Ausgabe-Samplerate (Standard 44100); bestimmt Grain-Länge und Leseverhältnis. Setzt zurück.
+    // Output sample rate (default 44100); determines grain length and read ratio. Resets.
     void prepare(double outSampleRate);
-    // Neuer Loop; setzt zurück. Nicht gleichzeitig mit render aufrufen.
+    // New loop; resets. Do not call concurrently with render.
     void setData(std::shared_ptr<const StereoData> data);
     void reset();
-    // phase01: Position im Loop am ersten Frame (wird nach [0,1) gewrappt), phaseStep01: Zuwachs pro Frame,
-    // step: Quell-Frames pro Ausgabe-Frame aus sourceStep. Ungültige Werte oder keine Daten ergeben Nullen.
-    // Echtzeitsicher (keine Allokation).
+    // phase01: position in the loop at the first frame (wrapped to [0,1)), phaseStep01: increment per frame,
+    // step: source frames per output frame from sourceStep. Invalid values or no data give zeros.
+    // Real-time safe (no allocation).
     void render(float* l, float* r, int n, double phase01, double phaseStep01, double step);
 
     int grainLength() const { return grainLen_; }

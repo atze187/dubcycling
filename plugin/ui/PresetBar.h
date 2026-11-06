@@ -62,7 +62,7 @@ public:
     void submitName(const juce::String& presetName, const juce::String& bankName = {});
     // ABBRECHEN in the name field: back to Normal, nothing written.
     void cancel();
-    // "Neue Bank...": NamePrompt asking for the name of a new bank (OK calls createBank).
+    // "New bank...": NamePrompt asking for the name of a new bank (OK calls createBank).
     void requestNewBank();
     // Creates and selects the bank; a bad or taken name sets message() (and keeps the name field
     // open when it asked for the name).
@@ -78,7 +78,7 @@ public:
     // What the fields open: entries ticked for the selected bank / the active preset.
     juce::PopupMenu bankMenu() const;
     juce::PopupMenu presetMenu() const;
-    // What "..." opens: Neue Bank..., Bank exportieren..., Bank importieren..., Preset-Ordner oeffnen.
+    // What "..." opens: New bank..., Export bank..., Import bank..., Open presets folder.
     juce::PopupMenu moreMenu() const;
 
     void resized() override;

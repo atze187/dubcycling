@@ -16,7 +16,7 @@ juce::String regionLabel(const std::vector<juce::String>& labels, int index);
 // The rules of one Loop-1 region: one row per CURRENT Loop-2 region
 //   A  |-------------o-------|  70 %  [GATE]  |----|-o--|  L1 60 %
 // (slider 0..100 %, percent value, Gate/One-Shot toggle, mix Loop 1 vs. Loop 2 with its readout)
-// and "Stille: x %" for the remainder.
+// and "Silence: x %" for the remainder.
 //
 // Mix is 0..1 (RuleTarget::mix, see MixGain.h), 0.5 = both loops full; a double-click on the mix
 // slider sets the centre. It is kept when weight or mode change and behaves like the weight for
@@ -69,10 +69,10 @@ public:
     PlayMode mode(int row) const;
     juce::String percentText(int row) const;
     float mix(int row) const; // 0.5 for rows that do not exist
-    // "L1 | L2" at the centre, "L2 40 %" left of it (Loop-2 level), "L1 40 %" right of it, "nur L1" / "nur L2".
+    // "L1 | L2" at the centre, "L2 40 %" left of it (Loop-2 level), "L1 40 %" right of it, "L1 only" / "L2 only".
     juce::String mixText(int row) const;
     juce::String silenceText() const { return silence_.getText(); }
-    // "davon X % auf entfernte Regionen" while stale targets exist, otherwise empty (and hidden).
+    // "X % of it on removed regions" while stale targets exist, otherwise empty (and hidden).
     juce::String staleText() const { return staleHint_.isVisible() ? staleHint_.getText() : juce::String(); }
     // Drops exactly the stale targets (not shown, duplicates, negative) and publishes once.
     void resetStale();

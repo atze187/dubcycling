@@ -107,17 +107,17 @@ TEST_CASE("RulePanel: the silence label shows the rounded remainder", "[RulePane
     juce::ScopedJuceInitialiser_GUI gui;
     RulePanel p;
     p.setContext(0, 3, {});
-    CHECK(p.silenceText() == "Stille: 100 %");
+    CHECK(p.silenceText() == "Silence: 100 %");
     p.setWeight(0, 70.0f);
-    CHECK(p.silenceText() == "Stille: 30 %");
+    CHECK(p.silenceText() == "Silence: 30 %");
     CHECK(p.percentText(0) == "70 %");
     p.setWeight(1, 33.3f);
     p.setWeight(2, 33.3f);
-    CHECK(p.silenceText() == "Stille: 0 %"); // 70 + 30 (capped) leaves nothing
+    CHECK(p.silenceText() == "Silence: 0 %"); // 70 + 30 (capped) leaves nothing
     p.setContext(0, 3, { RuleTarget { 0, 0.7f } });
-    CHECK(p.silenceText() == "Stille: 30 %");
+    CHECK(p.silenceText() == "Silence: 30 %");
     p.setContext(0, 3, { RuleTarget { 0, 0.333f }, RuleTarget { 1, 0.333f } });
-    CHECK(p.silenceText() == "Stille: 33 %");
+    CHECK(p.silenceText() == "Silence: 33 %");
 }
 
 TEST_CASE("RulePanel: setMode only changes that row", "[RulePanel]")
@@ -190,7 +190,7 @@ TEST_CASE("RulePanel: stale entries are preserved when other rows are edited", "
     // Loop 2 has 2 regions now; the rule still points at region 4 (boundaries were removed).
     p.setContext(0, 2, { RuleTarget { 4, 0.2f, PlayMode::OneShot }, RuleTarget { 1, 0.3f } });
     CHECK(p.rowCount() == 2);
-    CHECK(p.silenceText() == "Stille: 50 %"); // the stale 20 % still counts
+    CHECK(p.silenceText() == "Silence: 50 %"); // the stale 20 % still counts
     p.setWeight(0, 90.0f);                     // capped at 100 - 20 - 30
     CHECK(p.weightPercent(0) == 50.0f);
     REQUIRE(out.targets.size() == 3);
@@ -215,7 +215,7 @@ TEST_CASE("RulePanel: a slider drag publishes only at the drag end", "[RulePanel
     CHECK(out.calls == 0);
     CHECK(p.weightPercent(0) == 70.0f);
     CHECK(p.percentText(0) == "70 %");
-    CHECK(p.silenceText() == "Stille: 0 %");
+    CHECK(p.silenceText() == "Silence: 0 %");
     p.endDrag();
     CHECK(out.calls == 1);
     REQUIRE(out.targets.size() == 2);
@@ -358,7 +358,7 @@ TEST_CASE("Editor: renders the rule panel with a loaded loop pair", "[RulePanel]
     editor->lane(0).setSelectedRegion(1);
     editor->refresh();
     CHECK(editor->rulePanel().rowCount() == 4);
-    CHECK(editor->rulePanel().silenceText() == "Stille: 30 %");
+    CHECK(editor->rulePanel().silenceText() == "Silence: 30 %");
 
     auto img = ed->createComponentSnapshot(ed->getLocalBounds());
     CHECK(img.isValid());
@@ -381,8 +381,8 @@ TEST_CASE("RulePanel: the stale hint shows the exact percent and is hidden other
     p.setContext(0, 2, { RuleTarget { 0, 0.5f } });
     CHECK(p.staleText().isEmpty());
     p.setContext(0, 2, { RuleTarget { 0, 0.5f }, RuleTarget { 4, 0.2f }, RuleTarget { 5, 0.15f } });
-    CHECK(p.staleText() == "davon 35 % auf entfernte Regionen");
-    CHECK(p.silenceText() == "Stille: 15 %");
+    CHECK(p.staleText() == "35 % of it on removed regions");
+    CHECK(p.silenceText() == "Silence: 15 %");
     p.setContext(0, 6, { RuleTarget { 0, 0.5f }, RuleTarget { 4, 0.2f }, RuleTarget { 5, 0.15f } });
     CHECK(p.staleText().isEmpty()); // the regions exist again
 }
@@ -395,7 +395,7 @@ TEST_CASE("RulePanel: reset drops only the stale targets and publishes once", "[
     record(p, out);
     p.setContext(3, 2, { RuleTarget { 4, 0.2f, PlayMode::OneShot }, RuleTarget { 1, 0.3f, PlayMode::OneShot },
                          RuleTarget { 0, 0.5f } });
-    CHECK(p.silenceText() == "Stille: 0 %");
+    CHECK(p.silenceText() == "Silence: 0 %");
     p.resetStale();
     CHECK(out.calls == 1);
     CHECK(out.region1 == 3);
@@ -406,7 +406,7 @@ TEST_CASE("RulePanel: reset drops only the stale targets and publishes once", "[
     CHECK(out.targets[1].region2 == 0);
     CHECK(out.targets[1].weight == 0.5f);
     CHECK(p.staleText().isEmpty());
-    CHECK(p.silenceText() == "Stille: 20 %");
+    CHECK(p.silenceText() == "Silence: 20 %");
     p.resetStale(); // nothing stale left
     CHECK(out.calls == 1);
 }
@@ -444,7 +444,7 @@ TEST_CASE("Editor: resetting stale targets leaves other region1 entries alone", 
     auto* editor = dynamic_cast<dc::ui::Editor*>(ed.get());
     REQUIRE(editor != nullptr);
     editor->refresh();
-    CHECK(editor->rulePanel().staleText() == "davon 20 % auf entfernte Regionen");
+    CHECK(editor->rulePanel().staleText() == "20 % of it on removed regions");
     editor->rulePanel().resetStale();
     const auto after = proc.getPluginState();
     REQUIRE(after.rules.size() == 2);
@@ -455,7 +455,7 @@ TEST_CASE("Editor: resetting stale targets leaves other region1 entries alone", 
     CHECK(after.rules[1].targets[0].region2 == 5);
     editor->refresh();
     CHECK(editor->rulePanel().staleText().isEmpty());
-    CHECK(editor->rulePanel().silenceText() == "Stille: 60 %");
+    CHECK(editor->rulePanel().silenceText() == "Silence: 60 %");
 }
 
 TEST_CASE("Editor: renders the rule panel with a stale target", "[RulePanel][editor]")
@@ -680,9 +680,9 @@ TEST_CASE("RulePanel: mixText reads centre, ends and sides", "[RulePanel][mix]")
     p.setContext(0, 1, {});
     CHECK(p.mixText(0) == "L1 | L2");
     p.setMix(0, 0.0f);
-    CHECK(p.mixText(0) == "nur L1");
+    CHECK(p.mixText(0) == "L1 only");
     p.setMix(0, 1.0f);
-    CHECK(p.mixText(0) == "nur L2");
+    CHECK(p.mixText(0) == "L2 only");
     p.setMix(0, 0.25f); // left of centre: Loop 2 at half level
     CHECK(p.mixText(0) == "L2 50 %");
     p.setMix(0, 0.75f); // right of centre: Loop 1 at half level
@@ -783,7 +783,7 @@ TEST_CASE("RulePanel: controls do not overlap at the editor's panel width", "[Ru
             REQUIRE(percent != nullptr);
             REQUIRE(mixValue != nullptr);
             CHECK(fits(*percent, "100 %"));
-            for (const auto* text : { "L1 | L2", "L2 98 %", "L1 98 %", "nur L1", "nur L2" })
+            for (const auto* text : { "L1 | L2", "L2 98 %", "L1 98 %", "L1 only", "L2 only" })
             {
                 CAPTURE(text);
                 CHECK(fits(*mixValue, text));

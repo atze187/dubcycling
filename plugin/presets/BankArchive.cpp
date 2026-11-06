@@ -19,7 +19,7 @@ BankStore::Result fail(BankStore::Error error, const juce::String& message) { re
 BankStore::Result invalid(const juce::String& message) { return fail(BankStore::Error::ArchiveInvalid, message); }
 BankStore::Result unpackFailed()
 {
-    return fail(BankStore::Error::WriteFailed, text("Die Bank konnte nicht in den Preset-Ordner entpackt werden."));
+    return fail(BankStore::Error::WriteFailed, text("The bank could not be extracted into the preset folder."));
 }
 
 // One file to unpack: zip entry index, path below the bank folder ("bank.json" or
@@ -43,12 +43,12 @@ BankStore::Result planImport(const juce::ZipFile& zip, const ArchiveLimits& limi
 {
     const int count = zip.getNumEntries();
     if (count == 0)
-        return invalid(text("Die Zip-Datei ist leer oder kann nicht gelesen werden."));
+        return invalid(text("The zip file is empty or cannot be read."));
     if (count > limits.maxEntries)
         return fail(BankStore::Error::ArchiveTooLarge,
-                    text("Die Zip-Datei hat zu viele Eintr\xc3\xa4ge (h\xc3\xb6" "chstens ") + juce::String(limits.maxEntries) + ").");
+                    text("The zip file has too many entries (at most ") + juce::String(limits.maxEntries) + ").");
 
-    const auto oneFolder = text("Die Zip-Datei muss genau einen Bank-Ordner enthalten.");
+    const auto oneFolder = text("The zip file must contain exactly one bank folder.");
     juce::int64 total = 0; // at most 65535 entries of at most 4 GiB each: no overflow
     juce::StringArray seen;
     for (int i = 0; i < count; ++i)
@@ -64,7 +64,7 @@ BankStore::Result planImport(const juce::ZipFile& zip, const ArchiveLimits& limi
         const bool safe = !entry.isSymbolicLink && path.isNotEmpty() && !path.startsWithChar('/') && !path.contains("//")
                           && std::all_of(parts.begin(), parts.end(), [](const juce::String& p) { return isPortableFileName(p); });
         if (!safe)
-            return invalid(text("Die Zip-Datei enth\xc3\xa4lt einen unzul\xc3\xa4ssigen Pfad: ") + name);
+            return invalid(text("The zip file contains an invalid path: ") + name);
 
         // macOS metadata is skipped, never unpacked (checked for safe paths above all the same).
         if (parts[0] == kMacMetadataDir || (!isFolder && parts.size() > 1 && parts[parts.size() - 1].startsWith("._")))
@@ -86,17 +86,17 @@ BankStore::Result planImport(const juce::ZipFile& zip, const ArchiveLimits& limi
         {
             if (entry.uncompressedSize > limits.maxBankJsonBytes)
                 return fail(BankStore::Error::ArchiveTooLarge,
-                            text("Die bank.json in der Zip-Datei ist zu gro\xc3\x9f (h\xc3\xb6" "chstens ")
+                            text("The bank.json in the zip file is too large (at most ")
                                 + juce::String(limits.maxBankJsonBytes / 1024) + " KB).");
             relative = kBankFile;
         }
         else if (!isFolder && parts.size() == 2 && parts[0] == kSamplesDir)
             relative = juce::String(kSamplesDir) + "/" + parts[1];
         else
-            return invalid(text("Die Zip-Datei enth\xc3\xa4lt einen fremden Ordner: ") + name);
+            return invalid(text("The zip file contains a foreign folder: ") + name);
 
         if (seen.contains(relative, true))
-            return invalid(text("Die Zip-Datei enth\xc3\xa4lt eine Datei doppelt: ") + name);
+            return invalid(text("The zip file contains a file twice: ") + name);
         seen.add(relative);
         if (parts.size() == 2)
             plan.samples.add(parts[1]);
@@ -105,12 +105,12 @@ BankStore::Result planImport(const juce::ZipFile& zip, const ArchiveLimits& limi
 
     if (total > limits.maxBytes)
         return fail(BankStore::Error::ArchiveTooLarge,
-                    text("Die Zip-Datei ist entpackt zu gro\xc3\x9f (h\xc3\xb6" "chstens ")
+                    text("The zip file is too large when extracted (at most ")
                         + juce::String(limits.maxBytes / (1024 * 1024)) + " MB).");
     if (!seen.contains(kBankFile))
-        return invalid(text("In der Zip-Datei fehlt bank.json."));
+        return invalid(text("bank.json is missing from the zip file."));
     if (const auto problem = bankNameProblem(plan.top, {}); problem.isNotEmpty())
-        return invalid(text("Der Bank-Ordner in der Zip-Datei hat keinen g\xc3\xbcltigen Namen: ") + problem);
+        return invalid(text("The bank folder in the zip file does not have a valid name: ") + problem);
     return {};
 }
 
@@ -118,7 +118,7 @@ BankStore::Result planImport(const juce::ZipFile& zip, const ArchiveLimits& limi
 // does not match its declared size (a zip bomb lying about it, or a damaged zip) is rejected.
 BankStore::Result unpack(juce::ZipFile& zip, const ArchiveFile& file, const juce::File& target)
 {
-    const auto damaged = invalid(text("Ein Eintrag der Zip-Datei ist besch\xc3\xa4" "digt: ") + zip.getEntry(file.index)->filename);
+    const auto damaged = invalid(text("An entry of the zip file is corrupt: ") + zip.getEntry(file.index)->filename);
     std::unique_ptr<juce::InputStream> in(zip.createStreamForEntry(file.index));
     if (in == nullptr)
         return damaged;
@@ -192,12 +192,12 @@ BankStore::Result exportBank(const BankStore& store, const juce::String& bank, c
             const auto name = sample.getFileName();
             if (sample != juce::File() && !isPortableFileName(name))
                 return fail(BankStore::Error::SampleNameInvalid,
-                            text("Der Name der Loop-Datei ist nicht auf allen Systemen g\xc3\xbcltig: ") + loop->path);
+                            text("The loop file name is not valid on all systems: ") + loop->path);
             if (!sample.existsAsFile())
-                return fail(BankStore::Error::SampleMissing, text("Die Loop-Datei fehlt in der Bank: ") + loop->path);
+                return fail(BankStore::Error::SampleMissing, text("The loop file is missing from the bank: ") + loop->path);
             if (!onDisk.contains(name) || (!packed.contains(name) && packed.contains(name, true)))
                 return fail(BankStore::Error::SampleNameInvalid,
-                            text("Die Loop-Datei ist in der Bank unterschiedlich geschrieben: ") + loop->path);
+                            text("The loop file is spelled inconsistently in the bank: ") + loop->path);
             packed.addIfNotAlreadyThere(name);
         }
 
@@ -218,7 +218,7 @@ BankStore::Result exportBank(const BankStore& store, const juce::String& bank, c
         }
     }
     if (!written || !temp.overwriteTargetFileWithTemporary())
-        return fail(BankStore::Error::WriteFailed, text("Die Zip-Datei konnte nicht geschrieben werden."));
+        return fail(BankStore::Error::WriteFailed, text("The zip file could not be written."));
     return {};
 }
 
@@ -226,7 +226,7 @@ BankStore::Result importBank(BankStore& store, const juce::File& zipFile, juce::
                              const ArchiveLimits& limits)
 {
     if (!zipFile.existsAsFile())
-        return invalid(text("Die Zip-Datei ist leer oder kann nicht gelesen werden."));
+        return invalid(text("The zip file is empty or cannot be read."));
     juce::ZipFile zip(zipFile);
     ArchivePlan plan;
     if (auto r = planImport(zip, limits, plan); !r.ok())
@@ -248,15 +248,15 @@ BankStore::Result importBank(BankStore& store, const juce::File& zipFile, juce::
     const auto parsed = bankFromJson(staging.getChildFile(kBankFile).loadFileAsString());
     if (parsed.tooNew)
         return fail(BankStore::Error::BankTooNew,
-                    text("Die Bank stammt aus einer neueren Version von Dubcycling und kann nicht importiert werden."));
+                    text("The bank comes from a newer version of Dubcycling and cannot be imported."));
     if (!parsed.bank)
-        return fail(BankStore::Error::BankUnreadable, text("Die bank.json in der Zip-Datei ist besch\xc3\xa4" "digt."));
+        return fail(BankStore::Error::BankUnreadable, text("The bank.json in the zip file is corrupt."));
     const juce::String prefix = juce::String(kSamplesDir) + "/";
     for (auto& preset : parsed.bank->presets)
         for (const LoopRef* loop : { &preset.state.loop1, &preset.state.loop2 })
             if (loop->path.isNotEmpty()
                 && !(loop->path.startsWith(prefix) && plan.samples.contains(loop->path.substring(prefix.length()))))
-                return invalid(text("Ein Preset verweist auf eine Loop-Datei, die nicht in der Zip-Datei liegt: ") + loop->path);
+                return invalid(text("A preset refers to a loop file that is not in the zip file: ") + loop->path);
 
     // freeBankName only returns a name nothing uses: moveFileTo would delete an existing target.
     const auto name = freeBankName(store, plan.top);

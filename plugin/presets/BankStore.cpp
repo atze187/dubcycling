@@ -110,12 +110,12 @@ juce::String portableSampleName(const juce::String& sourceName)
 BankStore::Result BankStore::checkParsed(const juce::File& bankFile, const BankParseResult& parsed)
 {
     if (!bankFile.existsAsFile())
-        return fail(Error::BankMissing, text("Die Bank gibt es nicht."));
+        return fail(Error::BankMissing, text("The bank does not exist."));
     if (parsed.tooNew)
         return fail(Error::BankTooNew,
-                    text("Die Bank stammt aus einer neueren Version von Dubcycling und wird nicht ver\xc3\xa4ndert."));
+                    text("The bank comes from a newer version of Dubcycling and is not modified."));
     if (!parsed.bank)
-        return fail(Error::BankUnreadable, text("Die Bank-Datei ist besch\xc3\xa4" "digt und kann nicht gelesen werden."));
+        return fail(Error::BankUnreadable, text("The bank file is corrupt and cannot be read."));
     return {};
 }
 
@@ -145,11 +145,11 @@ BankStore::Result BankStore::createBank(const juce::String& name)
     if (const auto problem = bankNameProblem(name, {}); problem.isNotEmpty())
         return fail(Error::InvalidName, problem);
     if (listBanks().contains(name, true) || bankDir(name).exists())
-        return fail(Error::NameTaken, text("Eine Bank mit diesem Namen gibt es schon."));
+        return fail(Error::NameTaken, text("A bank with this name already exists."));
 
     const auto dir = bankDir(name);
     if (!dir.getChildFile(kSamplesDir).createDirectory().wasOk() || !writeAtomically(dir.getChildFile(kBankFile), bankToJson({})))
-        return fail(Error::WriteFailed, text("Die Bank konnte nicht angelegt werden."));
+        return fail(Error::WriteFailed, text("The bank could not be created."));
     return {};
 }
 
@@ -172,8 +172,8 @@ BankStore::Result BankStore::savePreset(const juce::String& bank, const juce::St
         return r;
     if (parsed.skipped > 0)
         return fail(Error::BankHasUnreadableEntries,
-                    text("Die Bank enth\xc3\xa4lt Eintr\xc3\xa4ge, die dieses Plugin nicht lesen kann. "
-                         "Speichern w\xc3\xbcrde sie l\xc3\xb6schen, darum wird nicht gespeichert."));
+                    text("The bank contains entries this plugin cannot read. "
+                         "Saving would delete them, so nothing is saved."));
     Bank& stored = *parsed.bank;
 
     if (const auto problem = presetNameProblem(presetName, Bank {}); problem.isNotEmpty())
@@ -184,7 +184,7 @@ BankStore::Result BankStore::savePreset(const juce::String& bank, const juce::St
     if (existing != stored.presets.end() && !overwrite)
         return fail(Error::NameTaken, presetNameProblem(name, stored));
     if (existing == stored.presets.end() && stored.presets.size() >= static_cast<std::size_t>(kMaxPresetsPerBank))
-        return fail(Error::BankFull, text("Die Bank ist voll (h\xc3\xb6" "chstens ") + juce::String(kMaxPresetsPerBank)
+        return fail(Error::BankFull, text("The bank is full (at most ") + juce::String(kMaxPresetsPerBank)
                                          + " Presets).");
 
     // Check every used slot before copying anything.
@@ -198,12 +198,12 @@ BankStore::Result BankStore::savePreset(const juce::String& bank, const juce::St
         if (juce::File::isAbsolutePath(path))
             hashes[i] = hashFile(juce::File(path)); // empty when missing or unreadable
         if (hashes[i].isEmpty())
-            return fail(Error::SampleMissing, text("Die Loop-Datei fehlt oder ist nicht lesbar: ") + path);
+            return fail(Error::SampleMissing, text("The loop file is missing or unreadable: ") + path);
     }
 
     const auto samples = dir.getChildFile(kSamplesDir);
     if (!samples.createDirectory().wasOk())
-        return fail(Error::CopyFailed, text("Der Ordner samples konnte nicht angelegt werden."));
+        return fail(Error::CopyFailed, text("The samples folder could not be created."));
 
     Preset preset;
     preset.name = name;
@@ -217,7 +217,7 @@ BankStore::Result BankStore::savePreset(const juce::String& bank, const juce::St
         const juce::File source(loops[i]->path);
         const auto placed = placeSample(source, hashes[i], samples);
         if (placed == juce::File())
-            return fail(Error::CopyFailed, text("Die Loop-Datei konnte nicht in die Bank kopiert werden: ") + source.getFileName());
+            return fail(Error::CopyFailed, text("The loop file could not be copied into the bank: ") + source.getFileName());
         targets[i]->path = juce::String(kSamplesDir) + "/" + placed.getFileName();
         targets[i]->fileName = placed.getFileName();
         targets[i]->hash = placed == source ? hashes[i] : hashFile(placed);
@@ -229,7 +229,7 @@ BankStore::Result BankStore::savePreset(const juce::String& bank, const juce::St
         stored.presets.push_back(std::move(preset));
 
     if (!writeAtomically(bankFile, bankToJson(stored)))
-        return fail(Error::WriteFailed, text("Die Bank-Datei konnte nicht geschrieben werden."));
+        return fail(Error::WriteFailed, text("The bank file could not be written."));
     return {};
 }
 
@@ -247,7 +247,7 @@ BankStore::LoadedPreset BankStore::loadPreset(const juce::String& bank, const ju
                                     [&](const Preset& p) { return p.name.equalsIgnoreCase(name); });
     if (found == presets.end())
     {
-        loaded.result = fail(Error::PresetMissing, text("Das Preset gibt es in dieser Bank nicht."));
+        loaded.result = fail(Error::PresetMissing, text("The preset does not exist in this bank."));
         return loaded;
     }
 

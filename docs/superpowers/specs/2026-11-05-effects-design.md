@@ -1,171 +1,170 @@
-# Dubcycling – Effekte pro Region (Design)
+# Dubcycling – Effects per Region (Design)
 
-Stand: 2026-11-05. Entstanden im Gespräch mit dem Nutzer (Backlog-Punkt 6). Was der Nutzer entschieden hat, steht
-als Entscheidung da; was Claude ergänzt hat, steht unter "Entscheidungen von Claude" und ist als Vorschlag zu lesen.
+As of: 2026-11-05. Came out of the conversation with the user (backlog item 6). What the user decided is stated
+as a decision; what Claude added is under "Decisions by Claude" and is to be read as a proposal.
 
-## Worum es geht und warum
+## What it is about and why
 
-Der Nutzer will auf einzelne Regionen von Loop 2 kreative Effekte legen: Reverb, Filter, Bitcrush, Flanger. Wird
-eine Region gespielt, klingt sie mit den Effekten, die für sie eingeschaltet sind. So lassen sich Aufbauten
-gestalten, in denen zum Beispiel nur die dritte Region durch einen Filter und Hall geht, während die anderen trocken
-bleiben. Die Zufallsauswahl der Regionen (Regeln) bleibt unverändert; Effekte sind eine zusätzliche Färbung darüber.
+The user wants to put creative effects on individual regions of loop 2: reverb, filter, bitcrush, flanger. When
+a region is played, it sounds with the effects that are switched on for it. This makes it possible to shape setups
+in which, for example, only the third region goes through a filter and reverb while the others stay dry. The random selection of regions (rules) stays unchanged; effects are an additional coloring on top.
 
-## Begriffe
+## Terms
 
-- **Insert:** einer der vier Effekte (Reverb, Filter, Bitcrush, Flanger). Es gibt jeden Insert genau einmal.
-- **Regler-Satz:** die Parameter eines Inserts. Es gibt pro Insert genau einen Satz; er gilt in allen Regionen, in
-  denen der Insert eingeschaltet ist.
-- **Region:** gemeint sind ausschließlich die Regionen von Loop 2.
-- **Insert-Schalter:** pro Region und Insert ein Ein/Aus. Eine Region hat also vier Schalter.
+- **Insert:** one of the four effects (reverb, filter, bitcrush, flanger). Each insert exists exactly once.
+- **Knob set:** the parameters of an insert. There is exactly one set per insert; it applies in all regions in
+  which the insert is switched on.
+- **Region:** exclusively the regions of loop 2 are meant.
+- **Insert switch:** per region and insert an on/off. A region therefore has four switches.
 
-## Ziele
+## Goals
 
-1. Pro Region von Loop 2 lässt sich für jeden der vier Inserts festlegen, ob er auf diese Region wirkt.
-2. Ein Regler-Satz pro Insert; eine Änderung wirkt sofort in allen Regionen, die den Insert benutzen.
-3. Beim Wechsel zwischen Regionen klickt und knackt nichts, und der Pegel springt nicht hörbar.
-4. Ein Reverb-Nachhall klingt aus, wenn die nächste Region den Reverb nicht benutzt oder wenn Stille gezogen wird.
-5. Effekt-Einstellungen sind Teil des Zustands: Projekt, Presets, Export und Import von Banks.
-6. Bedienung bleibt auch bei vielen Regionen (bis in den zweistelligen Bereich) übersichtlich.
+1. For each region of loop 2 it can be set, for each of the four inserts, whether it acts on that region.
+2. One knob set per insert; a change takes effect immediately in all regions that use the insert.
+3. When switching between regions nothing clicks or pops, and the level does not jump audibly.
+4. A reverb tail rings out when the next region does not use the reverb or when silence is drawn.
+5. Effect settings are part of the state: project, presets, export and import of banks.
+6. Operation stays clear even with many regions (up to double digits).
 
-## Nicht-Ziele
+## Non-goals
 
-- Effekte auf Loop 1 (Entscheidung des Nutzers: "nur für Loop 2"). Loop 1 bleibt trocken.
-- Automation der Effekt-Regler durch den Host ("erstmal ohne Automatisierung"). Das Plugin bleibt ohne
-  Host-Parameter. Das Format und die Engine dürfen es später nicht verbauen, es wird aber nichts dafür gebaut.
-- Eigene Reglerwerte pro Region (ein Regler-Satz pro Insert, nicht pro Region).
-- Mehrere Instanzen desselben Inserts, frei wählbare Reihenfolge, weitere Effekt-Arten.
-- Sidechain, Tempo-Synchronisation der Modulation, Oversampling.
+- Effects on loop 1 (user decision: "only for loop 2"). Loop 1 stays dry.
+- Automation of the effect knobs by the host ("without automation for now"). The plugin stays without
+  host parameters. The format and the engine must not block it later, but nothing is built for it.
+- Separate knob values per region (one knob set per insert, not per region).
+- Several instances of the same insert, freely selectable order, further effect types.
+- Sidechain, tempo synchronization of the modulation, oversampling.
 
-## Anti-Ziele
+## Anti-goals
 
-Es wäre ein Fehlschlag, wenn: ein Regionswechsel hörbar klickt, ein Reverb-Nachhall abgeschnitten wird, ein Effekt
-im ausgeschalteten Zustand den Klang färbt oder CPU frisst, der Pegel bei Bitcrush, Resonanz oder Feedback explodiert
-oder die Audio-Verarbeitung Speicher anfordert oder auf Sperren wartet.
+It would be a failure if: a region change clicks audibly, a reverb tail is cut off, an effect
+colors the sound or eats CPU in the switched-off state, the level explodes with bitcrush, resonance or feedback,
+or the audio processing allocates memory or waits on locks.
 
-## Entscheidungen des Nutzers
+## Decisions by the user
 
-1. Effekte nur für Loop 2.
-2. Alle vier Effekte als Inserts: ein Regler-Satz pro Insert, Änderungen wirken in allen Regionen, die ihn nutzen.
-   Pro Region wird nur gewählt, welche Inserts aktiv sind.
-3. Wenn die nächste Region einen Insert nicht benutzt, klingt der Hall aus (er wird nicht abgeschnitten).
-4. Parameter (Vorschlag von Claude, vom Nutzer als "gute Basis" angenommen):
+1. Effects only for loop 2.
+2. All four effects as inserts: one knob set per insert, changes take effect in all regions that use it.
+   Per region only the choice of which inserts are active is made.
+3. If the next region does not use an insert, the reverb rings out (it is not cut off).
+4. Parameters (proposal by Claude, accepted by the user as a "good basis"):
    - Reverb: Mix, Size, Damping.
-   - Filter: Typ (Tiefpass, Hochpass, Bandpass), Cutoff, Resonanz.
-   - Bitcrush: Bits, Rate (Downsampling), Mix.
+   - Filter: Type (Lowpass, Highpass, Bandpass), Cutoff, Resonance.
+   - Bitcrush: Bits, Rate (downsampling), Mix.
    - Flanger: Rate, Depth, Feedback, Mix.
-5. Reihenfolge in der Kette: Bitcrush, Filter, Flanger, Reverb (der Hall am Ende, damit er das Verzerrte und
-   Gefilterte aufnimmt und ausklingen kann).
-6. Oberfläche "Mischform": vier Insert-Module mit Reglern; in jedem Modul ein Schalter für die gewählte Region von
-   Loop 2; zusätzlich ein schmaler Streifen unter der Loop-2-Spur, der pro Region mit farbigen Markierungen zeigt,
-   welche Inserts laufen. Geschaltet wird im Streifen oder im Modul. Gewählt wurde das, weil es bei jeder
-   Regionenzahl lesbar bleibt und trotzdem den Überblick gibt.
-7. Keine Host-Automation (siehe Nicht-Ziele).
+5. Order in the chain: Bitcrush, Filter, Flanger, Reverb (the reverb at the end so that it picks up the distorted and
+   filtered signal and can ring out).
+6. Interface "hybrid": four insert modules with knobs; in each module a switch for the selected region of
+   loop 2; additionally a narrow strip below the loop 2 track that shows per region with colored markers
+   which inserts are running. Switching is done in the strip or in the module. This was chosen because it stays
+   readable with any number of regions and still gives the overview.
+7. No host automation (see non-goals).
 
-## Entscheidungen von Claude (zum Gegenprüfen)
+## Decisions by Claude (to be cross-checked)
 
-Diese Punkte hat der Nutzer nicht entschieden; sie sind Vorschläge.
+The user did not decide these points; they are proposals.
 
-- **Tail-Verhalten der Inserts.** Reverb und Flanger sind "Nachhall-Effekte": Ist ein Insert für die aktuelle
-  Region aus, wird sein Eingang weich auf null gefahren (einige Millisekunden), der Insert selbst läuft aber weiter
-  und sein Ausgang bleibt in der Summe. So klingt der Reverb aus, und auch die Rückkopplung des Flangers. Filter und
-  Bitcrush haben keinen Nachhall; für sie wird zwischen unbehandeltem und behandeltem Signal weich übergeblendet.
-- **Welche Region zählt.** Die Schalter folgen dem Loop-2-Voice, der gerade (neu) gestartet wurde. Läuft ein
-  auslaufender Voice (kurzes Ausblenden beim Wechsel) mit, geht er durch dieselben Schalter wie der neue.
-  Gezogene Stille (kein Voice) schaltet alle Insert-Eingänge weich auf aus; die Nachhall-Effekte klingen aus.
-- **Vorhören (Rechtsklick auf eine Region)** läuft durch die Inserts, die für diese Region eingeschaltet sind. Beim
-  Gestalten hört man so, wie die Region klingen wird.
-- **Regionsgrenzen bearbeiten.** Wird eine Grenze eingefügt, übernimmt die neue Hälfte die Schalter der geteilten
-  Region (die Region klingt nach dem Teilen weiter wie vorher). Beim Zusammenführen gelten die Schalter der linken
-  Region. Das entspricht dem Verhalten bei Namen und Regeln (siehe Beschriftungen und Regeln im Basis-Design).
-- **Vorschlagswerte und Bereiche** (der Bauende darf nachjustieren, solange hörbar sinnvoll und stabil):
+- **Tail behavior of the inserts.** Reverb and flanger are "tail effects": if an insert is off for the current
+  region, its input is smoothly faded to zero (a few milliseconds), but the insert itself keeps running
+  and its output stays in the sum. This is how the reverb rings out, and the flanger's feedback too. Filter and
+  bitcrush have no tail; for them there is a smooth crossfade between the unprocessed and the processed signal.
+- **Which region counts.** The switches follow the loop 2 voice that was just (re)started. If a
+  fading-out voice (short fade-out on switching) is still running, it goes through the same switches as the new one.
+  Drawn silence (no voice) smoothly switches all insert inputs to off; the tail effects ring out.
+- **Preview (right-click on a region)** runs through the inserts that are switched on for that region. When
+  shaping, you hear how the region will sound.
+- **Editing region boundaries.** When a boundary is inserted, the new half takes over the switches of the split
+  region (the region keeps sounding the same after the split). On merging, the switches of the left
+  region apply. This corresponds to the behavior for names and rules (see labels and rules in the base design).
+- **Suggested values and ranges** (the builder may readjust, as long as audibly sensible and stable):
 
-  | Insert   | Regler    | Bereich                       | Standard      |
+  | Insert   | Knob      | Range                         | Default       |
   | -------- | --------- | ----------------------------- | ------------- |
-  | Reverb   | Mix       | 0 bis 100 %                   | 30 %          |
-  | Reverb   | Size      | 0 bis 100 %                   | 50 %          |
-  | Reverb   | Damping   | 0 bis 100 %                   | 50 %          |
-  | Filter   | Typ       | Tiefpass, Hochpass, Bandpass  | Tiefpass      |
-  | Filter   | Cutoff    | 20 Hz bis 20 kHz, logarithmisch | 2 kHz       |
-  | Filter   | Resonanz  | 0 bis 100 %                   | 20 %          |
-  | Bitcrush | Bits      | 1 bis 16                      | 8             |
-  | Bitcrush | Rate      | Downsampling-Faktor 1 bis 64  | 4             |
-  | Bitcrush | Mix       | 0 bis 100 %                   | 100 %         |
-  | Flanger  | Rate      | 0,05 bis 5 Hz                 | 0,3 Hz        |
-  | Flanger  | Depth     | 0 bis 100 %                   | 50 %          |
-  | Flanger  | Feedback  | -90 bis 90 %                  | 40 %          |
-  | Flanger  | Mix       | 0 bis 100 %                   | 50 %          |
+  | Reverb   | Mix       | 0 to 100 %                    | 30 %          |
+  | Reverb   | Size      | 0 to 100 %                    | 50 %          |
+  | Reverb   | Damping   | 0 to 100 %                    | 50 %          |
+  | Filter   | Type      | Lowpass, Highpass, Bandpass   | Lowpass       |
+  | Filter   | Cutoff    | 20 Hz to 20 kHz, logarithmic  | 2 kHz         |
+  | Filter   | Resonance | 0 to 100 %                    | 20 %          |
+  | Bitcrush | Bits      | 1 to 16                       | 8             |
+  | Bitcrush | Rate      | downsampling factor 1 to 64   | 4             |
+  | Bitcrush | Mix       | 0 to 100 %                    | 100 %         |
+  | Flanger  | Rate      | 0.05 to 5 Hz                  | 0.3 Hz        |
+  | Flanger  | Depth     | 0 to 100 %                    | 50 %          |
+  | Flanger  | Feedback  | -90 to 90 %                   | 40 %          |
+  | Flanger  | Mix       | 0 to 100 %                    | 50 %          |
 
-- **Neu angelegtes Projekt oder Preset:** alle Schalter aus. Dann klingt das Plugin wie vorher, die Standardwerte
-  sind erst hörbar, sobald ein Schalter an ist.
-- **Format.** Die Effekt-Daten (Regler-Sätze und Schalter pro Loop-2-Region) kommen optional in den Plugin-Zustand
-  (XML, fehlen sie, gilt "alles aus") und in die Presets der Bank. Weil sich das Bank-Format erweitert, steigt
-  `version` in `bank.json` von 1 auf 2 (Regel der Preset-Entscheidung R6: ältere Plugin-Versionen lehnen neuere
-  Banks ab und schreiben nie in sie). Banks mit Version 1 bleiben lesbar und werden beim nächsten Speichern auf 2
-  gehoben. Beim Laden werden alle Zahlen geprüft und auf die Bereiche begrenzt (NaN und Unendlich fallen auf den
-  Standard); der Nutzer kann nichts einspielen, was die Engine in einen unzulässigen Zustand bringt.
-- **Ungespeichert-Abfrage.** Die Effekt-Einstellungen sind Teil des Preset-Fingerabdrucks: Ändert der Nutzer einen
-  Regler oder Schalter, gilt das Preset als geändert.
+- **Newly created project or preset:** all switches off. Then the plugin sounds as before, the default values
+  only become audible once a switch is on.
+- **Format.** The effect data (knob sets and switches per loop 2 region) go optionally into the plugin state
+  (XML, if they are missing "all off" applies) and into the presets of the bank. Because the bank format is extended,
+  `version` in `bank.json` rises from 1 to 2 (rule of preset decision R6: older plugin versions reject newer
+  banks and never write into them). Banks with version 1 stay readable and are raised to 2 on the next save.
+  On loading, all numbers are checked and clamped to the ranges (NaN and infinity fall back to the
+  default); the user cannot load anything that brings the engine into an invalid state.
+- **Unsaved check.** The effect settings are part of the preset fingerprint: if the user changes a
+  knob or switch, the preset counts as modified.
 
-- **Eine Kette, ein Stand der Schalter.** Es gibt genau eine Insert-Kette (kein zweiter Satz für das Vorhören). Die
-  Schalter folgen dem, was zuletzt gestartet wurde: einem Loop-2-Voice oder einem Vorhören. Wird während eines
-  laufenden Voice eine andere Region vorgehört, gelten für die Dauer des Vorhörens deren Schalter auch für den
-  laufenden Voice. Das ist ein Nebeneffekt des Gestaltens und bewusst so gewählt (halbe CPU, ein Nachhall).
-- **Zeitpunkt des Schaltens.** Die Schalter wechseln, wenn ein neuer Voice startet oder Stille gezogen wird, nicht
-  am Ende einer Region. Ein Gate-Voice, der über sein Regionsende hinaus weiterspielt, behält die Schalter seiner
-  Region, bis ein neuer Voice oder Stille kommt.
-- **Aus heißt: trockenes Signal bleibt.** Bei Reverb und Flanger wird nur der Eingang des Effekts weich auf null
-  gefahren; das trockene Signal läuft immer durch, der Mix-Regler bestimmt nur den Effektanteil. Ein ausgeschalteter
-  Reverb mit Mix 30 % ist also zu 100 % trocken, während sein Nachhall ausklingt. Bei Filter und Bitcrush wird
-  zwischen unbehandelt und behandelt übergeblendet.
-- **Grenzen verschieben.** Schalter hängen am Regionsindex. Wird eine Grenze nur gezogen, behält jede Region ihren
-  Index und ihre Schalter. Wird die Loop-2-Datei ersetzt, fallen die Regionen und alle Regeln weg (bestehendes
-  Verhalten); die Schalter fallen mit weg, die Regler-Sätze bleiben. Ein Modelltausch während des Spielens läuft
-  nahtlos weiter, wie bei Regeln.
-- **Nachklingen bei Transport und Laden.** Transport-Stopp, Sprung und Loop des Hosts lassen die Nachhall-Effekte
-  ausklingen (nichts wird abgeschnitten). Beim Laden eines Presets oder Ersetzen der Loop-2-Datei wird die Kette mit
-  einem kurzen Ausblenden (etwa 50 ms) geleert, damit kein Nachhall aus dem alten Aufbau in den neuen hineinragt.
-- **Wo die Daten liegen.** Regler-Sätze und Schalter gehören zum Preset und zum Projektzustand, nicht zur Bank
-  insgesamt. Schalter sind pro Loop-2-Regionsindex gespeichert. Hat ein geladener Zustand mehr Schalter-Einträge als
-  Regionen, werden die überzähligen verworfen; fehlende Einträge gelten als aus.
+- **One chain, one state of the switches.** There is exactly one insert chain (no second set for the preview). The
+  switches follow whatever was started last: a loop 2 voice or a preview. If another region is previewed during a
+  running voice, its switches also apply to the running voice for the duration of the preview. This is a side effect of
+  shaping and deliberately chosen (half the CPU, one reverb).
+- **Time of switching.** The switches change when a new voice starts or silence is drawn, not
+  at the end of a region. A gate voice that keeps playing beyond its region end keeps the switches of its
+  region until a new voice or silence comes.
+- **Off means: dry signal stays.** For reverb and flanger only the input of the effect is smoothly faded to zero;
+  the dry signal always passes through, the mix knob only determines the effect share. A switched-off
+  reverb with mix 30 % is therefore 100 % dry while its tail rings out. For filter and bitcrush
+  there is a crossfade between unprocessed and processed.
+- **Moving boundaries.** Switches are attached to the region index. If a boundary is merely dragged, each region keeps its
+  index and its switches. If the loop 2 file is replaced, the regions and all rules are dropped (existing
+  behavior); the switches are dropped with them, the knob sets stay. A model swap during playback continues
+  seamlessly, like with rules.
+- **Ringing out on transport and loading.** Transport stop, jump and loop of the host let the tail effects
+  ring out (nothing is cut off). When loading a preset or replacing the loop 2 file the chain is cleared with
+  a short fade-out (about 50 ms) so that no reverb from the old setup reaches into the new one.
+- **Where the data live.** Knob sets and switches belong to the preset and the project state, not to the bank
+  as a whole. Switches are stored per loop 2 region index. If a loaded state has more switch entries than
+  regions, the surplus ones are discarded; missing entries count as off.
 
-## Wie es sich anfühlt (Bedienung)
+## How it feels (operation)
 
-- Der Nutzer wählt eine Region in der Loop-2-Spur. Im Modul jedes Inserts zeigt ein Schalter, ob der Insert für diese
-  Region an ist, und er schaltet ihn um. Alternativ klickt er im Streifen unter der Spur direkt auf die Markierung
-  eines Inserts in einer Region.
-- Der Streifen unter der Spur folgt der Breite der Regionen; jede Region hat vier kleine Markierungen in den Farben
-  der Inserts. An ist gefüllt, aus ist leer.
-- Regler werden mit der Maus gezogen; ein Doppelklick setzt den Standardwert. Die Werte werden angezeigt.
-- Alles bleibt im Panel-Look des Plugins, ohne zusätzliche Fenster.
+- The user selects a region in the loop 2 track. In the module of each insert a switch shows whether the insert is on for that
+  region, and toggles it. Alternatively they click in the strip below the track directly on the marker
+  of an insert in a region.
+- The strip below the track follows the width of the regions; each region has four small markers in the colors
+  of the inserts. On is filled, off is empty.
+- Knobs are dragged with the mouse; a double-click sets the default value. The values are displayed.
+- Everything stays in the panel look of the plugin, without additional windows.
 
-## Engine (Rahmen für den Bauenden)
+## Engine (framework for the builder)
 
-- Heute wird Loop 2 direkt in den Ausgang gemischt, zusammen mit Loop 1. Für Effekte muss Loop 2 (Voice,
-  auslaufender Voice, Vorhören) zuerst in einen eigenen Puffer, durch die Insert-Kette und dann in den Ausgang
-  addiert werden. Loop 1 bleibt unberührt und trocken.
-- Die Kette läuft Block für Block in der Audio-Verarbeitung: keine Speicheranforderung, keine Sperren, keine
-  Ausnahmen. Alle Puffer werden in `prepare` angelegt; bei Änderung der Samplerate oder Blockgröße neu.
-- Schalter und Regler kommen über dasselbe Modell-Handoff wie Regionen und Regeln zur Engine (der letzte Stand zählt,
-  die Audio-Verarbeitung liest nur). Reglerwechsel werden geglättet (kein Zippern).
-- Ein Insert, der für keine Region an ist und kein Nachklingen mehr hat, soll keine nennenswerte CPU kosten.
-- `engine/FxSlot.h` (heute ungenutzter Haken) wird durch das ersetzt, was dieses Design braucht, oder entfernt.
+- Today loop 2 is mixed directly into the output, together with loop 1. For effects, loop 2 (voice,
+  fading-out voice, preview) has to go first into a buffer of its own, through the insert chain and then be
+  added to the output. Loop 1 stays untouched and dry.
+- The chain runs block by block in the audio processing: no memory allocation, no locks, no
+  exceptions. All buffers are created in `prepare`; anew on a change of sample rate or block size.
+- Switches and knobs reach the engine through the same model handoff as regions and rules (the latest state counts,
+  the audio processing only reads). Knob changes are smoothed (no zipper noise).
+- An insert that is on for no region and has no tail left should cost no appreciable CPU.
+- `engine/FxSlot.h` (today an unused hook) is replaced by what this design needs, or removed.
 
-## Was dem Bauenden überlassen bleibt
+## What is left to the builder
 
-- Die konkrete DSP-Umsetzung (Reverb-Algorithmus, Filter-Struktur, Flanger-Interpolation, Glättungszeiten), solange
-  die Anti-Ziele eingehalten werden und es hörbar sauber klingt.
-- Die genaue Form der Regler und der Markierungen im Streifen, solange das Layout der "Mischform" erhalten bleibt.
-- Interne Datenstrukturen für Schalter und Regler und ihre Aufteilung auf Dateien.
+- The concrete DSP implementation (reverb algorithm, filter structure, flanger interpolation, smoothing times), as long as
+  the anti-goals are met and it sounds audibly clean.
+- The exact form of the knobs and of the markers in the strip, as long as the layout of the "hybrid" is kept.
+- Internal data structures for switches and knobs and their split into files.
 
-## Prüfaspekte (nicht ausgespielte Eingaben)
+## Test aspects (unplayed inputs)
 
-- Eine Region ohne Schalter, alle vier an, und der Wechsel zwischen ihnen mitten im Block.
-- Gezogene Stille nach einer Region mit Reverb: Nachhall klingt aus, Pegel wird nie größer als der Eingang plus
-  vernünftige Reserve.
-- Extreme Reglerwerte (Resonanz 100 %, Feedback 90 %, Bits 1, Rate 64, Size 100 %): endlich, kein NaN, kein Dauerton
-  nach Stille.
-- Samplerate 44,1 bis 192 kHz und Blockgrößen von 1 bis 4096.
-- Grenzen einfügen und entfernen: Schalter wandern mit den Regionen, wie oben beschrieben.
-- Altes Projekt und alte Bank (Version 1, ohne Effekt-Daten): lädt und klingt wie vorher.
-- Kaputte oder ungültige Effekt-Zahlen im Projekt oder in einer importierten Bank.
-- Vorhören mit Effekten, während die Wiedergabe steht.
+- A region without switches, all four on, and switching between them mid-block.
+- Drawn silence after a region with reverb: the tail rings out, the level never gets bigger than the input plus a
+  reasonable margin.
+- Extreme knob values (resonance 100 %, feedback 90 %, bits 1, rate 64, size 100 %): finite, no NaN, no sustained tone
+  after silence.
+- Sample rate 44.1 to 192 kHz and block sizes from 1 to 4096.
+- Inserting and removing boundaries: switches move with the regions, as described above.
+- Old project and old bank (version 1, without effect data): loads and sounds as before.
+- Broken or invalid effect numbers in the project or in an imported bank.
+- Preview with effects while playback is stopped.

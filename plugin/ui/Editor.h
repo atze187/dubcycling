@@ -16,7 +16,7 @@
 namespace dc::ui {
 
 constexpr int kMaxBars = 256;
-constexpr int kSuggestMaxBoundaries = 15; // "Vorschlag": at most this many boundaries per lane
+constexpr int kSuggestMaxBoundaries = 15; // "Suggest": at most this many boundaries per lane
 
 // Bars suggestion for a new loop file: suggestBars(length, hostBpm or 120 when unknown, 4 beats).
 // 1 when the file cannot be read.
@@ -114,7 +114,7 @@ public:
     void loadFile(int slot, const juce::File& file);
     bool isConfirmationPending(int slot) const { return pending_[slot == 0 ? 0 : 1].active; }
 
-    // "Vorschlag": replaces the slot's boundaries with suggestBoundaries(data, kSuggestMaxBoundaries),
+    // "Suggest": replaces the slot's boundaries with suggestBoundaries(data, kSuggestMaxBoundaries),
     // committed with one applyEdit. Rules are kept (entries for regions that no longer exist show
     // up as stale in the rule panel). No-op unless the slot is Loaded (the button is enabled only
     // then), with no transients found, or while a confirmation for the slot is open. When the slot already has boundaries the user is asked
@@ -122,7 +122,7 @@ public:
     void suggestRegions(int slot);
     juce::TextButton& suggestButton(int slot) { return suggest_[slot == 0 ? 0 : 1]; }
 
-    // Asks whether to replace a loop whose regions/rules would be lost (or, for "Vorschlag", whether
+    // Asks whether to replace a loop whose regions/rules would be lost (or, for "Suggest", whether
     // to overwrite the boundaries) and calls answer(true) to go ahead. Defaults to an async
     // AlertWindow (replaceConfirmTitle/Message or suggestConfirmTitle/Message); tests replace it.
     std::function<void(int slot, std::function<void(bool)> answer)> confirmReplace;

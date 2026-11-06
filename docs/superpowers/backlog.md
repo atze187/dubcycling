@@ -1,44 +1,44 @@
-# Dubcycling – Backlog (gesammelt beim Jammen, 2026-11-02)
+# Dubcycling – Backlog (collected while jamming, 2026-11-02)
 
-Punkte stehen so, wie der Nutzer sie formuliert hat. Einschätzungen darunter sind von Claude.
+Items are worded as the user phrased them. Assessments below them are Claude's.
 
-## Abgenommen
+## Approved
 
-- Kompaktes Industrie-Bedienpanel (Entwurf im Chat): Kanalstreifen mit LED/LCD, Segmentbalken für Gewichte, Zwei-Stellungs-Schalter GATE/1-SHOT, Regionsbuchstaben in den Lanes, Fenster ca. 760x440.
+- Compact industrial control panel (draft in chat): channel strips with LED/LCD, segment bars for weights, two-position GATE/1-SHOT switch, region letters in the lanes, window approx. 760x440.
 
-## Offen
+## Open
 
-0. ERLEDIGT (2026-11-03): Kompaktes Industrie-Panel umgesetzt (PanelLook, LCD-Anzeigen, Segmentbalken, GATE/1-SHOT-Schalter, Regionsbuchstaben in den Lanes, BPM-Anzeige). Noch nicht in der DAW angesehen.
+0. DONE (2026-11-03): Compact industrial panel implemented (PanelLook, LCD displays, segment bars, GATE/1-SHOT switch, region letters in the lanes, BPM display). Not yet viewed in a DAW.
 
-1. ERLEDIGT (2026-11-03, Playhead pro Lane; die aktive Loop-2-Region ist seit dem Teaser grün getönt). "die loops brauchen einen indikator an welcher position sie sich gerade befinden"
-2. ERLEDIGT (2026-11-03; Vorlauf fest 150 ms, Engine zieht vorab, Lane 2 blendet die kommende Region ein, Stille dimmt die Lane; laufende Region ist grün getönt; Doppelziehung am Loop-Wrap abgefangen; Vorlauf noch nicht einstellbar). "können wir die anhand der wahrscheinlichkeit ermittelte entscheidung ob eine region aus loop 2 gespielt wird im hundertstel sekunden bereich schon vorher visuell anteasern? als sich ganz kurz aufbauenden balken oder die abgespielte regionen bekommen eine andere farbe und zu dieser wird dann schon ganz bevor die region abgespielt wird geblended"
-   - Einschätzung: Machbar, aber die Ziehung muss dafür früher fallen. Heute würfelt der Sequencer erst beim Eintritt in die Loop-1-Region. Neu: kurz vor der Grenze (Vorlauf z. B. 100-250 ms) ziehen, Ergebnis (Region oder Stille) festhalten und am Eintritt genau dieses Ergebnis verwenden; die UI liest es lock-frei. Die Vorab-Ziehung muss verfallen bei Host-Sprung, Tempo-/Transportwechsel, Regel- oder Regionsänderung (Modelltausch) und bei Loop-Wrap, sonst teasert die UI etwas anderes als dann gespielt wird. Ein Vorlauf von 10-30 ms wäre unter einem UI-Frame (30-60 Hz) und kaum sichtbar; ein Aufbau-Effekt braucht eher 100+ ms. Vorlauf als einstellbarer Wert. Hängt mit dem offenen Double-Draw-Thema am Loop-Wrap zusammen, sollte gemeinsam angegangen werden.
+1. DONE (2026-11-03, playhead per lane; the active loop 2 region has been tinted green since the teaser). "the loops need an indicator showing where they currently are"
+2. DONE (2026-11-03; lead time fixed at 150 ms, the engine draws ahead, lane 2 fades in the upcoming region, Silence dims the lane; the running region is tinted green; double draw at the loop wrap caught; lead time not yet adjustable). "can we visually tease the decision, made from the probability, of whether a region from loop 2 gets played, in the hundredths-of-a-second range beforehand? as a briefly building bar, or the regions being played get a different color and the display blends to it well before the region is played"
+   - Assessment: Feasible, but the draw has to happen earlier for that. Today the sequencer rolls the dice only when entering the loop 1 region. New: draw shortly before the boundary (lead time e.g. 100-250 ms), hold the result (region or silence) and use exactly that result at entry; the UI reads it lock-free. The look-ahead draw must expire on host jump, tempo/transport change, rule or region change (model swap) and on loop wrap, otherwise the UI teases something different from what is then played. A lead time of 10-30 ms would be below one UI frame (30-60 Hz) and barely visible; a build-up effect needs 100+ ms. Lead time as an adjustable value. Related to the open double-draw issue at the loop wrap, so they should be tackled together.
 
-3. ERLEDIGT (2026-11-03; Klick auf eine Region in Loop 1 oder 2 spielt sie einmal, auch bei gestopptem Host, Tempo = letztes Host-BPM, dazugemischt; neuer Klick blendet die laufende Vorschau aus). "beim tweaken hat sich ergeben das ein klick auf eine region diese abspielen sollte"
-   - Einschätzung: Audition per Klick. Heute selektiert der Klick die Region (Loop 1: für die Regeln). Offene Fragen an den Nutzer: (a) Läuft das auch bei gestopptem Host? Dann braucht die Vorschau eine eigene Uhr (Tempo = letztes Host-BPM). (b) Gate-artig (spielt solange die Maustaste gedrückt ist, als Loop der Region) oder One-Shot? (c) Verdrängt die Vorschau das laufende Playback der Lane oder wird dazugemischt? Technisch: eigener Preview-Voice im Audio-Thread, per Lock-free-Kommando von der UI gestartet; fertige Bausteine (LoopReader, 5-ms-Crossfade) sind vorhanden.
+3. DONE (2026-11-03; a click on a region in loop 1 or 2 plays it once, even with the host stopped, tempo = last host BPM, mixed in; a new click fades out the running preview). "while tweaking it turned out that a click on a region should play it"
+   - Assessment: Audition by click. Today the click selects the region (loop 1: for the rules). Open questions for the user: (a) Does this also work with the host stopped? Then the preview needs its own clock (tempo = last host BPM). (b) Gate-like (plays as long as the mouse button is held, as a loop of the region) or one-shot? (c) Does the preview displace the lane's running playback or is it mixed in? Technically: a dedicated preview voice in the audio thread, started from the UI by a lock-free command; ready-made building blocks (LoopReader, 5 ms crossfade) exist.
 
-   - Entschieden (Nutzer): Vorschau ist immer möglich (auch bei gestopptem Host), immer One-Shot, und wird dazugemischt.
+   - Decided (user): Preview is always possible (even with the host stopped), always one-shot, and is mixed in.
 
-4. ERLEDIGT (2026-11-03; Umbenennen per Doppelklick auf den Namen in der Lane oder in der Regelzeile von Loop 2, max. 16 Zeichen; Loop-1-Name steht im Regel-Titel; AUTO (Vorschlag) lässt die Namen wie die Regeln auf ihren Indizes stehen). "die labels der regionen bearbeitbar machen"
-   - Einschätzung: Pro Region ein frei benennbares Label, Standard bleibt A, B, C. Im State speichern (Versionsfeld erhöhen, Längenlimit z. B. 16 Zeichen, alte Sessions laden weiter). Labels müssen beim Hinzufügen/Entfernen von Grenzen mit ihren Regionen wandern, wie die Regeln (`remapRulesForBoundaryEdit`). Sie erscheinen in der Lane und in den Regelzeilen. Bearbeiten nicht per Doppelklick in die Lane (der fügt Grenzen hinzu/entfernt sie), sondern per Doppelklick auf das Label-Feld oder im Regelpanel.
+4. DONE (2026-11-03; rename by double-clicking the name in the lane or in the rule row of loop 2, max. 16 characters; the loop 1 name is in the rule title; AUTO (Suggest) leaves the names where the rules are, on their indices). "make the region labels editable"
+   - Assessment: One freely nameable label per region, default stays A, B, C. Store in the state (bump the version field, length limit e.g. 16 characters, old sessions keep loading). Labels have to move with their regions when boundaries are added/removed, like the rules (`remapRulesForBoundaryEdit`). They appear in the lane and in the rule rows. Editing not by double-click in the lane (that adds/removes boundaries) but by double-click on the label field or in the rule panel.
 
-5. ERLEDIGT (2026-11-04; Banken als Ordner mit `bank.json` und `samples/`, Preset-Leiste mit BANK/PRESET/SAVE/SAVE AS/⋯, Rückfrage bei ungespeicherten Änderungen, Export und Import einer Bank als Zip; Entwurf: `docs/superpowers/specs/2026-11-04-presets-design.md`). "eventuell nehmen wir dann noch presets mit rein (das kann vor allem später interessant werden, wenn man auch nicht-drums-loops verwendet)"
-   - Bekannte Grenzen: Presets lassen sich nicht löschen oder umbenennen. Samples werden nie aus einer Bank entfernt. Beim Import werden Systemdateien neben `bank.json` (`.DS_Store`, `Thumbs.db`, …), `__MACOSX`-Ordner und `._*`-Dateien übersprungen; andere Unterordner lehnt der Import ab.
-   - Entschieden (Nutzer, 2026-11-03): Loops bleiben im Session-State als Pfad plus Hash, kein Einbetten der Audiodaten. Die Samples eines Presets liegen in der Bank unter `samples/`.
-   - Einschätzung: Preset = Regionsgrenzen, Regeln, Labels und Takte ohne Audiodatei, vermutlich als Datei neben dem Loop oder in einem Preset-Ordner. Passt zu den Region-Labels (Punkt 4) und zum Vorschlag-Algorithmus für Nicht-Drum-Loops.
+5. DONE (2026-11-04; banks as folders with `bank.json` and `samples/`, preset bar with BANK/PRESET/SAVE/SAVE AS/⋯, prompt on unsaved changes, export and import of a bank as zip; draft: `docs/superpowers/specs/2026-11-04-presets-design.md`). "maybe we'll include presets then (that can become especially interesting later, when using non-drum loops too)"
+   - Known limits: Presets cannot be deleted or renamed. Samples are never removed from a bank. On import, system files next to `bank.json` (`.DS_Store`, `Thumbs.db`, …), `__MACOSX` folders and `._*` files are skipped; other subfolders are rejected by the import.
+   - Decided (user, 2026-11-03): Loops stay in the session state as path plus hash, no embedding of the audio data. A preset's samples live in the bank under `samples/`.
+   - Assessment: Preset = region boundaries, rules, labels and bars without the audio file, probably as a file next to the loop or in a preset folder. Fits the region labels (item 4) and the Suggest algorithm for non-drum loops.
 
-6. ERLEDIGT (2026-11-05; vier Inserts für Loop 2 in fester Reihenfolge Bitcrush, Filter, Flanger, Reverb, ein Reglersatz pro Insert für alle Regionen, Schalter pro Region im Streifen unter Loop 2 und im Panel, Hall und Flanger klingen aus, Effekte in Presets und Projekten, Bank-Format Version 2; Entwurf: `docs/superpowers/specs/2026-11-05-effects-design.md`). Ursprünglich: "Effekte pro Region"
-   - Bekannte Grenzen: Effekte nur auf Loop 2. 1-Bit-Bitcrush hat drei Pegel (-1/0/+1).
-   - Offene Ideen: Host-Automation der Insert-Parameter, Tempo-Sync der Flanger-Rate, Parametersätze pro Region, Effekte auch auf Loop 1, FX-Anzeige in der UI, solange nur noch der Nachhall klingt.
+6. DONE (2026-11-05; four inserts for loop 2 in a fixed order Bitcrush, Filter, Flanger, Reverb, one set of knobs per insert for all regions, switch per region in the strip below loop 2 and in the panel, reverb and flanger ring out, effects in presets and projects, bank format version 2; draft: `docs/superpowers/specs/2026-11-05-effects-design.md`). Originally: "Effects per region"
+   - Known limits: Effects only on loop 2. 1-bit Bitcrush has three levels (-1/0/+1).
+   - Open ideas: host automation of the insert parameters, tempo sync of the flanger rate, parameter sets per region, effects on loop 1 too, FX indicator in the UI while only the reverb tail is still sounding.
 
-7. ERLEDIGT (2026-11-05; Raster in Viertelnoten in den Loop-Lanes, Schläge pro Takt aus dem Zähler der Host-Taktart (ohne Host 4), schwache Linien pro Schlag, starke pro Takt, Einrasten beim Ziehen und Hinzufügen immer, Umschalt-Taste für freies Setzen, AUTO rastet auf das Raster, Linien bei zu großer Dichte ausgeblendet; Entwurf: `docs/superpowers/specs/2026-11-05-grid-and-mix-design.md`).
-   - Offene Ideen: Rasterweite einstellbar, Triolen, Schwelle beim Ziehen, bevor eingerastet wird.
+7. DONE (2026-11-05; grid in quarter notes in the loop lanes, beats per bar from the numerator of the host time signature (4 without a host), faint lines per beat, strong ones per bar, snapping always on when dragging and adding, Shift key for free placement, AUTO snaps to the grid, lines hidden when too dense; draft: `docs/superpowers/specs/2026-11-05-grid-and-mix-design.md`).
+   - Open ideas: adjustable grid width, triplets, a threshold when dragging before snapping kicks in.
 
-8. ERLEDIGT (2026-11-05; Mix-Regler pro Regelzeile: Mitte = beide Loops voll, links Loop-2-Region leiser, rechts Loop 1 leiser, ganz rechts nur Loop 2; wirkt, solange die Loop-2-Region spielt, danach ist Loop 1 wieder voll; Vorhören ignoriert den Mix; pro Regel in Projekt und Preset gespeichert, Bank-Format Version 3; Entwurf: `docs/superpowers/specs/2026-11-05-grid-and-mix-design.md`).
-   - Bekannte Grenzen: Ältere Plugin-Versionen lehnen Banks der Version 3 ab; ein Projekt mit Mix, das eine ältere Version speichert, verliert die Mix-Werte.
-   - Offene Ideen: Host-Automation des Mix, Mix für das Vorhören, breiterer Mix-Regler bei der kleinsten Fenstergröße.
+8. DONE (2026-11-05; mix knob per rule row: center = both loops full, left loop 2 region quieter, right loop 1 quieter, fully right only loop 2; applies while the loop 2 region plays, afterwards loop 1 is full again; preview ignores the mix; stored per rule in project and preset, bank format version 3; draft: `docs/superpowers/specs/2026-11-05-grid-and-mix-design.md`).
+   - Known limits: Older plugin versions reject version 3 banks; a project with mix that an older version saves loses the mix values.
+   - Open ideas: host automation of the mix, mix for the preview, wider mix knob at the smallest window size.
 
-Hinweis des Nutzers: Der Rest ergibt sich aus dem UI-Umbau; es macht "einen mordsspaß".
+User note: The rest follows from the UI rework; it is "a hell of a lot of fun".
 
-1b. Playhead-Details zu Punkt 1
-   - Einschätzung: Playhead pro Lane. Die Engine kennt die Phase beider Loops; die UI braucht eine lock-freie Anzeige-Position (Atomic) vom Audio-Thread, per Timer mit ~30 Hz gezeichnet. Loop 2 zeigt nichts, wenn gerade Stille/keine Region läuft. Zusätzlich sinnvoll: aktive Loop-2-Region hervorheben.
+1b. Playhead details for item 1
+   - Assessment: Playhead per lane. The engine knows the phase of both loops; the UI needs a lock-free display position (atomic) from the audio thread, drawn by a timer at ~30 Hz. Loop 2 shows nothing when silence/no region is currently running. Also useful: highlight the active loop 2 region.

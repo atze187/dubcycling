@@ -316,33 +316,33 @@ juce::String presetNameProblem(const juce::String& name, const Bank& bank)
 {
     const auto clean = sanitizeName(name, INT_MAX);
     if (clean.isEmpty())
-        return juce::String::fromUTF8("Der Name darf nicht leer sein.");
+        return juce::String::fromUTF8("The name must not be empty.");
     if (clean.length() > kMaxPresetNameLength)
-        return juce::String::fromUTF8("Der Name ist zu lang (h\xc3\xb6" "chstens ") + juce::String(kMaxPresetNameLength)
-               + " Zeichen).";
+        return juce::String::fromUTF8("The name is too long (at most ") + juce::String(kMaxPresetNameLength)
+               + " characters).";
     for (auto& p : bank.presets)
         if (p.name.equalsIgnoreCase(clean))
-            return juce::String::fromUTF8("Ein Preset mit diesem Namen gibt es schon.");
+            return juce::String::fromUTF8("A preset with this name already exists.");
     return {};
 }
 
 juce::String bankNameProblem(const juce::String& name, const juce::StringArray& existingBanks)
 {
     if (name.trim().isEmpty())
-        return juce::String::fromUTF8("Der Name darf nicht leer sein.");
+        return juce::String::fromUTF8("The name must not be empty.");
     if (name.length() > kMaxBankNameLength)
-        return juce::String::fromUTF8("Der Name ist zu lang (h\xc3\xb6" "chstens ") + juce::String(kMaxBankNameLength)
-               + " Zeichen).";
+        return juce::String::fromUTF8("The name is too long (at most ") + juce::String(kMaxBankNameLength)
+               + " characters).";
     for (auto p = name.getCharPointer(); !p.isEmpty(); ++p)
         if (isControl(*p) || juce::String("\\/:*?\"<>|").containsChar(*p))
-            return juce::String::fromUTF8("Der Name darf keines der Zeichen \\ / : * ? \" < > | enthalten.");
+            return juce::String::fromUTF8("The name must not contain any of the characters \\ / : * ? \" < > |");
     if (name.endsWithChar('.') || name.endsWithChar(' '))
-        return juce::String::fromUTF8("Der Name darf nicht mit einem Punkt oder Leerzeichen enden.");
+        return juce::String::fromUTF8("The name must not end with a dot or a space.");
     if (isReservedWindowsName(name))
-        return juce::String::fromUTF8("Dieser Name ist unter Windows reserviert.");
+        return juce::String::fromUTF8("This name is reserved on Windows.");
     for (auto& b : existingBanks)
         if (b.equalsIgnoreCase(name))
-            return juce::String::fromUTF8("Eine Bank mit diesem Namen gibt es schon.");
+            return juce::String::fromUTF8("A bank with this name already exists.");
     return {};
 }
 

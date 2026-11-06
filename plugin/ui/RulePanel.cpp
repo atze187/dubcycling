@@ -39,9 +39,9 @@ juce::String mixString(float mix)
     const int l1 = juce::roundToInt(g.loop1 * 100.0f);
     const int l2 = juce::roundToInt(g.loop2 * 100.0f);
     if (l2 <= 0)
-        return "nur L1";
+        return "L1 only";
     if (l1 <= 0)
-        return "nur L2";
+        return "L2 only";
     if (l2 < 100)
         return "L2 " + juce::String(l2) + " %";
     if (l1 < 100)
@@ -88,7 +88,7 @@ struct ModeSwitch final : public juce::Component, public juce::SettableTooltipCl
     ModeSwitch()
     {
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
-        setTooltip("Gate: l" + utf8("\xc3\xa4") + "uft so lange wie die Loop-1-Region. One-Shot: einmal, dann Ende.");
+        setTooltip("Gate: plays as long as the Loop 1 region. One-Shot: once, then ends.");
     }
 
     void paint(juce::Graphics& g) override
@@ -153,7 +153,7 @@ struct RulePanel::Row final : public juce::Component
         setComponentID("row" + juce::String(index));
         letter.setComponentID("name");
         letter.setText(regionLabel(owner.labels2_, index), juce::dontSendNotification);
-        letter.setTooltip("Loop 2, Region " + juce::String(index + 1) + utf8(" \xe2\x80\x93 Doppelklick zum Umbenennen"));
+        letter.setTooltip("Loop 2, Region " + juce::String(index + 1) + utf8(" \xe2\x80\x93 double-click to rename"));
         letter.setColour(juce::Label::textColourId, kText);
         letter.setColour(juce::Label::textWhenEditingColourId, kAmber);
         letter.setColour(juce::Label::backgroundWhenEditingColourId, kLcd);
@@ -213,7 +213,7 @@ struct RulePanel::Row final : public juce::Component
         mixSlider.setColour(juce::Slider::trackColourId, kGreen);
         mixSlider.setColour(juce::Slider::thumbColourId, kText);
         mixSlider.setColour(juce::Slider::backgroundColourId, kOutline);
-        mixSlider.setTooltip("Mix Loop 1 / Loop 2: links wird Loop 2 leiser, rechts Loop 1. Doppelklick: Mitte");
+        mixSlider.setTooltip("Mix Loop 1 / Loop 2: left lowers Loop 2, right lowers Loop 1. Double-click: centre");
         mixSlider.onDragStart = [this] { owner_.beginMixDrag(index_); };
         mixSlider.onValueChange = [this] {
             if (updating)
@@ -291,8 +291,8 @@ RulePanel::RulePanel()
     staleHint_.setColour(juce::Label::textColourId, kOneShot);
     staleHint_.setJustificationType(juce::Justification::centredRight);
     addChildComponent(staleHint_);
-    staleReset_.setButtonText(utf8("Zur\xc3\xbc" "cksetzen"));
-    staleReset_.setTooltip("Entfernt die Regeln auf Regionen, die es nicht mehr gibt");
+    staleReset_.setButtonText("Reset");
+    staleReset_.setTooltip("Removes the rules on regions that no longer exist");
     staleReset_.onClick = [this] { resetStale(); };
     addChildComponent(staleReset_);
     addAndMakeVisible(silence_);
@@ -331,7 +331,7 @@ void RulePanel::setLabels(const std::vector<juce::String>& loop1Labels, const st
 
 void RulePanel::updateTitle()
 {
-    title_.setText(utf8("Regeln f\xc3\xbcr Loop 1 \xe2\x80\x93 ") + regionLabel(labels1_, region1_),
+    title_.setText(utf8("Rules for Loop 1 \xe2\x80\x93 ") + regionLabel(labels1_, region1_),
                    juce::dontSendNotification);
 }
 
@@ -461,7 +461,7 @@ void RulePanel::resetStale()
 void RulePanel::updateSilence()
 {
     const float rest = std::max(0.0f, snap(100.0f - otherPercent(-1)));
-    silence_.setText("Stille: " + juce::String(juce::roundToInt(rest)) + " %", juce::dontSendNotification);
+    silence_.setText("Silence: " + juce::String(juce::roundToInt(rest)) + " %", juce::dontSendNotification);
     bool stale = false;
     std::vector<bool> seen(static_cast<std::size_t>(rowCount()), false);
     for (const auto& t : stored_)
@@ -472,7 +472,7 @@ void RulePanel::updateSilence()
         else
             stale = true;
     }
-    staleHint_.setText("davon " + juce::String(juce::roundToInt(stalePercent())) + " % auf entfernte Regionen",
+    staleHint_.setText(juce::String(juce::roundToInt(stalePercent())) + " % of it on removed regions",
                        juce::dontSendNotification);
     if (stale != staleHint_.isVisible())
     {

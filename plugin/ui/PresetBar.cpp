@@ -95,35 +95,35 @@ PresetBar::PresetBar(DubcyclingProcessor& proc, BankStore& store) : proc_(proc),
     addAndMakeVisible(bankCaption_);
     addAndMakeVisible(presetCaption_);
 
-    bankField_.setTooltip("Bank w" + utf8("\xc3\xa4") + "hlen (l" + utf8("\xc3\xa4") + "dt nichts)");
+    bankField_.setTooltip("Choose bank (loads nothing)");
     bankField_.onClick = [this] { openBankMenu(); };
     presetField_.onClick = [this] { openPresetMenu(); };
     addAndMakeVisible(bankField_);
     addAndMakeVisible(presetField_);
 
     save_.setButtonText("SAVE");
-    save_.setTooltip("Aktives Preset " + utf8("\xc3\xbc") + "berschreiben (ohne aktives Preset: Name eingeben)");
+    save_.setTooltip("Overwrite the active preset (without an active preset: enter a name)");
     save_.setColour(juce::TextButton::buttonColourId, kAccent);
     save_.setColour(juce::TextButton::textColourOffId, kWindow);
     save_.onClick = [this] { requestSave(); };
     saveAs_.setButtonText("SAVE AS");
-    saveAs_.setTooltip("Als neues Preset speichern");
+    saveAs_.setTooltip("Save as a new preset");
     saveAs_.onClick = [this] { requestSaveAs(); };
     more_.setButtonText(utf8("\xe2\x8b\xaf"));
-    more_.setTooltip("Banks: neu, exportieren, importieren, Ordner " + utf8("\xc3\xb6") + "ffnen");
+    more_.setTooltip("Banks: new, export, import, open folder");
     more_.onClick = [this] { openMoreMenu(); };
     addAndMakeVisible(save_);
     addAndMakeVisible(saveAs_);
     addAndMakeVisible(more_);
 
-    confirmText_.setText(utf8("Ungespeicherte \xc3\x84nderungen verwerfen?"), juce::dontSendNotification);
+    confirmText_.setText("Discard unsaved changes?", juce::dontSendNotification);
     confirmText_.setFont(mono(10.0f));
     confirmText_.setMinimumHorizontalScale(0.6f);
     confirmText_.setColour(juce::Label::textColourId, kWarn);
     confirmText_.setJustificationType(juce::Justification::centredLeft);
-    confirmLoad_.setButtonText("LADEN");
+    confirmLoad_.setButtonText("LOAD");
     confirmLoad_.onClick = [this] { confirmDiscard(true); };
-    confirmCancel_.setButtonText("ABBRECHEN");
+    confirmCancel_.setButtonText("CANCEL");
     confirmCancel_.onClick = [this] { confirmDiscard(false); };
     addChildComponent(confirmText_);
     addChildComponent(confirmLoad_);
@@ -137,14 +137,14 @@ PresetBar::PresetBar(DubcyclingProcessor& proc, BankStore& store) : proc_(proc),
         addChildComponent(*editor);
     }
     bankNameEditor_.setInputRestrictions(kMaxBankNameLength);
-    bankNameEditor_.setTextToShowWhenEmpty("Bank-Name", kDim);
+    bankNameEditor_.setTextToShowWhenEmpty("Bank name", kDim);
     promptMessage_.setFont(mono(10.0f));
     promptMessage_.setMinimumHorizontalScale(0.6f);
     promptMessage_.setJustificationType(juce::Justification::centredLeft);
     promptMessage_.setBorderSize(juce::BorderSize<int>(0));
     promptOk_.setButtonText("OK");
     promptOk_.onClick = [this] { confirmPrompt(); };
-    promptCancel_.setButtonText("ABBRECHEN");
+    promptCancel_.setButtonText("CANCEL");
     promptCancel_.onClick = [this] { cancel(); };
     addChildComponent(promptMessage_);
     addChildComponent(promptOk_);
@@ -269,7 +269,7 @@ void PresetBar::confirmDiscard(bool load)
     // The answer only covers the state the user was asked about.
     if (presetFingerprint(proc_.getPluginState()) != asked.fingerprint)
     {
-        refuse("Nicht geladen: der Zustand wurde inzwischen ge" + utf8("\xc3\xa4") + "ndert");
+        refuse("Not loaded: the state changed in the meantime");
         return;
     }
     const auto loaded = store_.loadPreset(asked.bank, asked.preset); // the bank may have changed meanwhile
@@ -296,11 +296,11 @@ juce::String PresetBar::slotProblem() const
     for (int i = 0; i < 2; ++i)
     {
         const auto& name = (i == 0 ? st.loop1 : st.loop2).fileName;
-        const auto loop = "Nicht gespeichert: Loop " + juce::String(i + 1);
+        const auto loop = "Not saved: Loop " + juce::String(i + 1);
         switch (proc_.getSlotStatus(i))
         {
-            case DubcyclingProcessor::SlotStatus::Missing: return loop + " fehlt (" + name + ")";
-            case DubcyclingProcessor::SlotStatus::Failed:  return loop + " ist nicht lesbar (" + name + ")";
+            case DubcyclingProcessor::SlotStatus::Missing: return loop + " missing (" + name + ")";
+            case DubcyclingProcessor::SlotStatus::Failed:  return loop + " unreadable (" + name + ")";
             case DubcyclingProcessor::SlotStatus::Empty:
             case DubcyclingProcessor::SlotStatus::Loading:
             case DubcyclingProcessor::SlotStatus::Loaded:  break;
@@ -368,7 +368,7 @@ void PresetBar::openPrompt(Prompt prompt)
     nameEditor_.clear();
     const bool forBank = prompt == Prompt::NewBank;
     nameEditor_.setInputRestrictions(forBank ? kMaxBankNameLength : kMaxPresetNameLength);
-    nameEditor_.setTextToShowWhenEmpty(forBank ? "Neue Bank" : "Preset-Name", kDim);
+    nameEditor_.setTextToShowWhenEmpty(forBank ? "New bank" : "Preset name", kDim);
     updateView();
     auto& first = prompt == Prompt::PresetAndBank ? bankNameEditor_ : nameEditor_;
     if (first.isShowing())
@@ -466,7 +466,7 @@ void PresetBar::exportBankTo(const juce::File& zip)
 {
     if (selectedBank_.isEmpty())
     {
-        refuse(utf8("Keine Bank gew\xc3\xa4hlt"));
+        refuse("No bank selected");
         return;
     }
     if (const auto r = exportBank(store_, selectedBank_, zip); !r.ok())
@@ -474,7 +474,7 @@ void PresetBar::exportBankTo(const juce::File& zip)
         refuse(r.message);
         return;
     }
-    setHint("Exportiert: " + zip.getFileName());
+    setHint("Exported: " + zip.getFileName());
     updateView();
 }
 
@@ -487,7 +487,7 @@ void PresetBar::importBankFrom(const juce::File& zip)
         return;
     }
     selectBank(imported);
-    setHint("Importiert: " + imported);
+    setHint("Imported: " + imported);
     updateView();
 }
 
@@ -514,7 +514,7 @@ juce::PopupMenu PresetBar::bankMenu() const
 {
     juce::PopupMenu menu;
     if (banks_.isEmpty())
-        menu.addItem(1, "Keine Bank", false);
+        menu.addItem(1, "No bank", false);
     for (int i = 0; i < banks_.size(); ++i)
         menu.addItem(i + 1, banks_[i], true, banks_[i] == selectedBank_);
     return menu;
@@ -524,7 +524,7 @@ juce::PopupMenu PresetBar::presetMenu() const
 {
     juce::PopupMenu menu;
     if (presets_.isEmpty())
-        menu.addItem(1, "Keine Presets", false);
+        menu.addItem(1, "No presets", false);
     const auto active = activePresetName();
     for (int i = 0; i < presets_.size(); ++i)
         menu.addItem(i + 1, presets_[i], true, active.isNotEmpty() && presets_[i].equalsIgnoreCase(active));
@@ -534,10 +534,10 @@ juce::PopupMenu PresetBar::presetMenu() const
 juce::PopupMenu PresetBar::moreMenu() const
 {
     juce::PopupMenu menu;
-    menu.addItem(1, utf8("Neue Bank\xe2\x80\xa6"));
-    menu.addItem(2, utf8("Bank exportieren\xe2\x80\xa6"), selectedBank_.isNotEmpty());
-    menu.addItem(3, utf8("Bank importieren\xe2\x80\xa6"));
-    menu.addItem(4, utf8("Preset-Ordner \xc3\xb6" "ffnen"));
+    menu.addItem(1, utf8("New bank\xe2\x80\xa6"));
+    menu.addItem(2, utf8("Export bank\xe2\x80\xa6"), selectedBank_.isNotEmpty());
+    menu.addItem(3, utf8("Import bank\xe2\x80\xa6"));
+    menu.addItem(4, "Open presets folder");
     return menu;
 }
 
@@ -591,7 +591,7 @@ void PresetBar::chooseExportFile()
         return;
     const auto suggested = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
                                .getChildFile(selectedBank_ + ".zip");
-    chooser_ = std::make_unique<juce::FileChooser>("Bank exportieren", suggested, "*.zip");
+    chooser_ = std::make_unique<juce::FileChooser>("Export bank", suggested, "*.zip");
     juce::Component::SafePointer<PresetBar> safe(this);
     chooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
                               | juce::FileBrowserComponent::warnAboutOverwriting,
@@ -604,7 +604,7 @@ void PresetBar::chooseExportFile()
 
 void PresetBar::chooseImportFile()
 {
-    chooser_ = std::make_unique<juce::FileChooser>("Bank importieren", juce::File(), "*.zip");
+    chooser_ = std::make_unique<juce::FileChooser>("Import bank", juce::File(), "*.zip");
     juce::Component::SafePointer<PresetBar> safe(this);
     chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                           [safe](const juce::FileChooser& fc) {
@@ -618,12 +618,12 @@ void PresetBar::openPresetFolder()
 {
     const auto root = store_.root();
     if (!root.createDirectory().wasOk() || !root.startAsProcess())
-        refuse(utf8("Der Preset-Ordner konnte nicht ge\xc3\xb6" "ffnet werden."));
+        refuse("The preset folder could not be opened.");
 }
 
 void PresetBar::updateView()
 {
-    bankField_.setDisplay(selectedBank_.isEmpty() ? juce::String("Keine Bank") : selectedBank_,
+    bankField_.setDisplay(selectedBank_.isEmpty() ? juce::String("No bank") : selectedBank_,
                           selectedBank_.isEmpty() ? kDim : kAmber);
 
     const bool showMessage = messageUntil_ != 0 && juce::Time::getMillisecondCounter() < messageUntil_;
@@ -633,8 +633,8 @@ void PresetBar::updateView()
     if (showMessage)
         presetField_.setDisplay(message_, messageColour_);
     else
-        presetField_.setDisplay(active.isEmpty() ? juce::String("Kein Preset") : active, active.isEmpty() ? kDim : kAmber);
-    presetField_.setTooltip(showMessage ? message_ : juce::String("Preset laden"));
+        presetField_.setDisplay(active.isEmpty() ? juce::String("No preset") : active, active.isEmpty() ? kDim : kAmber);
+    presetField_.setTooltip(showMessage ? message_ : juce::String("Load preset"));
 
     const bool normal = mode_ == Mode::Normal;
     const bool confirm = mode_ == Mode::ConfirmDiscard;
