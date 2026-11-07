@@ -726,3 +726,185 @@ TEST_CASE("Processor: the mode is saved with the project, not with presets", "[p
     bank.presets.push_back(Preset { "p", PluginState {} });
     CHECK_FALSE(bankToJson(bank).containsIgnoreCase("trigger"));
 }
+
+// ---- MIDI trigger: no click at a stop ------------------------------------------------------------
+
+namespace {
+
+// A loop that is periodic over its length (a 50 Hz cosine at 8 kHz, whole cycles): no jump in the
+// signal at its own wrap, and at the crest on every bar line, so a stop there would cut at full level.
+juce::File cosWav(const juce::File& dir, const juce::String& name, int frames = 16000)
+{
+    const auto file = dir.getChildFile(name);
+    juce::WavAudioFormat format;
+    std::unique_ptr<juce::OutputStream> out = std::make_unique<juce::FileOutputStream>(file);
+    auto writer = format.createWriterFor(out, juce::AudioFormatWriterOptions {}
+                                                  .withSampleRate(8000)
+                                                  .withNumChannels(2)
+                                                  .withBitsPerSample(24));
+    REQUIRE(writer != nullptr);
+    juce::AudioBuffer<float> buf(2, frames);
+    for (int i = 0; i < frames; ++i)
+        for (int c = 0; c < 2; ++c)
+            buf.setSample(c, i, 0.5f * std::cos(juce::MathConstants<float>::twoPi * 50.0f
+                                                * static_cast<float>(i) / 8000.0f));
+    REQUIRE(writer->writeFromAudioSampleBuffer(buf, 0, frames));
+    return file;
+}
+
+// Largest sample-to-sample jump in x[from, end).
+float maxStep(const std::vector<float>& x, size_t from)
+{
+    float m = 0.0f;
+    for (size_t i = std::max<size_t>(from, 1); i < x.size(); ++i)
+        m = std::max(m, std::abs(x[i] - x[i - 1]));
+    return m;
+}
+
+float peakOf(const std::vector<float>& x, size_t from, size_t to)
+{
+    float p = 0.0f;
+    for (size_t i = from; i < std::min(to, x.size()); ++i)
+        p = std::max(p, std::abs(x[i]));
+    return p;
+}
+
+// MIDI mode, 44.1 kHz, 512-frame blocks, a playhead that runs continuously (or reports stopped).
+struct StopFixture : ProcFixture
+{
+    static constexpr int kBlock = 512;
+    static constexpr double kRate = 44100.0;
+    FixedPlayHead head;
+    bool running = false;
+    double ppq = 0.0;
+    std::vector<float> out; // left channel of every block so far
+
+    explicit StopFixture(bool withFx)
+    {
+        // Loop 1 is 2 bars long: the stop on the bar line at ppq 4 is not at Loop 1's own wrap.
+        proc.replaceLoop(0, cosWav(dir, "l1.wav", 32000), 2);
+        if (withFx)
+            proc.replaceLoop(1, cosWav(dir, "l2.wav"), 1);
+        proc.waitForLoads();
+        REQUIRE(proc.getSlotStatus(0) == Status::Loaded);
+        if (withFx)
+        {
+            REQUIRE(proc.getSlotStatus(1) == Status::Loaded);
+            auto s = proc.getPluginState();
+            s.rules = { RuleEntry { 0, { RuleTarget { 0, 1.0f } } } };
+            s.fx.setSwitch(0, FxInsert::Reverb, true);
+            s.fx.params.set(FxParam::ReverbMix, 1.0);
+            proc.applyEdit(s);
+        }
+        proc.prepareToPlay(kRate, kBlock);
+        proc.setTriggerMode(TriggerMode::Midi);
+        proc.setPlayHead(&head);
+    }
+    ~StopFixture() { proc.setPlayHead(nullptr); }
+
+    void block(juce::MidiBuffer& midi)
+    {
+        juce::AudioPlayHead::PositionInfo info;
+        info.setBpm(120.0);
+        info.setIsPlaying(running);
+        info.setPpqPosition(ppq);
+        info.setTimeSignature(juce::AudioPlayHead::TimeSignature { 4, 4 });
+        head.pos = info;
+        juce::AudioBuffer<float> buf(2, kBlock);
+        buf.clear();
+        proc.processBlock(buf, midi);
+        out.insert(out.end(), buf.getReadPointer(0), buf.getReadPointer(0) + kBlock);
+        if (running)
+            ppq += kBlock * 120.0 / (60.0 * kRate);
+    }
+    void block()
+    {
+        juce::MidiBuffer none;
+        block(none);
+    }
+    static juce::MidiBuffer note(bool on, int frame)
+    {
+        juce::MidiBuffer m;
+        m.addEvent(on ? juce::MidiMessage::noteOn(1, 60, 1.0f) : juce::MidiMessage::noteOff(1, 60), frame);
+        return m;
+    }
+};
+
+constexpr float kMaxStep = 0.01f; // a 50 Hz cosine at 0.5 moves at most 0.0036 per sample
+
+} // namespace
+
+TEST_CASE("Processor: a stopped-host stop fades out instead of cutting", "[processor][midi]")
+{
+    StopFixture f(false);
+    auto on = StopFixture::note(true, 0);
+    f.block(on);
+    for (int b = 0; b < 3; ++b)
+        f.block();
+    auto off = StopFixture::note(false, 300);
+    f.block(off);
+    const size_t stop = 4 * StopFixture::kBlock + 300;
+    for (int b = 0; b < 3; ++b)
+        f.block();
+    REQUIRE(peakOf(f.out, stop - 900, stop) > 0.1f); // a hard cut here would be a click
+    CHECK(maxStep(f.out, StopFixture::kBlock) < kMaxStep);
+    CHECK(peakOf(f.out, stop + 300, f.out.size()) == 0.0f); // silent after the ~5 ms fade
+}
+
+TEST_CASE("Processor: a stop on a running host's bar line fades out instead of cutting", "[processor][midi]")
+{
+    StopFixture f(false);
+    f.running = true;
+    auto on = StopFixture::note(true, 0);
+    f.block(on); // the bar line at ppq 0 is frame 0: starts at once
+    for (int b = 0; b < 9; ++b)
+        f.block();
+    auto off = StopFixture::note(false, 0);
+    f.block(off); // stops at ppq 4 = frame 88200
+    while (f.out.size() < 88200 + 4 * StopFixture::kBlock)
+        f.block();
+    REQUIRE(peakOf(f.out, 88200 - 900, 88200) > 0.1f);
+    CHECK(maxStep(f.out, StopFixture::kBlock) < kMaxStep);
+    CHECK(peakOf(f.out, 88200 + 300, f.out.size()) == 0.0f);
+}
+
+TEST_CASE("Processor: effect tails ring out after a MIDI stop, without a click", "[processor][midi][fx]")
+{
+    StopFixture f(true);
+    auto on = StopFixture::note(true, 0);
+    f.block(on);
+    for (int b = 0; b < 9; ++b)
+        f.block();
+    auto off = StopFixture::note(false, 300);
+    f.block(off);
+    const size_t stop = 10 * StopFixture::kBlock + 300;
+    for (int b = 0; b < 10; ++b)
+        f.block();
+    REQUIRE(peakOf(f.out, stop - 900, stop) > 0.05f);
+    CHECK(maxStep(f.out, 2 * StopFixture::kBlock) < kMaxStep);
+    CHECK(peakOf(f.out, stop + 600, f.out.size()) > 1e-4f); // the reverb still rings
+}
+
+// ---- MIDI trigger: host bypass ------------------------------------------------------------------
+
+TEST_CASE("Processor: a note-off while bypassed is not lost", "[processor][midi]")
+{
+    MidiFixture f;
+    f.proc.setTriggerMode(TriggerMode::Midi);
+    juce::MidiBuffer on;
+    on.addEvent(juce::MidiMessage::noteOn(1, 60, 1.0f), 0);
+    f.run(on);
+    REQUIRE(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f);
+
+    juce::MidiBuffer off;
+    off.addEvent(juce::MidiMessage::noteOff(1, 60), 10);
+    juce::AudioBuffer<float> buf(2, MidiFixture::kBlock);
+    for (int c = 0; c < 2; ++c)
+        for (int i = 0; i < MidiFixture::kBlock; ++i)
+            buf.setSample(c, i, 0.25f); // garbage in: bypass must still output silence
+    f.proc.processBlockBypassed(buf, off);
+    CHECK(peak(buf, 0, MidiFixture::kBlock) == 0.0f);
+
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f); // the note is released
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
+}

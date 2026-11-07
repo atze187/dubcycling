@@ -52,8 +52,9 @@ Status: edit view, audio engine and presets implemented. The plugin has stereo o
 
 The toggle in the top bar switches between Autoplay (the default: the loops follow the host transport) and MIDI.
 In MIDI mode the plugin is silent until a note is held: any note on any channel gates both loops. Holding a note
-starts both loops at the next host bar, and releasing the last held note stops them at the next bar. With a
-stopped host the loops start at once, at the last known host tempo. The mode is saved per plugin instance with the
+starts both loops at the next host bar, and releasing the last held note stops them at the next bar with a short
+(~5 ms) fade-out; effect tails ring out. With a stopped host the loops start at once, at the last known host tempo.
+If the host loops a range without a bar line, a pending start or stop happens at the loop wrap. The mode is saved per plugin instance with the
 project, not in presets, so loading a preset never changes it.
 
 ### Known limitations

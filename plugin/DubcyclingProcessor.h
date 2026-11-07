@@ -21,6 +21,9 @@ public:
     void releaseResources() override;
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    // Host bypass: silence, but the MIDI trigger still sees every note (a note-off while bypassed
+    // must not leave the plugin playing afterwards) and its clock runs on.
+    void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -108,6 +111,8 @@ public:
 
 private:
     void timerCallback() override;
+    // Audio thread: reads the transport and the block's gate events and plans the trigger segments.
+    int planTrigger(juce::MidiBuffer& midi, int n, std::array<TriggerSegment, MidiTrigger::kMaxSegments>& segments);
     void startLoad(int slot, const juce::File& file);
     void publish();
     LoopRef& refOf(int slot) { return slot == 0 ? state_.loop1 : state_.loop2; }

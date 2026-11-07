@@ -57,7 +57,20 @@ This turns the plugin into something that is performed rather than only arranged
   clock and is **not** re-aligned to the host grid (it is decoupled from host position after the start).
   A later release then stops at the next host bar line, which is only a stop time, not a loop phase.
 - **Note on a bar line:** a note-on at or before the bar line's sample within a block starts at that bar;
-  after it, at the next bar. Same rule for note-off and stop.
+  after it, at the next bar. Same rule for note-off and stop. A bar line between two samples belongs to the
+  later sample, also when that is the first sample of the next block.
+- **Host jumps while armed** (fix wave): a jump backwards (a host loop wrap or a relocation, more than 0.01
+  beats behind the extrapolated position) fires a pending start, stop or mode switch at the first sample of
+  that block, so a loop range without a bar line cannot keep it pending. A jump forwards waits for the next
+  bar line after the new position.
+- **Stop fade** (fix wave): after the stop sample the trigger keeps the clock running for `kCancelFadeMs`
+  with `TransportInfo::release` set; the engine fades Loop 1 out linearly over exactly that time, the voice
+  takes its cancel fade and no new region entries are drawn. The fade may continue into the next block. A
+  start during the fade waits until it has ended (at most ~5 ms) and is a fresh start. Autoplay never sets
+  `release` and is unchanged.
+- **Host bypass and zero-length blocks** (fix wave): `processBlockBypassed` outputs silence but still feeds
+  the block's notes to the trigger. In a zero-length block note-offs and all-off still release held notes
+  (note-ons there are ignored).
 - **Fresh start every gate-on:** Loop 1 restarts from its beginning and the Loop-2 `Sequencer` is reset, so
   the first Loop-1 region entry draws anew. Nothing is carried over from the previous gate.
 - **Gate-off** is modelled like a transport stop: voices end with the existing cancel fade, effect tails

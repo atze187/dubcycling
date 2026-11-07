@@ -8,22 +8,26 @@ namespace dc {
 
 namespace {
 constexpr int kNever = std::numeric_limits<int>::max();
+// A host position this far behind the extrapolated one is a jump back (as Engine's jump tolerance).
+constexpr double kJumpBackBeats = 0.01;
 
 bool usableBpm(double bpm) { return std::isfinite(bpm) && bpm > 0.0; }
 
-enum class Out { Pass, Silent, Play };
+enum class Out { Pass, Silent, Play, Release };
 
 struct Piece
 {
     int frame = 0;
     Out type = Out::Silent;
-    double base = 0.0; // virtual ppq at the piece start (Play)
+    double base = 0.0; // ppq at the piece start (Play, Release)
 };
 } // namespace
 
 void MidiTrigger::prepare(double sampleRate)
 {
     sampleRate_ = (std::isfinite(sampleRate) && sampleRate > 0.0) ? sampleRate : 48000.0;
+    // Same length as Engine's voice cancel fade (Engine::prepare), so both end together.
+    releaseFrames_ = std::max(1, static_cast<int>(std::lround(kCancelFadeMs * 0.001 * sampleRate_)));
     reset();
 }
 
@@ -34,6 +38,8 @@ void MidiTrigger::reset()
     heldCount_ = 0;
     state_ = State::Silent;
     virtualPpq_ = 0.0;
+    releaseLeft_ = 0;
+    hasExpectedHost_ = false;
     lastBpm_ = 0.0;
     hasLastBpm_ = false;
     if (hasPendingMode_)
@@ -91,10 +97,16 @@ void MidiTrigger::applyEvent(const GateEvent& e)
 int MidiTrigger::plan(const TransportInfo& host, const GateEvent* events, int numEvents, int n,
                       std::array<TriggerSegment, kMaxSegments>& out)
 {
-    if (n <= 0)
-        return 0;
     if (events == nullptr)
         numEvents = 0;
+    if (n <= 0)
+    {
+        // No frame to put a change on, but a released note must not get lost (it would stick).
+        for (int k = 0; k < numEvents; ++k)
+            if (events[k].kind != GateEvent::Kind::NoteOn)
+                applyEvent(events[k]);
+        return 0;
+    }
 
     // Tempo: host if usable, else the last known one, else the default.
     if (usableBpm(host.bpm))
@@ -107,7 +119,18 @@ int MidiTrigger::plan(const TransportInfo& host, const GateEvent* events, int nu
     const double virtPerFrame = blockBpm / (60.0 * sampleRate_);
     const double hostPerFrame = running ? host.bpm / (60.0 * sampleRate_) : 0.0;
     const double bpb = beatsPerBar(host.tsNum, host.tsDen);
-    const double barPpq0 = running ? std::ceil(host.ppq / bpb - 1e-9) * bpb : 0.0;
+
+    // The host jumped back since the last block (a loop wrap or a relocation): a pending change fires
+    // at frame 0 instead of waiting for a bar line that a host loop may never reach.
+    const bool jumpedBack = running && hasExpectedHost_ && host.ppq < expectedHostPpq_ - kJumpBackBeats;
+    hasExpectedHost_ = running;
+    expectedHostPpq_ = running ? host.ppq + n * hostPerFrame : 0.0;
+
+    // First bar line that has not fired yet. A bar line between two frames fires on the later one:
+    // one less than a frame before the block start fell after the previous block's last frame, so it
+    // fires at frame 0 here; one exactly a frame before fired on that last frame already.
+    const double barPpq0 =
+        running ? (std::floor((host.ppq - (1.0 - 1e-9) * hostPerFrame) / bpb) + 1.0) * bpb : 0.0;
 
     // First host bar line at a frame >= f; kNever if it lies beyond this block.
     auto barAtOrAfter = [&](int f) -> int {
@@ -130,20 +153,27 @@ int MidiTrigger::plan(const TransportInfo& host, const GateEvent* events, int nu
     TriggerMode curMode = mode_;
     int modeFrame = kNever;
     if (hasPendingMode_)
-        modeFrame = running ? barAtOrAfter(0) : 0;
+        modeFrame = (running && !jumpedBack) ? barAtOrAfter(0) : 0;
 
     std::array<Piece, kMaxSegments> pieces{};
     int count = 1;
+    int relEnd = kNever;       // frame at which a running fade-out ends (may lie beyond this block)
+    bool piece0Carried = true; // pieces[0] continues what sounded at the end of the last block
     if (curMode == TriggerMode::Autoplay)
         pieces[0] = {0, Out::Pass, 0.0};
     else if (state_ == State::Playing || state_ == State::ArmedStop)
         pieces[0] = {0, Out::Play, virtualPpq_};
+    else if (releaseLeft_ > 0)
+    {
+        pieces[0] = {0, Out::Release, virtualPpq_};
+        relEnd = releaseLeft_;
+    }
     else
         pieces[0] = {0, Out::Silent, 0.0};
 
     int armFrame = kNever;
     if (curMode == TriggerMode::Midi && (state_ == State::ArmedStart || state_ == State::ArmedStop))
-        armFrame = armFrameFor(0);
+        armFrame = jumpedBack ? 0 : armFrameFor(0);
 
     // Bring the state in line with the gate (after an event, a mode switch or a deferred block).
     auto reconcile = [&](int f) {
@@ -177,12 +207,34 @@ int MidiTrigger::plan(const TransportInfo& host, const GateEvent* events, int nu
         Piece& lastPiece = pieces[static_cast<size_t>(count - 1)];
         if (f <= lastPiece.frame)
         {
+            if (count == 1)
+                piece0Carried = false;
             lastPiece = {lastPiece.frame, type, base};
             return true;
         }
         if (count >= kMaxSegments)
             return false;
         pieces[static_cast<size_t>(count++)] = {f, type, base};
+        return true;
+    };
+
+    // Ends what sounds at frame f: a fade-out on the clock that played (silence follows at relEnd).
+    // A piece that starts at f itself never sounded and simply becomes silent.
+    auto silenceAt = [&](int f) -> bool {
+        const Piece& lp = pieces[static_cast<size_t>(count - 1)];
+        const bool sounded = lp.frame < f || (count == 1 && piece0Carried);
+        if (sounded && lp.type == Out::Release)
+            return true; // already fading out
+        double base = 0.0;
+        if (sounded && lp.type == Out::Play)
+            base = lp.base + (f - lp.frame) * virtPerFrame;
+        else if (sounded && lp.type == Out::Pass && running)
+            base = host.ppq + f * hostPerFrame;
+        else
+            return emit(f, Out::Silent, 0.0);
+        if (!emit(f, Out::Release, base))
+            return false;
+        relEnd = f + releaseFrames_;
         return true;
     };
 
@@ -193,7 +245,10 @@ int MidiTrigger::plan(const TransportInfo& host, const GateEvent* events, int nu
     bool full = false;
     for (;;)
     {
-        const int due = std::min(armFrame, modeFrame);
+        // A start waits until a fade-out has ended.
+        const int armDue =
+            (relEnd != kNever && state_ == State::ArmedStart) ? std::max(armFrame, relEnd) : armFrame;
+        const int due = std::min({armDue, modeFrame, relEnd});
         const bool haveEvent = i < numEvents;
         if (!haveEvent && due >= n)
             break;
@@ -213,33 +268,47 @@ int MidiTrigger::plan(const TransportInfo& host, const GateEvent* events, int nu
         }
 
         lastF = due;
-        if (modeFrame <= armFrame)
+        bool ok = true;
+        if (relEnd <= std::min(armDue, modeFrame))
+        {
+            // The fade-out has ended.
+            ok = emit(due, Out::Silent, 0.0);
+            if (ok)
+                relEnd = kNever;
+        }
+        else if (modeFrame <= armDue)
         {
             const Out o = (pendingMode_ == TriggerMode::Autoplay) ? Out::Pass
                           : (heldCount_ > 0)                       ? Out::Play
                                                                    : Out::Silent;
-            if (!emit(due, o, 0.0))
+            if (o == Out::Silent)
+                ok = silenceAt(due);
+            else if ((ok = emit(due, o, 0.0)))
+                relEnd = kNever;
+            if (ok)
             {
-                full = true;
-                break;
+                curMode = pendingMode_;
+                mode_ = curMode;
+                hasPendingMode_ = false;
+                modeFrame = kNever;
+                armFrame = kNever;
+                state_ = (curMode == TriggerMode::Midi && heldCount_ > 0) ? State::Playing : State::Silent;
             }
-            curMode = pendingMode_;
-            mode_ = curMode;
-            hasPendingMode_ = false;
-            modeFrame = kNever;
-            armFrame = kNever;
-            state_ = (curMode == TriggerMode::Midi && heldCount_ > 0) ? State::Playing : State::Silent;
         }
         else
         {
             const bool start = (state_ == State::ArmedStart);
-            if (!emit(due, start ? Out::Play : Out::Silent, 0.0))
+            ok = start ? emit(due, Out::Play, 0.0) : silenceAt(due);
+            if (ok)
             {
-                full = true;
-                break;
+                state_ = start ? State::Playing : State::Silent;
+                armFrame = kNever;
             }
-            state_ = start ? State::Playing : State::Silent;
-            armFrame = kNever;
+        }
+        if (!ok)
+        {
+            full = true;
+            break;
         }
     }
 
@@ -260,21 +329,26 @@ int MidiTrigger::plan(const TransportInfo& host, const GateEvent* events, int nu
         if (pc.type == Out::Pass)
         {
             s.t = host;
+            s.t.release = false;
             if (pc.frame > 0 && host.playing && std::isfinite(host.ppq) && usableBpm(host.bpm))
                 s.t.ppq = host.ppq + pc.frame * host.bpm / (60.0 * sampleRate_);
         }
         else
         {
-            s.t.playing = (pc.type == Out::Play);
-            s.t.ppq = (pc.type == Out::Play) ? pc.base : 0.0;
+            const bool sounds = (pc.type == Out::Play || pc.type == Out::Release);
+            s.t.playing = sounds;
+            s.t.ppq = sounds ? pc.base : 0.0;
             s.t.bpm = blockBpm;
             s.t.tsNum = host.tsNum;
             s.t.tsDen = host.tsDen;
+            s.t.release = (pc.type == Out::Release);
         }
     }
 
     const Piece& last = pieces[static_cast<size_t>(count - 1)];
-    virtualPpq_ = (last.type == Out::Play) ? last.base + (n - last.frame) * virtPerFrame : 0.0;
+    const bool lastSounds = (last.type == Out::Play || last.type == Out::Release);
+    virtualPpq_ = lastSounds ? last.base + (n - last.frame) * virtPerFrame : 0.0;
+    releaseLeft_ = (last.type == Out::Release && relEnd != kNever && relEnd > n) ? relEnd - n : 0;
     planned_ = true;
     return count;
 }

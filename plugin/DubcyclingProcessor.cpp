@@ -278,13 +278,8 @@ void DubcyclingProcessor::timerCallback() {
         publish();
     engine_.releaseRetired();
 }
-void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
-    juce::ScopedNoDenormals noDenormals;
-    const int n = buffer.getNumSamples();
-    if (buffer.getNumChannels() < 2) {
-        buffer.clear();
-        return;
-    }
+int DubcyclingProcessor::planTrigger(juce::MidiBuffer& midi, int n,
+                                     std::array<TriggerSegment, MidiTrigger::kMaxSegments>& segments) {
     auto* head = getPlayHead();
     const TransportInfo t = toTransportInfo(head != nullptr ? head->getPosition()
                                                             : juce::Optional<juce::AudioPlayHead::PositionInfo> {});
@@ -302,11 +297,12 @@ void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     int numEvents = 0;
     {
         for (const auto meta : midi) {
-            if (numEvents >= kMaxGateEvents || n <= 0) // n == 0: no frame to put an event on (clamp would be UB)
+            if (numEvents >= kMaxGateEvents)
                 break;
             const auto msg = meta.getMessage();
             GateEvent e;
-            e.frame = std::clamp(meta.samplePosition, 0, n - 1);
+            // n == 0: no frame to put an event on (the trigger then only takes its note-offs)
+            e.frame = n > 0 ? std::clamp(meta.samplePosition, 0, n - 1) : 0;
             e.channel = std::clamp(msg.getChannel() - 1, 0, 15);
             if (msg.isNoteOn(false)) {
                 e.kind = GateEvent::Kind::NoteOn;
@@ -323,8 +319,24 @@ void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         }
     }
 
+    return trigger_.plan(t, events.data(), numEvents, n, segments);
+}
+
+void DubcyclingProcessor::processBlockBypassed(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     std::array<TriggerSegment, MidiTrigger::kMaxSegments> segments;
-    const int numSegments = trigger_.plan(t, events.data(), numEvents, n, segments);
+    planTrigger(midi, buffer.getNumSamples(), segments); // held notes, arms and clock stay exact
+    buffer.clear();
+}
+
+void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
+    juce::ScopedNoDenormals noDenormals;
+    const int n = buffer.getNumSamples();
+    if (buffer.getNumChannels() < 2) {
+        buffer.clear();
+        return;
+    }
+    std::array<TriggerSegment, MidiTrigger::kMaxSegments> segments;
+    const int numSegments = planTrigger(midi, n, segments);
     float* l = buffer.getWritePointer(0);
     float* r = buffer.getWritePointer(1);
     for (int i = 0; i < numSegments; ++i) {
