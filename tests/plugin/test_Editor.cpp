@@ -1045,6 +1045,44 @@ TEST_CASE("Editor: strip, panels and lanes fit in the window without overlap", "
     }
 }
 
+TEST_CASE("Editor: the mode button reflects and sets the trigger mode", "[editor][midi]")
+{
+    EditorFixture f;
+    auto& btn = f.editor->modeButton();
+    CHECK(btn.getButtonText() == "Autoplay");
+    CHECK(btn.getTooltip().isNotEmpty());
+    CHECK(f.proc.triggerMode() == TriggerMode::Autoplay);
+
+    btn.onClick();
+    CHECK(f.proc.triggerMode() == TriggerMode::Midi);
+    CHECK(btn.getButtonText() == "MIDI");
+    btn.onClick();
+    CHECK(f.proc.triggerMode() == TriggerMode::Autoplay);
+    CHECK(btn.getButtonText() == "Autoplay");
+
+    f.proc.setTriggerMode(TriggerMode::Midi); // e.g. a project was loaded
+    f.editor->refresh();
+    CHECK(btn.getButtonText() == "MIDI");
+}
+
+TEST_CASE("Editor: top bar has no overlaps with the mode button at 800x540 and 900x600", "[editor][midi][layout]")
+{
+    EditorFixture f;
+    for (const auto size : { juce::Point<int> { 800, 540 }, juce::Point<int> { 900, 600 } })
+    {
+        f.editor->setSize(size.x, size.y);
+        CAPTURE(size.x, size.y);
+        std::vector<std::pair<const char*, juce::Rectangle<int>>> rects {
+            { "mode", f.editor->modeButton().getBounds() },
+            { "presetBar", f.editor->presetBar().getBounds() },
+            { "lane0", f.editor->lane(0).getBounds() } };
+        if (f.editor->cycleVisible())
+            rects.push_back({ "cycle", f.editor->cycleBounds() });
+        requireDisjoint(rects, f.editor->getLocalBounds());
+        CHECK(f.editor->modeButton().getWidth() >= 60);
+    }
+}
+
 TEST_CASE("Editor: a mix change reaches the processor state and the published model", "[editor][mix]")
 {
     EditorFixture f;

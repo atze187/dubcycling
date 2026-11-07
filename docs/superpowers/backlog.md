@@ -38,6 +38,9 @@ Items are worded as the user phrased them. Assessments below them are Claude's.
    - Known limits: Older plugin versions reject version 3 banks; a project with mix that an older version saves loses the mix values.
    - Open ideas: host automation of the mix, mix for the preview, wider mix knob at the smallest window size.
 
+9. DONE (2026-11-06; Autoplay/MIDI toggle in the top bar, in MIDI mode any held note plays both loops, start and stop at the next host bar, a stopped host starts at once at the last tempo, mode saved per instance and not in presets; draft: `docs/superpowers/specs/2026-11-06-midi-trigger-design.md`). "play the loops from MIDI notes"
+   - Open ideas: per-note region triggering, note-to-region mapping, MIDI learn.
+
 User note: The rest follows from the UI rework; it is "a hell of a lot of fun".
 
 1b. Playhead details for item 1
