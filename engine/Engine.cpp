@@ -354,8 +354,14 @@ void Engine::resetPlayback(bool keepLoop1)
     }
     // Without a voice Loop 1 returns to full level: ramped while Loop 1 plays on, at once when it
     // restarts anyway.
+    // A fade-out after a gate-off ends here; with Loop 1 playing on its level ramps back up.
+    releasing_ = false;
+    releaseLeft_ = 0;
     if (!keepLoop1)
+    {
         gain1_ = 1.0f;
+        releaseGain_ = 1.0f;
+    }
     if (current_ != nullptr && !keepLoop1)
         current_->reader1->reset();
     // The voice is gone: its switches close (tails ring out; the chain is not flushed here).
@@ -664,6 +670,25 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         return;
     }
 
+    // MIDI trigger fade-out after a gate-off (never set in Autoplay).
+    if (t.release && !releasing_)
+    {
+        releasing_ = true;
+        releaseLeft_ = fadeLen_;
+        requestStop(); // the voice takes its cancel fade; the effect tails ring out
+        pending_.valid = false;
+    }
+    else if (!t.release && releasing_)
+    {
+        // Playback after a complete fade-out is a fresh start, as after silence. A fade-out cut
+        // short (e.g. a mode switch) just lets Loop 1 come back up.
+        const bool faded = releaseGain_ == 0.0f && voice_.state == Voice::State::Idle
+                           && tail_.state == Voice::State::Idle;
+        if (faded)
+            resetPlayback();
+        releasing_ = false;
+    }
+
     const double bpb = beatsPerBar(t.tsNum, t.tsDen);
     const double beats1 = std::max(1, m->loop1.bars) * bpb;
     const double beats2 = std::max(1, m->loop2.bars) * bpb;
@@ -703,7 +728,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
     // An early draw is only good for continuous playback on the same model.
     if (entry || (pending_.valid && pending_.rt != current_))
         pending_.valid = false;
-    if (!entry)
+    if (!entry && !releasing_)
         planEarlyDraw(*m, t.ppq, t.bpm, beats1);
     // A host that loops without splitting the block at the loop end reports the wrap twice: once as
     // the extrapolated position crossing the cycle (an entry draw in the previous block) and once as
@@ -724,7 +749,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         lastPhase1 = ph;
         const int region = m->loop1.regions.regionAt(ph);
         Sequencer::Command c;
-        if (entry || region != lastRegion1_ || cycle != lastCycle1_)
+        if (!releasing_ && (entry || region != lastRegion1_ || cycle != lastCycle1_))
         {
             const bool jumpNow = jumped && i == 0;
             const long long frame = blockStart + i;
@@ -770,10 +795,19 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         // mix of the playing voice leaves it. Without the bus Loop 2 is added to l/r after this.
         const float target1 = voice_.state == Voice::State::Playing ? mixGains(voice_.mix).loop1 : 1.0f;
         gain1_ = rampTowards(gain1_, target1, mixStep_);
-        if (gain1_ != 1.0f)
+        if (releasing_)
         {
-            l[i] *= gain1_;
-            r[i] *= gain1_;
+            if (releaseLeft_ > 0)
+                --releaseLeft_;
+            releaseGain_ = static_cast<float>(releaseLeft_) / static_cast<float>(fadeLen_);
+        }
+        else if (releaseGain_ != 1.0f)
+            releaseGain_ = rampTowards(releaseGain_, 1.0f, 1.0f / static_cast<float>(fadeLen_));
+        const float g1 = gain1_ * releaseGain_; // releaseGain_ is 1 outside a release: g1 == gain1_
+        if (g1 != 1.0f)
+        {
+            l[i] *= g1;
+            r[i] *= g1;
         }
 
         if (adv2 <= 0.0)

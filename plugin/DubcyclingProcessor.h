@@ -5,6 +5,7 @@
 #include <vector>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "engine/Engine.h"
+#include "engine/MidiTrigger.h"
 #include "plugin/LoopLoader.h"
 #include "plugin/PluginState.h"
 #include "plugin/SlotTracker.h"
@@ -20,12 +21,15 @@ public:
     void releaseResources() override;
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    // Host bypass: silence, but the MIDI trigger still sees every note (a note-off while bypassed
+    // must not leave the plugin playing afterwards) and its clock runs on.
+    void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return "Dubcycling"; }
-    bool acceptsMidi() const override { return true; } // instrument: MIDI is accepted and ignored
+    bool acceptsMidi() const override { return true; } // notes gate the output in MIDI trigger mode; ignored in Autoplay
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
@@ -79,6 +83,10 @@ public:
     // searched again (both loops moved together are found once one of them is relinked).
     void setSessionDir(const juce::File& dir) { sessionDir_ = dir; }
     // Last tempo the host reported in processBlock; 0 = none yet. Any thread.
+    // Trigger mode (see engine/MidiTrigger.h). Any thread; applied at the start of the next processBlock.
+    // Saved with the project (getStateInformation), NOT with presets or banks.
+    void setTriggerMode(TriggerMode m) { triggerMode_.store(m, std::memory_order_relaxed); }
+    TriggerMode triggerMode() const { return triggerMode_.load(std::memory_order_relaxed); }
     double hostBpm() const { return hostBpm_.load(std::memory_order_relaxed); }
     // Numerator of the last time signature the host reported in processBlock (1..64); 4 before. Any thread.
     int hostBeatsPerBar() const { return hostBeatsPerBar_.load(std::memory_order_relaxed); }
@@ -103,6 +111,8 @@ public:
 
 private:
     void timerCallback() override;
+    // Audio thread: reads the transport and the block's gate events and plans the trigger segments.
+    int planTrigger(juce::MidiBuffer& midi, int n, std::array<TriggerSegment, MidiTrigger::kMaxSegments>& segments);
     void startLoad(int slot, const juce::File& file);
     void publish();
     LoopRef& refOf(int slot) { return slot == 0 ? state_.loop1 : state_.loop2; }
@@ -125,6 +135,8 @@ private:
     LoopLoader loader_;
     std::atomic<double> hostBpm_ { 0.0 };
     std::atomic<int> hostBeatsPerBar_ { 4 };
+    std::atomic<TriggerMode> triggerMode_ { TriggerMode::Autoplay };
+    MidiTrigger trigger_; // audio thread only
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DubcyclingProcessor)
 };

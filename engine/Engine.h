@@ -27,6 +27,10 @@ struct TransportInfo
     double bpm = 0.0;
     int tsNum = 4;
     int tsDen = 4;
+    // MIDI trigger mode only (see MidiTrigger): the stretch right after a gate-off. Loop 1 and the
+    // Loop-2 voice fade out over kCancelFadeMs, no new region entries are drawn; effect tails ring
+    // out. Hosts never set it, so Autoplay is unaffected.
+    bool release = false;
 };
 
 struct LoopSlot
@@ -301,6 +305,12 @@ private:
     int fadeLen_ = 220;
     float mixStep_ = static_cast<float>(1.0 / (kMixRampMs * 0.001 * 44100.0)); // gain change per frame
     float gain1_ = 1.0f; // Loop-1 level from the mix of the playing voice (ramped)
+    // Fade-out after a MIDI gate-off (TransportInfo::release): Loop 1 goes to 0 over fadeLen_ frames
+    // (counted, so it ends exactly), the voice takes its cancel fade, no entries are drawn. Always 1
+    // outside a release, so Autoplay output is unchanged.
+    bool releasing_ = false;
+    int releaseLeft_ = 0;
+    float releaseGain_ = 1.0f;
     bool running_ = false; // false: next valid frame is a fresh start (entry draw)
     double expectedPpq_ = 0.0;
     double lastPpq_ = 0.0;
