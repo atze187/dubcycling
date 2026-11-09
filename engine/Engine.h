@@ -11,6 +11,7 @@
 #include "engine/FxSettings.h"
 #include "engine/GrainStretch.h"
 #include "engine/LoopReader.h"
+#include "engine/Pass.h"
 #include "engine/RegionMap.h"
 #include "engine/RuleSet.h"
 #include "engine/Sequencer.h"
@@ -46,6 +47,7 @@ struct Model
     LoopSlot loop1, loop2;
     RuleSet rules;
     FxSettings fx; // insert parameters and switches per Loop-2 region
+    std::array<Pass, kPassSlots> passes; // saved passes (empty = free slot); the engine only records
 };
 
 // Audio core: Loop 1 phase-locked to the host, Loop 2 as one region voice driven by the Sequencer.
@@ -76,6 +78,12 @@ struct Model
 // its audition) is scaled by mixGains(mix).loop1 of voice_ while it plays, else 1. Both levels ramp
 // over kMixRampMs. Auditions ignore the mix. A seamless swap re-reads the mix of the sounding voice
 // if its Loop-2 region and the Loop-1 region that started it kept their bounds.
+//
+// Passes: the Loop-2 commands of one Loop-1 cycle (entry starts and stops, Gate ends, the jump stop)
+// are recorded at their Loop-1 phase. A pass begins at a cycle start reached continuously, or by a
+// fresh start or jump that lands within kJumpToleranceBeats of it, and is published (lastPass) at
+// the next continuous cycle start. A stop, invalid transport, a jump, a MIDI release or a hard
+// restart abandons it; a seamless swap does not.
 class Engine
 {
 public:
@@ -149,6 +157,11 @@ public:
     // True while an insert of the chain is switched on or still rings out (as of the end of the last
     // processed block). Any thread.
     bool fxActive() const { return fxActive_.load(std::memory_order_relaxed); }
+
+    // The last finished pass: the Loop-2 commands (starts and stops at their Loop-1 phase) of one
+    // complete, uninterrupted Loop-1 cycle. id counts finished passes (1, 2, ...). False if none has
+    // finished yet. Any thread, but not the audio thread (out.events is assigned: allocates).
+    bool lastPass(Pass& out, std::uint32_t& id) const { return recorder_.read(out, id); }
 
 private:
     // A published model plus the Loop-1 reader bound to its data. Built off the audio thread
@@ -318,6 +331,7 @@ private:
     double lastLo1_ = 0.0, lastHi1_ = 0.0; // phase bounds of lastRegion1_ (= Gate trigger while a Gate runs)
     long long lastCycle1_ = 0;
     bool swapPending_ = false; // a seamless swap waits for adoptSwap (needs the block's time signature)
+    PassRecorder recorder_;    // the pass being played (written here only, read by lastPass)
 
     // Effects (audio thread). One slice is at most busL_.size() frames (process() splits larger
     // blocks); without prepare() the bus is empty and Loop 2 goes straight to the output, dry.

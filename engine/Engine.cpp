@@ -340,6 +340,7 @@ void Engine::resetPlayback(bool keepLoop1)
     pending_.valid = false;
     lastEntryFrame_ = -1;
     sequencer_.reset();
+    recorder_.abandon(); // stop, invalid transport, hard restart: the pass is not complete
     for (Voice* v : { &voice_, &tail_ })
     {
         v->state = Voice::State::Idle;
@@ -677,6 +678,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         releaseLeft_ = fadeLen_;
         requestStop(); // the voice takes its cancel fade; the effect tails ring out
         pending_.valid = false;
+        recorder_.abandon(); // the pass was cut off
     }
     else if (!t.release && releasing_)
     {
@@ -758,6 +760,20 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
             const bool sameEntryAgain = jumpNow && lastEntryFrame_ >= 0 && region == lastRegion1_
                                         && frame - lastEntryFrame_ <= duplicateWindow
                                         && ph >= regionLo && (ph - regionLo) * beats1 <= kJumpToleranceBeats;
+            // Pass boundaries. A continuous cycle change finishes the open pass; it, a fresh start or
+            // a jump begins a new one if it lands on the cycle start. Anything else (a jump, a fresh
+            // start mid-loop) leaves no pass open until the next wrap. The repeated report of a host
+            // wrap (sameEntryAgain) is no boundary: the pass begun at that wrap goes on.
+            if (!sameEntryAgain && (entry || cycle != lastCycle1_))
+            {
+                const bool atStart = ph * beats1 <= kJumpToleranceBeats;
+                if (!entry && atStart)
+                    recorder_.finish();
+                else
+                    recorder_.abandon();
+                if (atStart)
+                    recorder_.begin();
+            }
             entry = false;
             lastRegion1_ = region;
             std::tie(lastLo1_, lastHi1_) = m->loop1.regions.bounds(region);
@@ -772,15 +788,23 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
                 else
                     c = sequencer_.onRegion1(region, m->rules);
                 pending_.valid = false; // consumed, or for an entry that is not coming any more
+                // The open pass (if any) records every voice command at the phase it is issued.
                 if (c.type == Sequencer::Command::Type::Start)
+                {
                     requestStart(*m, c);
+                    recorder_.add(ph, false, c.region2, c.mode);
+                }
                 else if (c.type == Sequencer::Command::Type::Stop)
+                {
                     requestStop();
+                    recorder_.add(ph, true, -1, PlayMode::Gate);
+                }
                 else if (jumpNow)
                 {
                     // Spec: a transport jump ends Loop 2, also when the new region has no rule.
                     requestStop();
                     sequencer_.reset();
+                    recorder_.add(ph, true, -1, PlayMode::Gate);
                 }
             }
         }
@@ -789,6 +813,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         {
             requestStop();
             sequencer_.onVoiceEnded();
+            recorder_.add(ph, true, -1, PlayMode::Gate);
         }
 
         // Loop 1 (already in l/r; the bus and the Loop-1 audition are added later) at the level the

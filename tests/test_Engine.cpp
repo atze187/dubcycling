@@ -1916,3 +1916,203 @@ TEST_CASE("Engine mix: mix values at the ends and NaN stay finite", "[Engine][mi
     }
     CHECK(maxDev(centre.l, kInVoice, kVoiceEnd, 0.5f) < kTol);
 }
+
+// --- Pass recording -----------------------------------------------------------------------------
+
+namespace {
+// Loop 1 = 1 bar with regions [0, .5) and [.5, 1); Loop 2 = two regions. With random 0.9 Loop-1
+// region 0 draws Loop-2 region 0 as a Gate (weight 1, no silence) and region 1 draws silence.
+std::shared_ptr<dc::Model> passModel()
+{
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.5 });
+    m->loop2.data = regionData(kBar, { 0.2f, 0.6f });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+    m->rules.setTargets(1, { { 1, 0.5f, dc::PlayMode::Gate } }); // 0.9 lands in the silence
+    return m;
+}
+
+dc::Engine& passEngine(dc::Engine& e, std::shared_ptr<const dc::Model> m)
+{
+    prepared(e);
+    e.setRandom([] { return 0.9f; });
+    e.setModel(std::move(m));
+    return e;
+}
+
+double ppqAt(int frames) { return frames * kStep; }
+
+// The pass of passModel(): a Gate start of Loop-2 region 0 at 0, the silence draw at .5.
+void checkPassModelPass(const dc::Pass& p)
+{
+    REQUIRE(p.events.size() == 2);
+    CHECK(p.events[0].phase == Catch::Approx(0.0).margin(1e-6));
+    CHECK(!p.events[0].stop);
+    CHECK(p.events[0].region2 == 0);
+    CHECK(p.events[0].mode == dc::PlayMode::Gate);
+    CHECK(p.events[1].phase == Catch::Approx(0.5).margin(1e-6));
+    CHECK(p.events[1].stop);
+}
+
+std::uint32_t passId(const dc::Engine& e)
+{
+    dc::Pass p;
+    std::uint32_t id = 0;
+    return e.lastPass(p, id) ? id : 0;
+}
+} // namespace
+
+TEST_CASE("Engine pass: each finished Loop-1 cycle is published as the last pass", "[Engine][pass]")
+{
+    dc::Engine e;
+    passEngine(e, passModel());
+    dc::Pass p;
+    std::uint32_t id = 0;
+    run(e, 0.0, kBar);
+    CHECK(!e.lastPass(p, id)); // the first pass ends at the wrap
+    run(e, ppqAt(kBar), 512);
+    REQUIRE(e.lastPass(p, id));
+    CHECK(id == 1);
+    checkPassModelPass(p);
+    run(e, ppqAt(kBar + 512), kBar);
+    REQUIRE(e.lastPass(p, id));
+    CHECK(id == 2);
+    checkPassModelPass(p);
+}
+
+TEST_CASE("Engine pass: playback starting mid-loop records nothing until the first wrap", "[Engine][pass]")
+{
+    dc::Engine e;
+    passEngine(e, passModel());
+    run(e, 1.0, 72000 + 512); // phase .25 to just past the wrap
+    CHECK(passId(e) == 0);
+    run(e, 4.0 + ppqAt(512), kBar);
+    dc::Pass p;
+    std::uint32_t id = 0;
+    REQUIRE(e.lastPass(p, id));
+    CHECK(id == 1);
+    checkPassModelPass(p);
+}
+
+TEST_CASE("Engine pass: a transport stop mid-pass leaves no new pass", "[Engine][pass]")
+{
+    dc::Engine e;
+    passEngine(e, passModel());
+    run(e, 0.0, kBar + 24000);
+    REQUIRE(passId(e) == 1);
+    std::vector<float> l(512), r(512);
+    e.process(dc::TransportInfo { false, ppqAt(kBar + 24000), kBpm, 4, 4 }, l.data(), r.data(), 512);
+    run(e, ppqAt(kBar + 24000), kBar); // resumes mid-loop, crosses the wrap at 2 bars
+    CHECK(passId(e) == 1);
+    run(e, ppqAt(2 * kBar + 24000), kBar); // the first complete pass after the restart
+    CHECK(passId(e) == 2);
+}
+
+TEST_CASE("Engine pass: a transport jump abandons the pass, a jump to phase 0 begins one", "[Engine][pass]")
+{
+    dc::Engine e;
+    passEngine(e, passModel());
+    run(e, 0.0, 24000);
+    run(e, 2.5, kBar / 2 + 512); // jump to phase .625, crosses the wrap
+    CHECK(passId(e) == 0);
+    run(e, 8.0, kBar + 512); // jump to phase 0 of cycle 2: begins a pass that finishes at its wrap
+    dc::Pass p;
+    std::uint32_t id = 0;
+    REQUIRE(e.lastPass(p, id));
+    CHECK(id == 1);
+    checkPassModelPass(p);
+}
+
+TEST_CASE("Engine pass: a hard restart mid-pass leaves no new pass", "[Engine][pass][swap]")
+{
+    auto m = passModel();
+    auto other = std::make_shared<dc::Model>(*m);
+    other->loop2.data = regionData(kBar, { 0.2f, 0.6f }); // same content, new data: hard restart
+    dc::Engine e;
+    passEngine(e, m);
+    run(e, 0.0, kBar + 512);
+    REQUIRE(passId(e) == 1);
+    run(e, ppqAt(kBar + 512), 24000);
+    e.setModel(other);
+    run(e, ppqAt(kBar + 24512), kBar - 24000); // across the wrap at 2 bars
+    CHECK(passId(e) == 1);
+}
+
+TEST_CASE("Engine pass: a seamless swap mid-pass still finishes the pass", "[Engine][pass][swap]")
+{
+    auto m = passModel();
+    auto saved = std::make_shared<dc::Model>(*m); // same data and bars, only the slots changed
+    saved->passes[0].events = { { 0.0, false, 1, dc::PlayMode::OneShot } };
+    dc::Engine e;
+    passEngine(e, m);
+    run(e, 0.0, kBar + 512);
+    REQUIRE(passId(e) == 1);
+    run(e, ppqAt(kBar + 512), 24000);
+    e.setModel(saved);
+    run(e, ppqAt(kBar + 24512), kBar - 24000);
+    dc::Pass p;
+    std::uint32_t id = 0;
+    REQUIRE(e.lastPass(p, id));
+    CHECK(id == 2);
+    checkPassModelPass(p);
+}
+
+TEST_CASE("Engine pass: a Gate ended by Loop 1 leaving its region records a Stop there", "[Engine][pass]")
+{
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.25 });
+    m->loop2.data = regionData(kBar, { 0.2f, 0.6f });
+    m->loop2.regions = regions({ 0.5 });
+    m->rules.setTargets(0, { { 1, 1.0f, dc::PlayMode::Gate } }); // region 1 has no rule
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    run(e, 0.0, kBar + 512, 700);
+    dc::Pass p;
+    std::uint32_t id = 0;
+    REQUIRE(e.lastPass(p, id));
+    CHECK(id == 1);
+    REQUIRE(p.events.size() == 2);
+    CHECK(p.events[0] == dc::PassEvent { p.events[0].phase, false, 1, dc::PlayMode::Gate });
+    CHECK(p.events[0].phase == Catch::Approx(0.0).margin(1e-6));
+    CHECK(p.events[1].stop);
+    CHECK(p.events[1].phase == Catch::Approx(0.25).margin(1e-6));
+}
+
+TEST_CASE("Engine pass: a MIDI release mid-pass abandons it", "[Engine][pass]")
+{
+    dc::Engine e;
+    passEngine(e, passModel());
+    run(e, 0.0, 24000);
+    std::vector<float> l(512), r(512);
+    double ppq = ppqAt(24000);
+    for (int k = 0; k < 4; ++k, ppq += ppqAt(512))
+    {
+        dc::TransportInfo t { true, ppq, kBpm, 4, 4 };
+        t.release = true;
+        e.process(t, l.data(), r.data(), 512);
+    }
+    run(e, ppq, kBar); // across the wrap
+    CHECK(passId(e) == 0);
+}
+
+TEST_CASE("Engine pass: a host that wraps without splitting the block still finishes passes", "[Engine][pass]")
+{
+    dc::Engine e;
+    passEngine(e, passModel());
+    std::vector<float> l(512), r(512);
+    for (int loop = 0; loop < 3; ++loop)
+    {
+        // 188 blocks from the host's loop start: the last one runs 256 frames over the cycle end,
+        // then the host restarts at ppq 0 (the repeated report of the same wrap, not a jump).
+        double ppq = 0.0;
+        for (int i = 0; i < 188; ++i, ppq += 512 * kStep)
+            e.process(dc::TransportInfo { true, ppq, kBpm, 4, 4 }, l.data(), r.data(), 512);
+    }
+    dc::Pass p;
+    std::uint32_t id = 0;
+    REQUIRE(e.lastPass(p, id));
+    CHECK(id == 3);
+    checkPassModelPass(p);
+}
