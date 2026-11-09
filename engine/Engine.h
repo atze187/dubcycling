@@ -47,7 +47,7 @@ struct Model
     LoopSlot loop1, loop2;
     RuleSet rules;
     FxSettings fx; // insert parameters and switches per Loop-2 region
-    std::array<Pass, kPassSlots> passes; // saved passes (empty = free slot); not read by the engine yet
+    std::array<Pass, kPassSlots> passes; // saved passes (empty = free slot), events sorted by phase (sanitizePass)
 };
 
 // Audio core: Loop 1 phase-locked to the host, Loop 2 as one region voice driven by the Sequencer.
@@ -85,6 +85,15 @@ struct Model
 // the next continuous cycle start, or at a jump from a cycle end to a cycle start (a host loop split
 // at its end). A stop, invalid transport, any other jump, a MIDI release or a hard restart abandons
 // it; a seamless swap does not.
+//
+// Replay (setReplay): at a pass boundary (a cycle start reached continuously, or a fresh start or
+// jump landing on it) the request is read. While a slot replays nothing is drawn (no early draw, no
+// teaser), nothing is recorded, and the slot's events are issued as voice commands when Loop 1
+// reaches their phase; each replayed pass starts with Loop 2 silent (a carried-over voice stops). A
+// Start takes the mix of the current rule target (Loop-1 region at its phase -> its Loop-2 region),
+// else 0.5; a Start of a Loop-2 region that no longer exists is skipped. The Sequencer is reset on
+// entering and leaving replay. A jump, stop or fresh start mid-loop stops the voice and holds the
+// events back until the next boundary; a MIDI release drops the events it passes over.
 class Engine
 {
 public:
@@ -163,6 +172,17 @@ public:
     // complete, uninterrupted Loop-1 cycle. id counts finished passes (1, 2, ...). False if none has
     // finished yet. Any thread, but not the audio thread (out.events is assigned: allocates).
     bool lastPass(Pass& out, std::uint32_t& id) const { return recorder_.read(out, id); }
+
+    // Replay of saved passes (Model::passes). request: 0 off, 1 chain, 2 + i slot i (0..7); any
+    // other value means off. Any thread (relaxed); taken at the next pass boundary.
+    void setReplay(int request)
+    {
+        replayReq_.store(request >= 0 && request < 2 + kPassSlots ? request : 0, std::memory_order_relaxed);
+    }
+    int replayRequest() const { return replayReq_.load(std::memory_order_relaxed); }
+    // The slot replayed at the end of the last processed block (also while it waits for the next
+    // boundary after a jump), -1 while random plays. Any thread.
+    int replaySlot() const { return replaySlotOut_.load(std::memory_order_relaxed); }
 
 private:
     // A published model plus the Loop-1 reader bound to its data. Built off the audio thread
@@ -305,7 +325,8 @@ private:
         Sequencer::Draw draw;
     };
     PendingDraw pending_;
-    void planEarlyDraw(const Model& m, double ppq, double bpm, double beats1);
+    // drawWrap false: no early draw for an entry at the loop wrap (replay will take over there).
+    void planEarlyDraw(const Model& m, double ppq, double bpm, double beats1, bool drawWrap);
     long long frameCounter_ = 0;      // frames processed since prepare (valid transport or not)
     long long lastEntryFrame_ = -1;   // frame of the latest Loop-1 entry handled, -1 = none
 
@@ -333,6 +354,22 @@ private:
     long long lastCycle1_ = 0;
     bool swapPending_ = false; // a seamless swap waits for adoptSwap (needs the block's time signature)
     PassRecorder recorder_;    // the pass being played (written here only, read by lastPass)
+
+    // Replay (audio thread unless noted). replaySlot_ is the slot replayed (-1: random plays);
+    // replayNext_ the index of its next event; replayWaiting_ holds the events back until the next
+    // pass boundary (after a jump, a stop or a fresh start mid-loop).
+    std::atomic<int> replayReq_ { 0 };      // any thread
+    std::atomic<int> replaySlotOut_ { -1 }; // written by process(), read by replaySlot()
+    int replaySlot_ = -1;
+    int replayNext_ = 0;
+    bool replayWaiting_ = false;
+    // The slot the request asks for at a boundary now: the requested slot if filled; for the chain
+    // the next filled slot after replaySlot_ (wrapping); else -1 (random).
+    int pickReplaySlot(const Model& m) const;
+    // At a pass boundary (phase ~0): enters, switches or leaves replay as requested.
+    void replayBoundary(const Model& m);
+    // Issues one recorded event as a voice command.
+    void fireReplay(const Model& m, const PassEvent& ev);
 
     // Effects (audio thread). One slice is at most busL_.size() frames (process() splits larger
     // blocks); without prepare() the bus is empty and Loop 2 goes straight to the output, dry.
