@@ -92,10 +92,13 @@ struct Model
 // reaches their phase; each replayed pass starts with Loop 2 silent (a carried-over voice stops). A
 // Start takes the mix of the current rule target (Loop-1 region at its phase -> its Loop-2 region),
 // else 0.5; a Start of a Loop-2 region that no longer exists is skipped. The Sequencer is reset on
-// entering and leaving replay. A jump, stop or fresh start mid-loop stops the voice and holds the
-// events back until the next boundary; a MIDI release drops the events it passes over. A seamless
-// swap (e.g. a slot cleared or saved while it replays) goes on with the new slot's first event after
-// the current Loop-1 phase.
+// entering and leaving replay. The slot's events are copied at the boundary: a seamless swap that
+// clears or changes the slot (Clear, Clear all) lets the pass in progress finish with the events it
+// was loaded with; the next boundary reads the slot again. A jump, stop or fresh start mid-loop stops
+// the voice and holds the events back until the next boundary, unless the request is off (or names
+// no filled slot) by then: then replay ends at once and random draws at that entry (while stopped,
+// replaySlot() reports -1 as soon as the request goes off). A MIDI release drops the events it
+// passes over.
 class Engine
 {
 public:
@@ -365,6 +368,12 @@ private:
     int replaySlot_ = -1;
     int replayNext_ = 0;
     bool replayWaiting_ = false;
+    // The events of the pass being replayed, copied from the slot at its boundary (a swap that
+    // clears or changes the slot leaves the pass in progress alone).
+    std::array<PassEvent, kMaxPassEvents> replayEvents_ {};
+    int replayCount_ = 0;
+    // Leaves replay at once (outside a boundary): the voice stops, random draws from the next entry.
+    void leaveReplay();
     // The slot the request asks for at a boundary now: the requested slot if filled; for the chain
     // the next filled slot after replaySlot_ (wrapping); else -1 (random).
     int pickReplaySlot(const Model& m) const;
