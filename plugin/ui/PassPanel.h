@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <functional>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
 
@@ -18,9 +19,11 @@ juce::String midiNoteName(int note);
 //
 // LEARN toggles Learn mode (not persisted). In Learn mode a click on a slot, SAVE or PLAY arms that
 // target (armLearn): the button waits ("...", amber) until the processor has bound the next MIDI
-// note; a second click on a waiting button cancels the wait and removes the target's note. Bound
-// buttons show their note name in Learn mode and in the tooltip always. Turning Learn off cancels
-// an armed learn. Clear and CLEAR ALL work the same in both modes.
+// note; a second click on a waiting button only cancels the wait (so a double-click never deletes a
+// binding). A right-click on a slot, SAVE or PLAY in Learn mode removes that target's note (and
+// cancels its wait); outside Learn mode a right-click is a normal click. Bound buttons show their
+// note name in Learn mode and in the tooltip always. Turning Learn off cancels an armed learn.
+// Clear and CLEAR ALL work the same in both modes.
 //
 // refresh() polls the processor (atomics and the message-thread state, no audio-thread locks); the
 // editor calls it from its timer, and every click refreshes at once.
@@ -55,9 +58,22 @@ public:
     void resized() override;
 
 private:
+    // A TextButton with a right-click (popup-menu click) handler: when onRightClick returns true the
+    // press is consumed (no onClick); otherwise, or without a handler, it acts as a normal click.
+    class TargetButton : public juce::TextButton
+    {
+    public:
+        std::function<bool()> onRightClick;
+        void mouseDown(const juce::MouseEvent& e) override;
+        void mouseDrag(const juce::MouseEvent& e) override;
+        void mouseUp(const juce::MouseEvent& e) override;
+
+    private:
+        bool consumed_ = false; // the current press was a consumed right-click
+    };
     // A narrow TextButton: the panel's background, the text centred without side indents (squeezed
     // rather than cut to "..." when it does not fit).
-    class CompactButton final : public juce::TextButton
+    class CompactButton final : public TargetButton
     {
     public:
         void paintButton(juce::Graphics& g, bool highlighted, bool down) override;
@@ -67,6 +83,9 @@ private:
     static int clampSlot(int slot) { return slot < 0 ? 0 : (slot > kPassSlots - 1 ? kPassSlots - 1 : slot); }
     // A click on a slot / SAVE / PLAY: learns in Learn mode, otherwise triggers.
     void targetClicked(int target);
+    // A right-click on a slot / SAVE / PLAY: in Learn mode removes the target's note (and cancels
+    // its wait) and returns true; outside Learn mode returns false (a normal click).
+    bool targetRightClicked(int target);
     void trigger(int target);
     void setLearnMode(bool on);
     juce::TextButton& targetButton(int target);
@@ -83,7 +102,8 @@ private:
     juce::Label caption_;
     std::array<CompactButton, kPassSlots> slots_;
     std::array<CompactButton, kPassSlots> clears_;
-    juce::TextButton save_, play_, learnBtn_, clearAll_;
+    TargetButton save_, play_;
+    juce::TextButton learnBtn_, clearAll_;
     juce::Label hint_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PassPanel)

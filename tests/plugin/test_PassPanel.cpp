@@ -124,6 +124,21 @@ void click(juce::Button& b)
     b.onClick();
 }
 
+// A right-button (popup menu) press and release on the button, as the mouse would deliver them.
+void rightClick(juce::Button& b)
+{
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const juce::Point<float> pos { 2.0f, 2.0f };
+    const auto now = juce::Time::getCurrentTime();
+    const juce::MouseEvent e(source, pos, juce::ModifierKeys(juce::ModifierKeys::rightButtonModifier),
+                             juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation,
+                             juce::MouseInputSource::defaultRotation, juce::MouseInputSource::defaultTiltX,
+                             juce::MouseInputSource::defaultTiltY, &b, &b, now, pos, now, 1, false);
+    juce::MouseListener& listener = b;
+    listener.mouseDown(e);
+    listener.mouseUp(e);
+}
+
 } // namespace
 
 TEST_CASE("PassPanel: eight slots labelled 1..8 show empty and filled; clear buttons follow", "[passpanel]")
@@ -339,7 +354,7 @@ TEST_CASE("PassPanel: closing the panel (editor) cancels an armed learn", "[pass
     CHECK(f.proc.learnArmed() == -1);
 }
 
-TEST_CASE("PassPanel: a second click on a waiting button cancels it and removes its note", "[passpanel][learn]")
+TEST_CASE("PassPanel: a second click on a waiting button only cancels the wait; the note stays", "[passpanel][learn]")
 {
     PanelFixture f;
     click(f.panel.learnButton());
@@ -348,10 +363,50 @@ TEST_CASE("PassPanel: a second click on a waiting button cancels it and removes 
     REQUIRE(f.proc.boundNote(kSave) == 70);
     click(f.panel.saveButton());
     REQUIRE(f.panel.isWaiting(kSave));
-    click(f.panel.saveButton());
+    click(f.panel.saveButton()); // e.g. the second half of a double-click
     CHECK(f.proc.learnArmed() == -1);
-    CHECK(f.proc.boundNote(kSave) == -1);
+    CHECK(f.proc.boundNote(kSave) == 70);
     CHECK_FALSE(f.panel.isWaiting(kSave));
+}
+
+TEST_CASE("PassPanel: in Learn mode a right-click removes the target's note", "[passpanel][learn]")
+{
+    PanelFixture f;
+    f.fill({ 2 });
+    click(f.panel.learnButton());
+    click(f.panel.slotButton(2));
+    f.note(62);
+    click(f.panel.playButton());
+    f.note(64);
+    click(f.panel.saveButton());
+    f.note(65);
+    f.panel.refresh();
+    REQUIRE(f.proc.boundNote(2) == 62);
+    REQUIRE(f.proc.boundNote(kPlay) == 64);
+    REQUIRE(f.proc.boundNote(kSave) == 65);
+    CHECK(f.panel.slotButton(2).getTooltip().containsIgnoreCase("right-click to remove"));
+
+    rightClick(f.panel.slotButton(2));
+    CHECK(f.proc.boundNote(2) == -1);
+    CHECK(f.proc.learnArmed() == -1); // removing does not arm
+    CHECK(f.panel.noteText(2).isEmpty());
+    rightClick(f.panel.playButton());
+    CHECK(f.proc.boundNote(kPlay) == -1);
+    CHECK(f.proc.boundNote(kSave) == 65); // only the clicked target
+
+    click(f.panel.saveButton()); // waiting: a right-click cancels the wait and removes the note
+    REQUIRE(f.panel.isWaiting(kSave));
+    rightClick(f.panel.saveButton());
+    CHECK(f.proc.boundNote(kSave) == -1);
+    CHECK(f.proc.learnArmed() == -1);
+
+    // Outside Learn mode a right-click removes nothing.
+    click(f.panel.slotButton(2));
+    f.note(62);
+    click(f.panel.learnButton());
+    REQUIRE_FALSE(f.panel.learnMode());
+    rightClick(f.panel.slotButton(2));
+    CHECK(f.proc.boundNote(2) == 62);
 }
 
 TEST_CASE("PassPanel: all strings are English and the buttons fit side by side", "[passpanel][layout]")

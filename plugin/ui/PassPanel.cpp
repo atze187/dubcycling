@@ -44,6 +44,27 @@ void PassPanel::CompactButton::paintButton(juce::Graphics& g, bool highlighted, 
     g.drawFittedText(getButtonText(), getLocalBounds().reduced(1, 0), juce::Justification::centred, 1, 0.7f);
 }
 
+void PassPanel::TargetButton::mouseDown(const juce::MouseEvent& e)
+{
+    consumed_ = e.mods.isPopupMenu() && onRightClick != nullptr && onRightClick();
+    if (!consumed_)
+        juce::TextButton::mouseDown(e);
+}
+
+void PassPanel::TargetButton::mouseDrag(const juce::MouseEvent& e)
+{
+    if (!consumed_)
+        juce::TextButton::mouseDrag(e);
+}
+
+void PassPanel::TargetButton::mouseUp(const juce::MouseEvent& e)
+{
+    if (consumed_)
+        consumed_ = false;
+    else
+        juce::TextButton::mouseUp(e);
+}
+
 juce::String midiNoteName(int note)
 {
     if (note < 0 || note > 127)
@@ -65,6 +86,7 @@ PassPanel::PassPanel(DubcyclingProcessor& proc) : proc_(proc)
         auto& s = slots_[static_cast<std::size_t>(i)];
         s.setButtonText(juce::String(i + 1));
         s.onClick = [this, i] { targetClicked(i); };
+        s.onRightClick = [this, i] { return targetRightClicked(i); };
         addAndMakeVisible(s);
 
         auto& c = clears_[static_cast<std::size_t>(i)];
@@ -79,10 +101,12 @@ PassPanel::PassPanel(DubcyclingProcessor& proc) : proc_(proc)
 
     save_.setButtonText("SAVE");
     save_.onClick = [this] { targetClicked(DubcyclingProcessor::kTargetSave); };
+    save_.onRightClick = [this] { return targetRightClicked(DubcyclingProcessor::kTargetSave); };
     addAndMakeVisible(save_);
 
     play_.setButtonText("PLAY");
     play_.onClick = [this] { targetClicked(DubcyclingProcessor::kTargetPlay); };
+    play_.onRightClick = [this] { return targetRightClicked(DubcyclingProcessor::kTargetPlay); };
     addAndMakeVisible(play_);
 
     learnBtn_.setButtonText("LEARN");
@@ -173,17 +197,22 @@ void PassPanel::targetClicked(int target)
         refresh();
         return;
     }
-    if (proc_.learnArmed() == target)
-    {
-        // A second click: no note wanted after all, and the old one goes too.
-        proc_.armLearn(-1);
-        proc_.clearBinding(target);
-    }
-    else
-    {
-        proc_.armLearn(target);
-    }
+    // A second click on the waiting target only cancels the wait (a double-click must never delete
+    // a binding; removing is the right-click).
+    proc_.armLearn(proc_.learnArmed() == target ? -1 : target);
     refresh();
+}
+
+bool PassPanel::targetRightClicked(int target)
+{
+    if (!learn_)
+        return false;
+    if (proc_.learnArmed() == target)
+        proc_.armLearn(-1);
+    if (proc_.boundNote(target) >= 0)
+        proc_.clearBinding(target);
+    refresh();
+    return true;
 }
 
 void PassPanel::trigger(int target)
@@ -233,8 +262,8 @@ void PassPanel::refresh()
     save_.setEnabled(learn_ || proc_.canSave());
     learnBtn_.setToggleState(learn_, juce::dontSendNotification);
     paintButton(learnBtn_, learn_ ? kLearnFill : kButton, learn_ ? kAccent : kText);
-    learnBtn_.setTooltip(learn_ ? "Learn mode: click a slot, SAVE or PLAY, then play a MIDI note to bind it. "
-                                  "Click LEARN again to leave."
+    learnBtn_.setTooltip(learn_ ? "Learn mode: click a slot, SAVE or PLAY, then play a MIDI note to bind it; "
+                                  "right-click one to remove its note. Click LEARN again to leave."
                                 : "Bind MIDI notes to the slots, SAVE and PLAY");
 
     for (int t = 0; t < kTargets; ++t)
@@ -267,16 +296,17 @@ void PassPanel::refresh()
                 fill = kWaitingFill;
                 text = kAmber;
                 tip = "Waiting for note: play a MIDI note to bind it to " + targetName(t)
-                      + " (click again to cancel and remove its note)";
+                      + " (click again to cancel, right-click to remove its note)";
             }
             else
             {
                 if (note.isNotEmpty())
                     label = note;
                 tip = (note.isNotEmpty() ? "MIDI note " + note + " (" + juce::String(notes_[static_cast<std::size_t>(t)])
-                                               + ") is bound to " + targetName(t) + ". "
-                                         : juce::String("No MIDI note bound to " + targetName(t) + ". "))
-                      + "Click to learn a new note.";
+                                               + ") is bound to " + targetName(t)
+                                               + ". Click to learn a new note, right-click to remove it."
+                                         : juce::String("No MIDI note bound to " + targetName(t)
+                                                        + ". Click to learn a note."));
             }
         }
         b.setButtonText(label);
