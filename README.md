@@ -57,6 +57,42 @@ starts both loops at the next host bar, and releasing the last held note stops t
 If the host loops a range without a bar line, a pending start or stop happens at the loop wrap. The mode is saved per plugin instance with the
 project, not in presets, so loading a preset never changes it.
 
+### Saving passes
+
+A pass is one run of Loop 1 from its start to its wrap. While the plugin plays, it records which Loop-2 region
+(or silence) entered at which point of the pass, including the random choices as they were made. The **last
+finished pass** is kept: it is the most recent pass that ran completely (a stop, a transport jump or a MIDI
+gate-off in the middle makes it incomplete). The PASSES row under Loop 2 works with it:
+
+- **SAVE** stores the last finished pass in the lowest free of the **8 slots**. It is disabled while there is no
+  finished pass, when that pass is already saved, when all 8 slots are full and while a replay is on. Only passes
+  finished after the last preset or project load can be saved.
+- **Slots 1 to 8** show empty (dim), filled, waiting to start (amber) and playing (green). Clicking a filled slot
+  **repeats that pass** until something else is triggered; an empty slot does nothing. **PLAY** (right of the slots)
+  turns on the **chain**: all filled slots in order from 1 to 8, empty ones skipped, and the chain repeats. PLAY is
+  lit while a slot or the chain is on; clicking it returns to normal random playing (this is also how you leave a
+  slot replay). Every switch takes effect at the next pass start, so a replay always begins at the start of Loop 1;
+  until then the random playing goes on. Replayed passes are not recorded.
+- **What a pass stores:** only which Loop-2 region (or silence) entered when, as a fraction of the pass, and its
+  play mode (GATE or ONESHOT). No audio, no copies of effects or mix: these come from the current region
+  settings. A slot therefore **plays what still fits**: after a tempo, bars or boundary change the entries play at
+  the same point of the pass, and an entry whose Loop-2 region no longer exists (or whose loop is gone) is skipped.
+- **x** next to a slot clears it, **CLEAR ALL** clears every slot (no undo). Clearing the slot that is playing lets
+  the current pass finish; then the plugin goes back to random playing (or, in the chain, to the next filled slot).
+- The slots are part of the **preset**: saving a preset stores them, loading one replaces them (and turns replay
+  off). A project stores them too. The bank format is now `bank.json` version 4; older plugin versions refuse
+  banks saved with it.
+- **MIDI learn:** click **LEARN**, then click a slot, SAVE or PLAY; the button shows "..." (waiting for note) until
+  you play a MIDI note, which is then bound to it. Any note on any channel counts; velocity and length are ignored.
+  A note is bound to one target only: learning it again moves it. In Learn mode the buttons show their notes (also
+  in the tooltips at any time); clicking a waiting button again cancels the wait and removes its note. Click LEARN
+  again to leave Learn mode (an armed learn is cancelled). A bound note triggers its target like a click: a slot
+  note repeats that slot (ignored while the slot is empty), the PLAY note toggles the chain/off, the SAVE note
+  saves. Learned notes are stored **per plugin instance** with the project, **not** in presets or banks, so
+  loading a preset never changes them. Slots and learned notes work in both Autoplay and MIDI mode; in MIDI mode a
+  learned note **no longer opens the gate**, every other note still does, and the gate still decides whether
+  anything sounds.
+
 ### Known limitations
 
 - Not tested in a real host yet on any platform; macOS and Linux are only built and unit-tested in CI.

@@ -45,6 +45,8 @@ target_sources(dc_plugin_ui INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/RulePanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PresetBar.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PresetBar.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/PassPanel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/PassPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/Editor.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/Editor.cpp)
 target_include_directories(dc_plugin_ui INTERFACE ${PROJECT_SOURCE_DIR})

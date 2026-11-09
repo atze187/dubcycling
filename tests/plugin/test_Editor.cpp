@@ -342,6 +342,33 @@ TEST_CASE("Editor: OK after the slot became Missing relinks instead of wiping", 
 }
 
 namespace {
+// A pass slot filled or cleared while a confirmation is open (e.g. by a MIDI Save note).
+void fillPassSlot(DubcyclingProcessor& proc, int slot)
+{
+    auto s = proc.getPluginState();
+    s.passes[static_cast<std::size_t>(slot)].events = { PassEvent { 0.0, false, 0, PlayMode::Gate } };
+    proc.applyEdit(s);
+    REQUIRE(proc.passFilled(slot));
+}
+} // namespace
+
+TEST_CASE("Editor: saving or clearing a pass while the replace question is open does not cancel the replace", "[LoopLane][editor][passes]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(f.wav("good.wav"));
+    fillPassSlot(f.proc, 1);
+    f.editor->loadFile(0, f.wav("other.wav"));
+    REQUIRE(f.asked == 1);
+
+    fillPassSlot(f.proc, 0);
+    f.proc.clearPass(1);
+    f.pendingAnswer(true);
+    f.proc.waitForLoads();
+    CHECK(f.proc.getPluginState().loop1.fileName == "other.wav");
+    CHECK_FALSE(f.editor->statusText(0).startsWith("Not replaced"));
+}
+
+namespace {
 // 2 s stereo wav at 44.1 kHz with short noise clicks at 0, 25, 50 and 75 % (3 usable boundaries).
 juce::File clickWav(const juce::File& dir, const juce::String& name, int clicks = 4)
 {
@@ -441,6 +468,21 @@ TEST_CASE("Editor: an answer after the slot changed meanwhile does not overwrite
     f.proc.applyEdit(s);
     f.pendingAnswer(true);
     CHECK(f.proc.getPluginState().loop1.boundaries == std::vector<double> { 0.1 });
+}
+
+TEST_CASE("Editor: saving or clearing a pass while the Suggest question is open does not cancel it", "[editor][suggest][passes]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(clickWav(f.dir, "clicks.wav"));
+    fillPassSlot(f.proc, 2);
+    f.editor->refresh();
+    f.editor->suggestRegions(0);
+    REQUIRE(f.asked == 1);
+    fillPassSlot(f.proc, 0);
+    f.proc.clearAllPasses();
+    f.pendingAnswer(true);
+    CHECK(f.proc.getPluginState().loop1.boundaries.size() == 3);
+    CHECK_FALSE(f.editor->statusText(0).startsWith("Not replaced"));
 }
 
 TEST_CASE("Editor: Suggest without any transient changes nothing and says so", "[editor][suggest]")
@@ -1028,8 +1070,18 @@ TEST_CASE("Editor: strip, panels and lanes fit in the window without overlap", "
                           { "strip", strip },
                           { "rules", f.editor->rulePanel().getBounds() },
                           { "fx", panel },
+                          { "passes", f.editor->passPanel().getBounds() },
                           { "presetBar", f.editor->presetBar().getBounds() } },
                         window);
+        // The pass row sits between the Loop-2 box and the bottom panels, full width.
+        const auto passes = f.editor->passPanel().getBounds();
+        CHECK(passes.getY() >= strip.getBottom());
+        CHECK(f.editor->rulePanel().getY() >= passes.getBottom());
+        CHECK(panel.getY() >= passes.getBottom());
+        CHECK(passes.getHeight() >= 26);
+        CHECK(passes.getX() == f.editor->rulePanel().getX());
+        CHECK(passes.getRight() == panel.getRight());
+        CHECK(f.editor->lane(1).getHeight() >= 60);
         // The strip sits right under the Loop-2 lane, over the same x range.
         CHECK(strip.getX() == lane1.getX());
         CHECK(strip.getWidth() == lane1.getWidth());
@@ -1043,6 +1095,18 @@ TEST_CASE("Editor: strip, panels and lanes fit in the window without overlap", "
         CHECK(f.editor->rulePanel().getWidth() >= 300);
         CHECK(f.editor->rulePanel().getHeight() >= 190);
     }
+}
+
+TEST_CASE("Editor: the pass panel follows the processor on refresh", "[editor][passes]")
+{
+    EditorFixture f;
+    using SlotState = dc::ui::PassPanel::SlotState;
+    CHECK(f.editor->passPanel().slotState(2) == SlotState::Empty);
+    fillPassSlot(f.proc, 2);
+    f.proc.setReplayRequest(1);
+    f.editor->refresh(); // what the timer calls
+    CHECK(f.editor->passPanel().slotState(2) == SlotState::Filled);
+    CHECK(f.editor->passPanel().playButton().getToggleState());
 }
 
 TEST_CASE("Editor: the mode button reflects and sets the trigger mode", "[editor][midi]")

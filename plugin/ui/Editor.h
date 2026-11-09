@@ -10,6 +10,7 @@
 #include "plugin/ui/FxPanel.h"
 #include "plugin/ui/FxStrip.h"
 #include "plugin/ui/PanelLook.h"
+#include "plugin/ui/PassPanel.h"
 #include "plugin/ui/PresetBar.h"
 #include "plugin/ui/RulePanel.h"
 
@@ -81,8 +82,8 @@ juce::String suggestConfirmMessage();
 
 // Edit view: top row with logo, preset bar and BPM (the cycle readout only when it fits);
 // Loop 1 lane on top, Loop 2 below, each with bars field, "Load..." button and slot
-// status; the insert strip right under the Loop-2 lane; the combined cycle length; at the bottom
-// the rule panel for the selected Loop-1 region (left) and the effects panel for the selected
+// status; the insert strip right under the Loop-2 lane; the combined cycle length; under it the
+// pass slots row (PassPanel: Save, slots 1..8, Play, Learn, Clear); at the bottom the rule panel for the selected Loop-1 region (left) and the effects panel for the selected
 // Loop-2 region (right). A 10 Hz timer polls the processor and refreshes lanes and panels; edits go
 // through processor.applyEdit. A switch toggle (strip or panel) is heard at once: the engine
 // re-evaluates the sounding voice's mask on the model swap.
@@ -103,6 +104,7 @@ public:
     FxStrip& fxStrip() { return fxStrip_; }
     FxPanel& fxPanel() { return fxPanel_; }
     PresetBar& presetBar() { return presetBar_; }
+    PassPanel& passPanel() { return passes_; }
     juce::TextButton& modeButton() { return mode_; }
     bool cycleVisible() const { return cycle_.isVisible(); }
     juce::Rectangle<int> cycleBounds() const { return cycle_.getBounds(); }
@@ -157,7 +159,8 @@ private:
     void switchEdited(int region2, FxInsert insert, bool on);
     void paramsEdited(const FxParams& params);
     void barsEdited(int slot);
-    // confirmedState: serialized state the user confirmed a replace for, or nullptr (not asked yet).
+    // confirmedState: serialized state (without passes) the user confirmed a replace for, or nullptr
+    // (not asked yet). Pass slots may change meanwhile (MIDI Save, slot clear) without cancelling it.
     void handleFile(int slot, const juce::File& file, const juce::MemoryBlock* confirmedState);
     void askReplace(int slot, const juce::File& file, const juce::MemoryBlock& askedState);
     void replace(int slot, const juce::File& file);
@@ -186,6 +189,7 @@ private:
     RulePanel rules_;
     FxStrip fxStrip_;
     FxPanel fxPanel_;
+    PassPanel passes_ { proc_ };
     juce::TooltipWindow tooltips_ { this };
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::String notice_[2];         // short message shown instead of the status (e.g. rejected file)
@@ -194,7 +198,7 @@ private:
     struct PendingConfirm
     {
         bool active = false;
-        juce::MemoryBlock state; // serialized PluginState when the question was asked
+        juce::MemoryBlock state; // serialized PluginState without its passes when the question was asked
     };
     PendingConfirm pending_[2];
 

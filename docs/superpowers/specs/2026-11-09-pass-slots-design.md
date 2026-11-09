@@ -1,6 +1,6 @@
 # Pass slots — design
 
-Date: 2026-11-09. Status: draft.
+Date: 2026-11-09. Status: implemented.
 
 ## Intent
 

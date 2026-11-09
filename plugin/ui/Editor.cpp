@@ -21,6 +21,7 @@ constexpr int kFxStripH = 17;     // incl. the 1 px bottom border of the Loop-2 
 constexpr int kFxPanelMinW = 440; // four modules
 constexpr int kFxPanelMaxW = 600;
 constexpr int kBottomMinH = 190;  // FxPanel: title, switch and four knob rows
+constexpr int kPassH = 28;        // pass slots row (PassPanel)
 constexpr int kMinW = 800;
 constexpr int kMinH = 540;
 
@@ -49,6 +50,14 @@ LoopRef& refOf(PluginState& s, int slot) { return slot == 0 ? s.loop1 : s.loop2;
 bool fileIsMissing(DubcyclingProcessor::SlotStatus status, const LoopRef& ref)
 {
     return status == DubcyclingProcessor::SlotStatus::Missing && !juce::File(ref.path).existsAsFile();
+}
+
+// The state a Replace/Suggest question is about: everything but the pass slots, which a MIDI Save
+// or a slot clear may change while the question is open without touching the loops.
+juce::MemoryBlock askedStateOf(PluginState s)
+{
+    s.passes = {};
+    return serialize(s);
 }
 } // namespace
 
@@ -273,6 +282,7 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
     fxPanel_.onParamsChanged = [this](const FxParams& params) { paramsEdited(params); };
     addAndMakeVisible(fxStrip_);
     addAndMakeVisible(fxPanel_);
+    addAndMakeVisible(passes_);
 
     setResizable(true, true);
     setResizeLimits(kMinW, kMinH, 1800, 1400);
@@ -371,6 +381,7 @@ void Editor::refresh()
                    juce::dontSendNotification);
     mode_.setButtonText(proc_.triggerMode() == TriggerMode::Midi ? "MIDI" : "Autoplay");
     presetBar_.refresh();
+    passes_.refresh();
 }
 
 void Editor::updatePlayheads()
@@ -551,7 +562,7 @@ void Editor::suggestRegions(int slot)
     }
 
     pending_[slot].active = true;
-    pending_[slot].state = serialize(st);
+    pending_[slot].state = askedStateOf(st);
     juce::Component::SafePointer<Editor> safe(this);
     auto answer = [safe, slot, commit](bool ok) {
         if (safe == nullptr || !safe->pending_[slot].active)
@@ -561,7 +572,7 @@ void Editor::suggestRegions(int slot)
         if (!ok)
             return;
         // The answer only covers the state the user was asked about; never ask twice.
-        if (serialize(safe->proc_.getPluginState()) == asked)
+        if (askedStateOf(safe->proc_.getPluginState()) == asked)
             commit();
         else
             safe->showNotice(slot, "Not replaced: Loop " + juce::String(slot + 1) + " changed in the meantime");
@@ -613,13 +624,13 @@ void Editor::handleFile(int slot, const juce::File& file, const juce::MemoryBloc
             if (confirmedState != nullptr)
             {
                 // The answer only covers the state the user was asked about; never ask twice.
-                if (serialize(st) == *confirmedState)
+                if (askedStateOf(st) == *confirmedState)
                     replace(slot, file);
                 else
                     showNotice(slot, "Not replaced: Loop " + juce::String(slot + 1) + " changed in the meantime");
                 return;
             }
-            askReplace(slot, file, serialize(st));
+            askReplace(slot, file, askedStateOf(st));
             return;
     }
 }
@@ -724,10 +735,11 @@ void Editor::resized()
     presetBar_.setBounds(top);
     area.removeFromTop(kGap + 3);
 
-    // Lanes and the bottom row (rule panel, effects panel) share what is left: the bottom row gets
-    // about a third (at least what the effects panel needs), the rest goes to Loop 1 (58 %) and
-    // Loop 2 (42 %). The insert strip sits inside the Loop-2 box, right under the lane.
-    const int shared = area.getHeight() - 2 * kHeaderH - 2 * kGap - kFxStripH;
+    // Lanes and the bottom row (rule panel, effects panel) share what is left after the fixed rows
+    // (headers, insert strip, pass row): the bottom row gets about a third (at least what the
+    // effects panel needs), the rest goes to Loop 1 (58 %) and Loop 2 (42 %). The insert strip sits
+    // inside the Loop-2 box, right under the lane; the pass row follows the Loop-2 box.
+    const int shared = area.getHeight() - 2 * kHeaderH - 3 * kGap - kFxStripH - kPassH;
     const int rulesH = std::clamp(shared * 38 / 100, kBottomMinH, 320);
     const int laneSpace = std::max(shared - rulesH, 80);
     const int lane0H = std::max(laneSpace * 58 / 100, 40);
@@ -763,6 +775,8 @@ void Editor::resized()
         }
         area.removeFromTop(kGap);
     }
+    passes_.setBounds(area.removeFromTop(kPassH));
+    area.removeFromTop(kGap);
     const int fxW = std::clamp(area.getWidth() / 2, kFxPanelMinW, kFxPanelMaxW);
     fxPanel_.setBounds(area.removeFromRight(fxW));
     area.removeFromRight(kGap);
