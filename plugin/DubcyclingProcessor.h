@@ -119,8 +119,10 @@ public:
     // ---- MIDI note bindings (per instance: saved with the project, NOT with presets or banks) ----
     // Targets 0..7 are the pass slots (a bound note requests that slot's replay, ignored while it is
     // empty), kTargetSave saves the last pass (on the message thread), kTargetPlay toggles replay
-    // (off -> chain, any replay -> off). One note per target and one target per note. Bound notes
-    // (on and off) never reach the MIDI gate. Any thread (atomics only).
+    // (off -> chain while a slot is filled, any replay -> off). One note per target and one target
+    // per note. Bound notes (on and off) never reach the MIDI gate; after bindings are loaded with a
+    // state, the next block releases every bound note in the gate. Bound notes also act while the
+    // host bypasses the plugin. Any thread (atomics only).
     static constexpr int kTargetSave = 8;
     static constexpr int kTargetPlay = 9;
     static constexpr int kBindTargets = 10;
@@ -176,7 +178,8 @@ private:
     // Pass slots and bindings.
     // Bit i set: pass slot i is filled in the last published model (read on the audio thread).
     std::atomic<unsigned> filledMask_ { 0 };
-    std::uint32_t lastSavedId_ = 0; // id of the last pass savePass stored (message thread)
+    std::atomic<std::uint32_t> lastSavedId_ { 0 }; // id of the last pass savePass stored (or the last before a state load)
+    std::atomic<bool> releaseBoundNotes_ { false }; // set by readBindings; the next planTrigger releases bound notes
     std::atomic<bool> saveRequested_ { false }; // a bound Save note; handled in timerCallback
     std::atomic<int> learnTarget_ { -1 };
     std::array<std::atomic<int>, kBindTargets> boundNotes_ {}; // -1 = unbound (set in the constructor)

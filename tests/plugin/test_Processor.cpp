@@ -1244,6 +1244,50 @@ TEST_CASE("Processor: bound slot and Play notes set the replay request", "[proce
     CHECK(f.proc.replayRequest() == 0);
 }
 
+TEST_CASE("Processor: a bound Play note does not turn replay on while every slot is empty", "[processor][passes][learn]")
+{
+    PassFixture f;
+    f.proc.armLearn(DubcyclingProcessor::kTargetPlay);
+    auto on = noteOn(64);
+    auto off = noteOff(64);
+    f.block(on);
+    f.block(off);
+    REQUIRE(f.proc.boundNote(DubcyclingProcessor::kTargetPlay) == 64);
+    f.bar();
+    f.bar();
+    REQUIRE(f.proc.canSave());
+    f.block(on);
+    f.block(off);
+    CHECK(f.proc.replayRequest() == 0); // nothing to play
+    CHECK(f.proc.canSave());            // and Save stays available
+
+    f.proc.setReplayRequest(1); // any replay -> off still works
+    f.block(on);
+    CHECK(f.proc.replayRequest() == 0);
+}
+
+TEST_CASE("Processor: a held note that a state load binds does not leave the gate stuck", "[processor][passes][learn]")
+{
+    MidiFixture f;
+    f.proc.setTriggerMode(TriggerMode::Midi);
+    auto on = noteOn(60, 3);
+    f.run(on);
+    REQUIRE(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f); // held, plays
+
+    // A project whose bindings put note 60 on slot 1: its note-off will never reach the gate.
+    const auto text = stateText(f.proc).replace("<DubcyclingState", "<DubcyclingState BindSlot1=\"60\"");
+    setStateText(f.proc, text);
+    f.proc.waitForLoads();
+    REQUIRE(f.proc.boundNote(1) == 60);
+    REQUIRE(f.proc.triggerMode() == TriggerMode::Midi);
+    f.run();
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f); // the held gate was released
+
+    auto on61 = noteOn(61); // other notes still gate
+    f.run(on61);
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f);
+}
+
 TEST_CASE("Processor: a bound Save note saves on the message thread", "[processor][passes][learn]")
 {
     PassFixture f;

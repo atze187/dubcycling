@@ -116,7 +116,7 @@ void DubcyclingProcessor::applyState(const PluginState& s) {
     // the load can be saved into this one.
     Pass last;
     if (std::uint32_t id = 0; engine_.lastPass(last, id))
-        lastSavedId_ = id;
+        lastSavedId_.store(id, std::memory_order_relaxed);
     publish();
 }
 
@@ -245,6 +245,9 @@ void DubcyclingProcessor::readBindings(const juce::XmlElement& root) {
         boundNotes_[static_cast<size_t>(t)].store(note, std::memory_order_relaxed);
     }
     bindingsVersion_.fetch_add(1, std::memory_order_relaxed);
+    // A note held now that is bound from here on would never get its note-off to the gate: the
+    // next block releases every bound note (as a learn does).
+    releaseBoundNotes_.store(true, std::memory_order_relaxed);
 }
 
 void DubcyclingProcessor::armLearn(int target) {
@@ -294,7 +297,7 @@ bool DubcyclingProcessor::canSave() const {
         return false;
     Pass p;
     std::uint32_t id = 0;
-    if (!engine_.lastPass(p, id) || p.empty() || id == lastSavedId_)
+    if (!engine_.lastPass(p, id) || p.empty() || id == lastSavedId_.load(std::memory_order_relaxed))
         return false;
     const juce::ScopedLock sl(stateLock_);
     return std::any_of(state_.passes.begin(), state_.passes.end(), [](const Pass& s) { return s.empty(); });
@@ -305,7 +308,7 @@ bool DubcyclingProcessor::savePass() {
         return false;
     Pass p;
     std::uint32_t id = 0;
-    if (!engine_.lastPass(p, id) || p.empty() || id == lastSavedId_)
+    if (!engine_.lastPass(p, id) || p.empty() || id == lastSavedId_.load(std::memory_order_relaxed))
         return false;
     PluginState s = getPluginState();
     const auto free = std::find_if(s.passes.begin(), s.passes.end(), [](const Pass& x) { return x.empty(); });
@@ -315,7 +318,7 @@ bool DubcyclingProcessor::savePass() {
     if (free->empty())
         return false;
     applyEdit(s);
-    lastSavedId_ = id;
+    lastSavedId_.store(id, std::memory_order_relaxed);
     return true;
 }
 
@@ -359,7 +362,11 @@ DubcyclingProcessor::NoteRoute DubcyclingProcessor::routeNoteOn(int note) {
         if ((filledMask_.load(std::memory_order_relaxed) >> t) & 1u) // ignored for an empty slot
             engine_.setReplay(2 + t);
     } else if (t == kTargetPlay) {
-        engine_.setReplay(engine_.replayRequest() == 0 ? 1 : 0);
+        // Off -> chain only with something to play (else Save would be blocked for nothing).
+        if (engine_.replayRequest() != 0)
+            engine_.setReplay(0);
+        else if (filledMask_.load(std::memory_order_relaxed) != 0)
+            engine_.setReplay(1);
     } else if (t == kTargetSave) {
         saveRequested_.store(true, std::memory_order_relaxed);
     }
@@ -475,6 +482,22 @@ int DubcyclingProcessor::planTrigger(juce::MidiBuffer& midi, int n,
     constexpr int kMaxGateEvents = 512;
     std::array<GateEvent, kMaxGateEvents> events;
     int numEvents = 0;
+    if (releaseBoundNotes_.exchange(false, std::memory_order_relaxed)) {
+        // Bindings changed by a state load: release every bound note on all channels at frame 0.
+        for (int t = 0; t < kBindTargets; ++t) {
+            const int note = boundNotes_[static_cast<std::size_t>(t)].load(std::memory_order_relaxed);
+            if (note < 0)
+                continue;
+            GateEvent e;
+            e.frame = 0;
+            e.kind = GateEvent::Kind::NoteOff;
+            e.note = note;
+            for (int ch = 0; ch < 16 && numEvents < kMaxGateEvents; ++ch) {
+                e.channel = ch;
+                events[static_cast<std::size_t>(numEvents++)] = e;
+            }
+        }
+    }
     {
         for (const auto meta : midi) {
             if (numEvents >= kMaxGateEvents)
