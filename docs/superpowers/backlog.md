@@ -39,7 +39,7 @@ Items are worded as the user phrased them. Assessments below them are Claude's.
    - Open ideas: host automation of the mix, mix for the preview, wider mix knob at the smallest window size.
 
 9. DONE (2026-11-06; Autoplay/MIDI toggle in the top bar, in MIDI mode any held note plays both loops, start and stop at the next host bar, a stopped host starts at once at the last tempo, mode saved per instance and not in presets; draft: `docs/superpowers/specs/2026-11-06-midi-trigger-design.md`). "play the loops from MIDI notes"
-   - Open ideas: per-note region triggering, note-to-region mapping, MIDI learn.
+   - Open ideas: per-note region triggering, note-to-region mapping, MIDI learn (partly done 2026-11-09: notes can be learned for the pass slots, SAVE and PLAY; `docs/superpowers/specs/2026-11-09-pass-slots-design.md`).
 
 User note: The rest follows from the UI rework; it is "a hell of a lot of fun".
 

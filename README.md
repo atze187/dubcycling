@@ -2,7 +2,7 @@
 
 VST3 plugin: two stereo loops, region-based rules that decide which part of loop 2 plays when loop 1 enters a region.
 
-Status: edit view, audio engine and presets implemented. The plugin has stereo out and no audio input, so hosts list it as an instrument (put it on a MIDI track; MIDI is ignored). Tested in Ableton Live on Windows.
+Status: edit view, audio engine and presets implemented. The plugin has stereo out and no audio input, so hosts list it as an instrument (put it on a MIDI track). MIDI is used in MIDI trigger mode and for the learned notes of the pass slots; otherwise it is ignored. Tested in Ableton Live on Windows (effects, beat grid and mix, MIDI trigger mode); the pass slots are not yet tested in a real host.
 
 ## Usage
 
@@ -21,7 +21,7 @@ Status: edit view, audio engine and presets implemented. The plugin has stereo o
   probability that this Loop-2 region plays when Loop 1 enters the selected region, the GATE/ONESHOT toggle
   sets the play mode (GATE repeats until Loop 1 leaves the region, ONESHOT plays the region once). "Silence"
   shows the remainder (probability that nothing new plays).
-- **Presets and banks:** the top row has BANK and PRESET. A bank is a folder in `Documents/Dubcycling/Presets/<Bank>/` with `bank.json` and the used samples in `samples/`. SAVE overwrites the active preset, SAVE AS makes a variant, a name field asks for new names. Loading a preset with unsaved changes asks first. The "⋯" menu creates a bank, exports a bank as a zip (only the samples in use), imports a zip (never overwrites, a name clash becomes "Name (2)") and opens the folder. Presets cannot be deleted or renamed in the plugin yet. Saving a preset into an existing bank rewrites it as `bank.json` version 3, which older plugin versions then refuse to open.
+- **Presets and banks:** the top row has BANK and PRESET. A bank is a folder in `Documents/Dubcycling/Presets/<Bank>/` with `bank.json` and the used samples in `samples/`. SAVE overwrites the active preset, SAVE AS makes a variant, a name field asks for new names. Loading a preset with unsaved changes asks first. The "⋯" menu creates a bank, exports a bank as a zip (only the samples in use), imports a zip (never overwrites, a name clash becomes "Name (2)") and opens the folder. Presets cannot be deleted or renamed in the plugin yet. Saving a preset into an existing bank rewrites it as `bank.json` version 4, which older plugin versions then refuse to open.
 - **Missing files:** when a saved project's loop file is gone, the plugin looks for a file with the same name
   and content (hash) in the folder of the other loop and the folder of the last loaded file (this session);
   regions, rules and bars are always kept. If it is not found, the lane says "File missing" and "RELINK" (or dropping a file)
@@ -51,7 +51,8 @@ Status: edit view, audio engine and presets implemented. The plugin has stereo o
 ### Playing with MIDI
 
 The toggle in the top bar switches between Autoplay (the default: the loops follow the host transport) and MIDI.
-In MIDI mode the plugin is silent until a note is held: any note on any channel gates both loops. Holding a note
+In MIDI mode the plugin is silent until a note is held: any note on any channel gates both loops, except the
+notes learned for the pass slots (see below). Holding a note
 starts both loops at the next host bar, and releasing the last held note stops them at the next bar with a short
 (~5 ms) fade-out; effect tails ring out. With a stopped host the loops start at once, at the last known host tempo.
 If the host loops a range without a bar line, a pending start or stop happens at the loop wrap. The mode is saved per plugin instance with the
@@ -73,6 +74,10 @@ gate-off in the middle makes it incomplete). The PASSES row under Loop 2 works w
   lit while a slot or the chain is on; clicking it returns to normal random playing (this is also how you leave a
   slot replay). Every switch takes effect at the next pass start, so a replay always begins at the start of Loop 1;
   until then the random playing goes on. Replayed passes are not recorded.
+- **Pass starts:** a pass starts at a Loop-1 cycle start on the song timeline (song position 0, then every Loop-1
+  length). A host loop that does not start on a cycle start never completes a pass (nothing can be saved), and
+  replay only (re)starts at cycle starts. A transport jump or a stop during a replay leaves Loop 2 silent until the
+  next pass start; if PLAY was turned off meanwhile, random playing takes over at once.
 - **What a pass stores:** only which Loop-2 region (or silence) entered when, as a fraction of the pass, and its
   play mode (GATE or ONESHOT). No audio, no copies of effects or mix: these come from the current region
   settings. A slot therefore **plays what still fits**: after a tempo, bars or boundary change the entries play at
@@ -81,21 +86,23 @@ gate-off in the middle makes it incomplete). The PASSES row under Loop 2 works w
   the current pass finish; then the plugin goes back to random playing (or, in the chain, to the next filled slot).
 - The slots are part of the **preset**: saving a preset stores them, loading one replaces them (and turns replay
   off). A project stores them too. The bank format is now `bank.json` version 4; older plugin versions refuse
-  banks saved with it.
+  banks saved with it, and a project with saved passes re-saved by an older plugin version loses them.
 - **MIDI learn:** click **LEARN**, then click a slot, SAVE or PLAY; the button shows "..." (waiting for note) until
   you play a MIDI note, which is then bound to it. Any note on any channel counts; velocity and length are ignored.
   A note is bound to one target only: learning it again moves it. In Learn mode the buttons show their notes (also
-  in the tooltips at any time); clicking a waiting button again cancels the wait and removes its note. Click LEARN
-  again to leave Learn mode (an armed learn is cancelled). A bound note triggers its target like a click: a slot
-  note repeats that slot (ignored while the slot is empty), the PLAY note toggles the chain/off, the SAVE note
-  saves. Learned notes are stored **per plugin instance** with the project, **not** in presets or banks, so
-  loading a preset never changes them. Slots and learned notes work in both Autoplay and MIDI mode; in MIDI mode a
-  learned note **no longer opens the gate**, every other note still does, and the gate still decides whether
-  anything sounds.
+  in the tooltips at any time); clicking a waiting button again only cancels the wait (its note stays). To remove a
+  note, **right-click** the button in Learn mode. Click LEARN again to leave Learn mode (an armed learn is
+  cancelled). A bound note triggers its target like a click: a slot note repeats that slot (ignored while the slot
+  is empty), the PLAY note turns the chain on (only while a slot is filled) or any replay off, the SAVE note
+  saves. Bound notes also act while the host bypasses the plugin. Learned notes are stored **per plugin
+  instance** with the project, **not** in presets or banks, so loading a preset never changes them. Slots and
+  learned notes work in both Autoplay and MIDI mode; in MIDI mode a learned note **no longer opens the gate**,
+  every other note still does, and the gate still decides whether anything sounds.
 
 ### Known limitations
 
-- Not tested in a real host yet on any platform; macOS and Linux are only built and unit-tested in CI.
+- Tested in a real host only on Windows (Ableton Live), and not yet with the pass slots; macOS and Linux are only
+  built and unit-tested in CI.
 - No undo.
 - Effect parameters are not exposed for host automation, Flanger rate has no tempo sync, and a performance view is not implemented.
 
@@ -144,7 +151,7 @@ JUCE's built-in decoder on Linux (`JUCE_USE_MP3AUDIOFORMAT`).
 
 `.github/workflows/build.yml` builds, tests and uploads the `.vst3` bundle for Windows, macOS and Linux on every
 push and pull request. The macOS and Linux builds have so far only been built in CI and have not been tested on
-real hardware or in real hosts. The Windows build has not been tested in a real host either.
+real hardware or in real hosts. The Windows build has been tested in Ableton Live (not yet the pass slots).
 
 ## License
 

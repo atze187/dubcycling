@@ -59,6 +59,9 @@ region parameters).
   next MIDI note binds to it. Outside Learn mode clicking a slot triggers it.
 - Learnable targets: the 8 slots, Save, Play.
 - Any note on any channel counts, as in MIDI trigger mode; velocity, length and channel are ignored.
+- A second click on a waiting target only cancels the wait (a double-click must never delete a binding).
+  Removing a binding is its own gesture: a right-click on a slot, Save or Play while Learn mode is on
+  removes that target's note (and cancels its wait). (Set in the final review.)
 
 ## Designer's calls (to be checked by the user)
 
@@ -81,7 +84,10 @@ region parameters).
   mode (Gate or One-Shot) as drawn. The Loop-1 region index is not the key. Mix and effects are not
   stored; they come from the current region settings.
 - **Silence is recorded** too, so a replay stops voices where the original did and does not sound
-  different from the saved pass. Voices that span the pass wrap behave as in normal playback.
+  different from the saved pass. Voices that span the pass wrap behave as in normal playback while
+  recording and playing randomly. During **replay** a voice carried into a pass is stopped at every
+  pass boundary: a replayed pass starts with Loop 2 silent unless it has an event at phase ~0 (amended
+  in the final review; the recorded pass cannot tell a carried-over voice from silence).
 - **"Plays what still fits":** an entry is replayed at its phase; it is skipped when its region 2 no
   longer exists (or the loop is gone). Boundary edits in Loop 1 do not invalidate slots, since entries are keyed
   by phase and not by Loop-1 region index.
