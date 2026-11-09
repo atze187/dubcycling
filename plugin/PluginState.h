@@ -1,9 +1,11 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <vector>
 #include <juce_data_structures/juce_data_structures.h>
 #include "engine/FxSettings.h"
+#include "engine/Pass.h"
 #include "engine/RuleSet.h"
 
 namespace dc {
@@ -54,6 +56,10 @@ struct PluginState
     // Effect settings (knobs and per-Loop-2-region switches). Optional in the stored state (an Fx
     // element is only written when not the default), so kStateVersion stays 1.
     FxSettings fx;
+    // The 8 recorded pass slots. Optional in the stored state (a Passes element is only written when
+    // any slot is not empty; a state without it loads 8 empty slots), so kStateVersion stays 1.
+    // Sanitized on load through sanitizePass.
+    std::array<Pass, kPassSlots> passes;
 };
 
 // Shared sanitizing steps of deserialize (also used by the bank file format).

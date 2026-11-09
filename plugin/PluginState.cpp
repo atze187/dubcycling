@@ -134,6 +134,71 @@ FxSettings fxFromTree(const juce::ValueTree& t)
     return fx;
 }
 
+juce::ValueTree passesToTree(const std::array<Pass, kPassSlots>& passes)
+{
+    juce::ValueTree t("Passes");
+    for (std::size_t slot = 0; slot < passes.size(); ++slot)
+    {
+        if (passes[slot].empty())
+            continue;
+        juce::ValueTree p("Pass");
+        p.setProperty("slot", static_cast<int>(slot), nullptr);
+        for (auto& e : passes[slot].events)
+        {
+            juce::ValueTree n("Event");
+            n.setProperty("phase", num(e.phase), nullptr);
+            if (e.stop)
+                n.setProperty("stop", 1, nullptr);
+            else
+            {
+                n.setProperty("region2", e.region2, nullptr);
+                n.setProperty("mode", e.mode == PlayMode::OneShot ? "oneshot" : "gate", nullptr);
+            }
+            p.appendChild(n, nullptr);
+        }
+        t.appendChild(p, nullptr);
+    }
+    return t;
+}
+
+// Damaged slots, events and numbers are dropped or fixed by sanitizePass; never throws on bad data.
+std::array<Pass, kPassSlots> passesFromTree(const juce::ValueTree& t)
+{
+    std::array<Pass, kPassSlots> out;
+    for (auto p : t)
+    {
+        const auto slotText = p.getProperty("slot").toString();
+        if (slotText.isEmpty() || slotText.length() > 3 || !slotText.containsOnly("0123456789"))
+            continue;
+        const int slot = slotText.getIntValue();
+        if (slot >= kPassSlots)
+            continue;
+        Pass pass;
+        for (auto n : p)
+        {
+            if (static_cast<int>(pass.events.size()) >= kMaxPassEvents)
+                break;
+            PassEvent e;
+            e.phase = parseFxNumber(n.getProperty("phase").toString()); // garbage -> NaN, dropped by sanitizePass
+            if (n.getProperty("stop").toString() == "1")
+                e.stop = true;
+            else
+            {
+                const auto region = n.getProperty("region2").toString();
+                const auto mode = n.getProperty("mode").toString();
+                if (region.isEmpty() || region.length() > 9 || !region.containsOnly("-0123456789")
+                    || (mode != "gate" && mode != "oneshot"))
+                    continue;
+                e.region2 = region.getIntValue();
+                e.mode = mode == "oneshot" ? PlayMode::OneShot : PlayMode::Gate;
+            }
+            pass.events.push_back(e);
+        }
+        out[static_cast<std::size_t>(slot)] = sanitizePass(std::move(pass));
+    }
+    return out;
+}
+
 } // namespace
 
 std::vector<double> sanitizeBoundaries(const std::vector<double>& raw)
@@ -238,6 +303,8 @@ juce::MemoryBlock serialize(const PluginState& s)
     root.appendChild(rules, nullptr);
     if (s.fx != FxSettings {})
         root.appendChild(fxToTree(s.fx), nullptr);
+    if (std::any_of(s.passes.begin(), s.passes.end(), [](const Pass& p) { return !p.empty(); }))
+        root.appendChild(passesToTree(s.passes), nullptr);
 
     juce::MemoryBlock block;
     if (auto xml = root.createXml())
@@ -291,6 +358,7 @@ std::optional<PluginState> deserialize(const void* data, std::size_t size)
                 s.rules.push_back(std::move(*e));
         }
         s.fx = sanitizeFx(fxFromTree(root.getChildWithName("Fx")), static_cast<int>(s.loop2.boundaries.size()) + 1);
+        s.passes = passesFromTree(root.getChildWithName("Passes"));
         return s;
     }
     catch (...)

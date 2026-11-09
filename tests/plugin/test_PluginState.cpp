@@ -497,3 +497,74 @@ TEST_CASE("State: mix numbers are sanitized", "[PluginState][mix][hardening]")
         CHECK(r->rules[0].targets[0].mix == expected);
     }
 }
+
+#include "engine/Pass.h"
+
+namespace {
+PassEvent startEv(double phase, int region2, PlayMode mode = PlayMode::Gate)
+{
+    PassEvent e;
+    e.phase = phase;
+    e.region2 = region2;
+    e.mode = mode;
+    return e;
+}
+PassEvent stopEv(double phase)
+{
+    PassEvent e;
+    e.phase = phase;
+    e.stop = true;
+    return e;
+}
+juce::String passesDoc(const juce::String& passesXml)
+{
+    return fxDoc(passesXml, "<Loop2 bars=\"1\" boundaries=\"0.5\"/>");
+}
+}
+
+TEST_CASE("State: passes survive a round trip", "[PluginState][passes]")
+{
+    auto s = sample();
+    s.passes[1].events = { startEv(0.1234567890123456, 2, PlayMode::OneShot), stopEv(0.75) };
+    s.passes[6].events = { startEv(0.0, 0), startEv(1.0 / 3.0, 1, PlayMode::Gate), stopEv(0.9) };
+    const auto block = serialize(s);
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    CHECK(r->passes == s.passes);
+    CHECK(r->passes[0].empty());
+}
+
+TEST_CASE("State: a state without passes loads 8 empty slots and writes no Passes element", "[PluginState][passes]")
+{
+    const auto r = loadXml(fxDoc(""));
+    REQUIRE(r.has_value());
+    REQUIRE(r->passes.size() == 8);
+    for (auto& p : r->passes)
+        CHECK(p.empty());
+    CHECK_FALSE(serialize(sample()).toString().contains("Passes"));
+}
+
+TEST_CASE("State: damaged passes are sanitized and the rest loads", "[PluginState][passes][hardening]")
+{
+    juce::String many = "<Pass slot=\"3\">";
+    for (int i = 0; i < 300; ++i)
+        many += "<Event phase=\"0.5\" stop=\"1\"/>";
+    many += "</Pass>";
+    const auto r = loadXml(passesDoc("<Passes>"
+                                     "<Pass slot=\"0\"><Event phase=\"nan\" stop=\"1\"/><Event phase=\"abc\" stop=\"1\"/>"
+                                     "<Event phase=\"0.5\" region2=\"-2\" mode=\"gate\"/><Event phase=\"0.5\" region2=\"1\" mode=\"banana\"/>"
+                                     "<Event phase=\"7\" stop=\"1\"/><Event phase=\"0.2\" region2=\"1\" mode=\"oneshot\"/></Pass>"
+                                     "<Pass slot=\"99\"><Event phase=\"0.5\" stop=\"1\"/></Pass>"
+                                     "<Pass slot=\"-1\"><Event phase=\"0.5\" stop=\"1\"/></Pass>"
+                                     "<Pass slot=\"x\"><Event phase=\"0.5\" stop=\"1\"/></Pass>"
+                                     + many + "<Junk/></Passes>"));
+    REQUIRE(r.has_value());
+    CHECK(r->loop2.boundaries.size() == 1);
+    REQUIRE(r->passes[0].events.size() == 2);
+    CHECK(r->passes[0].events[0] == startEv(0.2, 1, PlayMode::OneShot));
+    CHECK(r->passes[0].events[1] == stopEv(1.0));
+    CHECK(r->passes[3].events.size() == static_cast<std::size_t>(kMaxPassEvents));
+    for (int i = 1; i < kPassSlots; ++i)
+        if (i != 3)
+            CHECK(r->passes[static_cast<std::size_t>(i)].empty());
+}

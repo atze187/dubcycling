@@ -310,6 +310,68 @@ FxSettings fxFromVar(const juce::var& v, int loop2RegionCount)
     return sanitizeFx(std::move(fx), loop2RegionCount);
 }
 
+juce::var passesToVar(const std::array<Pass, kPassSlots>& passes)
+{
+    juce::Array<juce::var> slots;
+    for (auto& pass : passes)
+    {
+        juce::Array<juce::var> events;
+        for (auto& e : pass.events)
+        {
+            auto* o = new juce::DynamicObject();
+            o->setProperty("phase", e.phase);
+            if (e.stop)
+                o->setProperty("stop", true);
+            else
+            {
+                o->setProperty("region2", e.region2);
+                o->setProperty("mode", e.mode == PlayMode::OneShot ? "oneshot" : "gate");
+            }
+            events.add(juce::var(o));
+        }
+        slots.add(events);
+    }
+    return slots;
+}
+
+// Wrong types, unknown modes, non-finite phases, more than kMaxPassEvents events: dropped or fixed
+// by sanitizePass. Missing or damaged = empty slots.
+std::array<Pass, kPassSlots> passesFromVar(const juce::var& v)
+{
+    std::array<Pass, kPassSlots> out;
+    auto* slots = v.getArray();
+    if (slots == nullptr)
+        return out;
+    for (int s = 0; s < slots->size() && s < kPassSlots; ++s)
+    {
+        auto* events = (*slots)[s].getArray();
+        if (events == nullptr)
+            continue;
+        Pass pass;
+        for (int i = 0; i < events->size() && static_cast<int>(pass.events.size()) < kMaxPassEvents; ++i)
+        {
+            const auto& ev = (*events)[i];
+            if (!ev.isObject())
+                continue;
+            PassEvent e;
+            e.phase = isNumber(ev["phase"]) ? static_cast<double>(ev["phase"]) : std::nan("");
+            if (ev["stop"].isBool() && static_cast<bool>(ev["stop"]))
+                e.stop = true;
+            else
+            {
+                const auto mode = ev["mode"].toString();
+                if (!isNumber(ev["region2"]) || !ev["mode"].isString() || (mode != "gate" && mode != "oneshot"))
+                    continue;
+                e.region2 = intOf(ev["region2"], -1);
+                e.mode = mode == "oneshot" ? PlayMode::OneShot : PlayMode::Gate;
+            }
+            pass.events.push_back(e);
+        }
+        out[static_cast<std::size_t>(s)] = sanitizePass(std::move(pass));
+    }
+    return out;
+}
+
 } // namespace
 
 juce::String presetNameProblem(const juce::String& name, const Bank& bank)
@@ -367,6 +429,7 @@ juce::String bankToJson(const Bank& bank)
         o->setProperty("loop2", loopToVar(p.state.loop2));
         o->setProperty("rules", rulesToVar(p.state.rules));
         o->setProperty("fx", fxToVar(p.state.fx));
+        o->setProperty("passes", passesToVar(p.state.passes));
         presets.add(juce::var(o));
     }
     auto* root = new juce::DynamicObject();
@@ -423,6 +486,7 @@ BankParseResult bankFromJson(const juce::String& json)
             p.state.loop2 = loopFromVar(pv["loop2"]);
             p.state.rules = rulesFromVar(pv["rules"]);
             p.state.fx = fxFromVar(pv["fx"], static_cast<int>(p.state.loop2.boundaries.size()) + 1);
+            p.state.passes = passesFromVar(pv["passes"]);
             bank.presets.push_back(std::move(p));
         }
         result.bank = std::move(bank);
@@ -471,6 +535,22 @@ juce::String presetFingerprint(const PluginState& state)
         for (std::size_t i = 0; i < state.fx.switches.size(); ++i)
             if (state.fx.switches[i] != 0)
                 out << ',' << static_cast<int>(i) << '=' << static_cast<int>(state.fx.switches[i]);
+        out << '\n';
+    }
+    // Pass slots: nothing at all when every slot is empty, so presets without passes keep their fingerprint.
+    for (std::size_t slot = 0; slot < state.passes.size(); ++slot)
+    {
+        if (state.passes[slot].empty())
+            continue;
+        out << "P|" << static_cast<int>(slot);
+        for (auto& e : state.passes[slot].events)
+        {
+            out << '|' << num(e.phase) << ',';
+            if (e.stop)
+                out << 's';
+            else
+                out << e.region2 << (e.mode == PlayMode::OneShot ? 'o' : 'g');
+        }
         out << '\n';
     }
     return out;

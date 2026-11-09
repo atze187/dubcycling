@@ -145,7 +145,7 @@ TEST_CASE("BankFormat: json carries version and a presets list")
 {
     const auto v = juce::JSON::parse(bankToJson(sampleBank()));
     REQUIRE(v.isObject());
-    CHECK(static_cast<int>(v["version"]) == 3);
+    CHECK(static_cast<int>(v["version"]) == 4);
     REQUIRE(v["presets"].isArray());
     CHECK(v["presets"].size() == 2);
 }
@@ -186,7 +186,7 @@ TEST_CASE("BankFormat: json nested deeper than kMaxJsonDepth gives no bank witho
 
 TEST_CASE("BankFormat: a newer version is flagged tooNew")
 {
-    const auto r = bankFromJson("{\"version\": 4, \"presets\": []}");
+    const auto r = bankFromJson("{\"version\": 5, \"presets\": []}");
     CHECK_FALSE(r.bank.has_value());
     CHECK(r.tooNew);
 }
@@ -303,13 +303,13 @@ BankParseResult parseOnePreset(const juce::String& fxJson, const juce::String& l
 }
 }
 
-TEST_CASE("Bank: bankToJson writes version 3")
+TEST_CASE("Bank: bankToJson writes version 4")
 {
-    CHECK(kBankVersion == 3);
+    CHECK(kBankVersion == 4);
     Bank b;
     b.presets.push_back(makePreset("A", "a.wav"));
     const auto v = juce::JSON::parse(bankToJson(b));
-    CHECK(static_cast<int>(v["version"]) == 3);
+    CHECK(static_cast<int>(v["version"]) == 4);
     CHECK(v["presets"][0]["fx"].isObject()); // written even for default fx
     CHECK(v["presets"][0]["fx"]["params"].isObject());
     CHECK(v["presets"][0]["fx"]["switches"].isObject());
@@ -339,19 +339,13 @@ TEST_CASE("Bank: a version 1 file still loads, with default fx")
     CHECK_FALSE(r.tooNew);
     REQUIRE(r.bank->presets.size() == 1);
     CHECK(r.bank->presets[0].state.fx == FxSettings {});
-    CHECK(r.bank->version == 3); // saving it writes version 3
+    CHECK(r.bank->version == kBankVersion); // saving it writes the current version
 
     const auto noFx = bankFromJson("{\"version\":2,\"presets\":[{\"name\":\"X\"}]}");
     REQUIRE(noFx.bank.has_value());
     CHECK(noFx.bank->presets[0].state.fx == FxSettings {});
 }
 
-TEST_CASE("Bank: a version 4 file is refused as too new")
-{
-    const auto r = bankFromJson("{\"version\":4,\"presets\":[{\"name\":\"X\"}]}");
-    CHECK(r.tooNew);
-    CHECK_FALSE(r.bank.has_value());
-}
 
 TEST_CASE("Bank: invalid fx numbers are sanitized")
 {
@@ -420,13 +414,13 @@ TEST_CASE("Bank: a changed switch or knob changes the fingerprint, a default fx 
     CHECK(presetFingerprint(sw2) != presetFingerprint(sw));
 }
 
-TEST_CASE("Bank: saving a loaded version 1 or 2 bank writes version 3")
+TEST_CASE("Bank: saving a loaded version 1 or 2 bank writes version 4")
 {
     for (const char* v : { "1", "2" })
     {
         const auto r = bankFromJson("{\"version\":" + juce::String(v) + ",\"presets\":[{\"name\":\"Old\"}]}");
         REQUIRE(r.bank.has_value());
-        CHECK(static_cast<int>(juce::JSON::parse(bankToJson(*r.bank))["version"]) == 3);
+        CHECK(static_cast<int>(juce::JSON::parse(bankToJson(*r.bank))["version"]) == 4);
     }
 }
 
@@ -491,4 +485,122 @@ TEST_CASE("Bank: a changed mix changes the fingerprint, a default mix does not")
     auto other = changed;
     other.rules[0].targets[0].mix = 0.8f;
     CHECK(presetFingerprint(other) != presetFingerprint(changed));
+}
+
+#include "engine/Pass.h"
+
+namespace {
+PassEvent bStart(double phase, int region2, PlayMode mode)
+{
+    PassEvent e;
+    e.phase = phase;
+    e.region2 = region2;
+    e.mode = mode;
+    return e;
+}
+PassEvent bStop(double phase)
+{
+    PassEvent e;
+    e.phase = phase;
+    e.stop = true;
+    return e;
+}
+Preset passPreset()
+{
+    auto p = makePreset("Pass", "a.wav");
+    p.state.passes[0].events = { bStart(0.1234567890123456, 2, PlayMode::OneShot), bStop(0.75) };
+    p.state.passes[7].events = { bStart(1.0 / 3.0, 0, PlayMode::Gate) };
+    return p;
+}
+}
+
+TEST_CASE("Bank: version 4 round trips the passes exactly", "[passes]")
+{
+    CHECK(kBankVersion == 4);
+    Bank bank;
+    bank.presets.push_back(passPreset());
+    const auto json = bankToJson(bank);
+    const auto v = juce::JSON::parse(json);
+    CHECK(static_cast<int>(v["version"]) == 4);
+    REQUIRE(v["presets"][0]["passes"].size() == 8);
+    CHECK(v["presets"][0]["passes"][0][0]["mode"].toString() == "oneshot");
+    CHECK(static_cast<bool>(v["presets"][0]["passes"][0][1]["stop"]));
+    CHECK(v["presets"][0]["passes"][7][0]["mode"].toString() == "gate");
+    CHECK(static_cast<int>(v["presets"][0]["passes"][7][0]["region2"]) == 0);
+
+    const auto r = bankFromJson(json);
+    REQUIRE(r.bank.has_value());
+    REQUIRE(r.bank->presets.size() == 1);
+    CHECK(r.bank->presets[0].state.passes == bank.presets[0].state.passes);
+}
+
+TEST_CASE("Bank: version 1 to 3 files load with empty passes", "[passes]")
+{
+    for (int ver = 1; ver <= 3; ++ver)
+    {
+        const auto r = bankFromJson("{\"version\":" + juce::String(ver) + ",\"presets\":[{\"name\":\"Old\"}]}");
+        REQUIRE(r.bank.has_value());
+        for (auto& p : r.bank->presets[0].state.passes)
+            CHECK(p.empty());
+    }
+}
+
+TEST_CASE("Bank: a version 5 file is refused as too new", "[passes]")
+{
+    const auto r = bankFromJson("{\"version\":5,\"presets\":[{\"name\":\"X\"}]}");
+    CHECK(r.tooNew);
+    CHECK_FALSE(r.bank.has_value());
+}
+
+TEST_CASE("Bank: damaged passes are sanitized and the rest loads", "[passes][hardening]")
+{
+    juce::String many = "[";
+    for (int i = 0; i < 300; ++i)
+        many += juce::String(i ? "," : "") + "{\"phase\":0.5,\"stop\":true}";
+    many += "]";
+    const auto r = bankFromJson(
+        "{\"version\":4,\"presets\":[{\"name\":\"P\",\"loop2\":{\"boundaries\":[0.5]},\"passes\":["
+        "[{\"phase\":null,\"stop\":true},{\"phase\":\"x\",\"stop\":true},{\"phase\":0.5,\"region2\":-1,\"mode\":\"gate\"},"
+        "{\"phase\":0.5,\"region2\":1,\"mode\":\"banana\"},{\"phase\":0.5,\"region2\":1,\"mode\":7},5,\"s\",{\"phase\":9,\"stop\":true},"
+        "{\"phase\":0.2,\"region2\":1,\"mode\":\"oneshot\"}],"
+        "\"notalist\"," + many + ",17,null,{},[],[]]}]}");
+    REQUIRE(r.bank.has_value());
+    REQUIRE(r.bank->presets.size() == 1);
+    auto& st = r.bank->presets[0].state;
+    CHECK(st.loop2.boundaries.size() == 1);
+    REQUIRE(st.passes[0].events.size() == 2);
+    CHECK(st.passes[0].events[0] == bStart(0.2, 1, PlayMode::OneShot));
+    CHECK(st.passes[0].events[1] == bStop(1.0));
+    CHECK(st.passes[1].empty());
+    CHECK(st.passes[2].events.size() == static_cast<std::size_t>(kMaxPassEvents));
+    for (int i = 3; i < kPassSlots; ++i)
+        CHECK(st.passes[static_cast<std::size_t>(i)].empty());
+
+    const auto notArray = bankFromJson("{\"version\":4,\"presets\":[{\"name\":\"P\",\"passes\":{\"a\":1}}]}");
+    REQUIRE(notArray.bank.has_value());
+    CHECK(notArray.bank->presets[0].state.passes[0].empty());
+}
+
+TEST_CASE("Bank: editing a pass slot changes the fingerprint, empty slots do not", "[passes]")
+{
+    auto s = makePreset("A", "a.wav").state;
+    const auto base = presetFingerprint(s);
+    CHECK(base.isNotEmpty());
+    CHECK_FALSE(base.contains("P|"));
+    auto a = s;
+    a.passes[2].events = { bStart(0.25, 1, PlayMode::Gate) };
+    const auto fa = presetFingerprint(a);
+    CHECK(fa != base);
+    CHECK(fa.startsWith(base)); // an empty-passes state keeps its old fingerprint text as a prefix
+    auto b = a;
+    b.passes[2].events[0].phase = 0.26;
+    CHECK(presetFingerprint(b) != fa);
+    auto c = a;
+    c.passes[2].events[0].mode = PlayMode::OneShot;
+    CHECK(presetFingerprint(c) != fa);
+    auto d = a;
+    d.passes[3] = a.passes[2];
+    d.passes[2] = {};
+    CHECK(presetFingerprint(d) != fa);
+    CHECK(presetFingerprint(a) == fa);
 }
