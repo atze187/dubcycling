@@ -725,6 +725,11 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
     if (entry)
         lastPpq_ = t.ppq;
     const bool jumped = running_ && entry;
+    // Continuous playback would have reached a cycle start here (expectedPpq_ is still the previous
+    // block's end): a jump from there to a cycle start, as a host loop split at its end makes it,
+    // completes the open pass like a continuous wrap.
+    const double expectedRest = std::fmod(expectedPpq_, beats1);
+    const bool wrapExpected = jumped && std::min(expectedRest, beats1 - expectedRest) <= kJumpToleranceBeats;
     running_ = true;
 
     // An early draw is only good for continuous playback on the same model.
@@ -760,14 +765,15 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
             const bool sameEntryAgain = jumpNow && lastEntryFrame_ >= 0 && region == lastRegion1_
                                         && frame - lastEntryFrame_ <= duplicateWindow
                                         && ph >= regionLo && (ph - regionLo) * beats1 <= kJumpToleranceBeats;
-            // Pass boundaries. A continuous cycle change finishes the open pass; it, a fresh start or
-            // a jump begins a new one if it lands on the cycle start. Anything else (a jump, a fresh
-            // start mid-loop) leaves no pass open until the next wrap. The repeated report of a host
-            // wrap (sameEntryAgain) is no boundary: the pass begun at that wrap goes on.
+            // Pass boundaries. A continuous cycle change, or a jump from a cycle end to a cycle start
+            // (wrapExpected), finishes the open pass; it, a fresh start or a jump begins a new one if
+            // it lands on the cycle start. Anything else (a jump, a fresh start mid-loop) leaves no
+            // pass open until the next wrap. The repeated report of a host wrap (sameEntryAgain) is
+            // no boundary: the pass begun at that wrap goes on.
             if (!sameEntryAgain && (entry || cycle != lastCycle1_))
             {
                 const bool atStart = ph * beats1 <= kJumpToleranceBeats;
-                if (!entry && atStart)
+                if (atStart && (!entry || wrapExpected))
                     recorder_.finish();
                 else
                     recorder_.abandon();

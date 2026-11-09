@@ -47,7 +47,7 @@ struct Model
     LoopSlot loop1, loop2;
     RuleSet rules;
     FxSettings fx; // insert parameters and switches per Loop-2 region
-    std::array<Pass, kPassSlots> passes; // saved passes (empty = free slot); the engine only records
+    std::array<Pass, kPassSlots> passes; // saved passes (empty = free slot); not read by the engine yet
 };
 
 // Audio core: Loop 1 phase-locked to the host, Loop 2 as one region voice driven by the Sequencer.
@@ -82,8 +82,9 @@ struct Model
 // Passes: the Loop-2 commands of one Loop-1 cycle (entry starts and stops, Gate ends, the jump stop)
 // are recorded at their Loop-1 phase. A pass begins at a cycle start reached continuously, or by a
 // fresh start or jump that lands within kJumpToleranceBeats of it, and is published (lastPass) at
-// the next continuous cycle start. A stop, invalid transport, a jump, a MIDI release or a hard
-// restart abandons it; a seamless swap does not.
+// the next continuous cycle start, or at a jump from a cycle end to a cycle start (a host loop split
+// at its end). A stop, invalid transport, any other jump, a MIDI release or a hard restart abandons
+// it; a seamless swap does not.
 class Engine
 {
 public:
