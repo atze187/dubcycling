@@ -93,7 +93,9 @@ struct Model
 // Start takes the mix of the current rule target (Loop-1 region at its phase -> its Loop-2 region),
 // else 0.5; a Start of a Loop-2 region that no longer exists is skipped. The Sequencer is reset on
 // entering and leaving replay. A jump, stop or fresh start mid-loop stops the voice and holds the
-// events back until the next boundary; a MIDI release drops the events it passes over.
+// events back until the next boundary; a MIDI release drops the events it passes over. A seamless
+// swap (e.g. a slot cleared or saved while it replays) goes on with the new slot's first event after
+// the current Loop-1 phase.
 class Engine
 {
 public:

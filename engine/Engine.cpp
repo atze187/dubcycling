@@ -405,6 +405,16 @@ void Engine::adoptSwap(const Model& m, double beats1)
         requestStop();
         sequencer_.onVoiceEnded();
     }
+    // Replay: the slot's events may have changed (Clear, Clear all, a save into it). Go on with the
+    // first event after the last rendered phase, so nothing already passed fires late and nothing
+    // ahead is skipped.
+    if (replaySlot_ >= 0)
+    {
+        const std::vector<PassEvent>& events = m.passes[static_cast<size_t>(replaySlot_)].events;
+        replayNext_ = static_cast<int>(std::upper_bound(events.begin(), events.end(), ph,
+                                                        [](double p, const PassEvent& e) { return p < e.phase; })
+                                       - events.begin());
+    }
     // A switch toggled or a mix moved in the editor acts on the sounding region at once.
     refreshMask(m);
     refreshMix(m);

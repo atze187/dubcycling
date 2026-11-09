@@ -2371,6 +2371,43 @@ TEST_CASE("Engine replay: a host jump stops the voice and replay resumes at the 
     CHECK(j.l[frac(0.75) + frac(0.1)] == Catch::Approx(0.3f).margin(kTol));
 }
 
+TEST_CASE("Engine replay: a seamless swap re-seeks the replayed slot to the current phase", "[Engine][replay]")
+{
+    // Skip: the old slot's events were all issued by phase .4; the new slot still has one ahead.
+    {
+        auto m = replayModel();
+        m->passes[0].events = { { 0.0, false, 3, dc::PlayMode::OneShot }, { 0.1, true, -1, dc::PlayMode::Gate },
+                                { 0.2, false, 0, dc::PlayMode::Gate },    { 0.3, true, -1, dc::PlayMode::Gate } };
+        dc::Engine e;
+        replayEngine(e, m);
+        e.setReplay(2);
+        run(e, 0.0, frac(0.4));
+        auto next = std::make_shared<dc::Model>(*m); // same data and bars: seamless
+        next->passes[0].events = { { 0.0, false, 3, dc::PlayMode::OneShot }, { 0.6, false, 1, dc::PlayMode::Gate } };
+        e.setModel(next);
+        const Out o = run(e, ppqAt(frac(0.4)), frac(0.4));
+        CHECK(e.replaySlot() == 0);
+        CHECK(allZero(o.l, 0, frac(0.2)));                                       // nothing stale fires
+        CHECK(o.l[frac(0.3)] == Catch::Approx(0.2f).margin(kTol));               // the event at .6 plays
+    }
+    // Burst: the old slot had issued one event; the new slot's earlier events must not fire late.
+    {
+        auto m = replayModel();
+        m->passes[0].events = { { 0.0, false, 2, dc::PlayMode::Gate } };
+        dc::Engine e;
+        replayEngine(e, m);
+        e.setReplay(2);
+        run(e, 0.0, frac(0.4));
+        auto next = std::make_shared<dc::Model>(*m);
+        next->passes[0].events = { { 0.0, false, 2, dc::PlayMode::Gate }, { 0.2, true, -1, dc::PlayMode::Gate },
+                                   { 0.6, false, 1, dc::PlayMode::Gate } };
+        e.setModel(next);
+        const Out o = run(e, ppqAt(frac(0.4)), frac(0.4));
+        CHECK(o.l[frac(0.1)] == Catch::Approx(0.3f).margin(kTol)); // the Gate of region 2 plays on
+        CHECK(o.l[frac(0.3)] == Catch::Approx(0.2f).margin(kTol)); // then region 1 from .6
+    }
+}
+
 TEST_CASE("Engine replay: no pass is recorded while replaying", "[Engine][replay][pass]")
 {
     dc::Engine e;
