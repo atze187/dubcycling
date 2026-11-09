@@ -12,6 +12,7 @@ add_library(dc_engine STATIC
     fx/Flanger.h fx/Flanger.cpp fx/Reverb.h fx/Reverb.cpp
     fx/FxChain.h fx/FxChain.cpp
     MidiTrigger.h MidiTrigger.cpp
+    Pass.h Pass.cpp
     Sequencer.h Sequencer.cpp
     Engine.h Engine.cpp)
 target_include_directories(dc_engine PUBLIC ${PROJECT_SOURCE_DIR})
