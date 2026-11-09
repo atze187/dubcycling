@@ -83,6 +83,28 @@ struct EditorFixture
 
 } // namespace
 
+namespace {
+void collectLabels(juce::Component& c, juce::StringArray& out)
+{
+    if (auto* label = dynamic_cast<juce::Label*>(&c))
+        out.add(label->getText());
+    for (auto* child : c.getChildren())
+        collectLabels(*child, out);
+}
+} // namespace
+
+TEST_CASE("Editor: the bars captions are English", "[editor]")
+{
+    EditorFixture f;
+    juce::StringArray labels;
+    collectLabels(*f.editor, labels);
+    int bars = 0;
+    for (const auto& t : labels)
+        bars += t == "BARS" ? 1 : 0;
+    CHECK(bars == 2); // one per loop lane
+    CHECK_FALSE(labels.contains("TAKTE"));
+}
+
 TEST_CASE("decideLoopFileAction covers every combination", "[LoopLane][editor]")
 {
     using dc::ui::decideLoopFileAction;

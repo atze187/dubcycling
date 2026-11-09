@@ -626,8 +626,8 @@ void RulePanel::paint(juce::Graphics& g)
     const auto caption = [&](juce::Rectangle<int> col, const char* text) {
         g.drawFittedText(text, col.withY(y).withHeight(kCaptionH), juce::Justification::centredLeft, 1, 0.8f);
     };
-    caption(c.weight, "GEWICHT");
-    caption(c.mode, "MODUS");
+    caption(c.weight, "WEIGHT");
+    caption(c.mode, "MODE");
     caption(c.mix, "MIX");
 }
 

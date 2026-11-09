@@ -218,7 +218,7 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
         styleLcd(status_[i], kAmber, juce::Justification::centredLeft);
         addAndMakeVisible(status_[i]);
 
-        barsLabel_[i].setText("TAKTE", juce::dontSendNotification);
+        barsLabel_[i].setText("BARS", juce::dontSendNotification);
         barsLabel_[i].setFont(mono(10.0f));
         barsLabel_[i].setColour(juce::Label::textColourId, kDim);
         barsLabel_[i].setJustificationType(juce::Justification::centredRight);
