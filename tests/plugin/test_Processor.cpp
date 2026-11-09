@@ -1060,6 +1060,33 @@ TEST_CASE("Processor: savePass stores each finished pass once in the lowest free
     CHECK(f.proc.getModel()->passes[1] == f.proc.getPluginState().passes[1]);
 }
 
+TEST_CASE("Processor: a pass finished before a state load cannot be saved into the loaded state", "[processor][passes]")
+{
+    PassFixture f;
+    f.bar();
+    f.bar();
+    REQUIRE(f.proc.canSave());
+
+    f.proc.restoreState(f.proc.getPluginState()); // e.g. a preset load
+    f.proc.waitForLoads();
+    CHECK_FALSE(f.proc.canSave());
+    CHECK_FALSE(f.proc.savePass());
+    CHECK_FALSE(f.proc.passFilled(0));
+
+    f.bar(); // the pass running at the load is not complete
+    f.bar(); // a pass finished after the load can be saved
+    CHECK(f.proc.canSave());
+    CHECK(f.proc.savePass());
+    CHECK(f.proc.passFilled(0));
+
+    f.bar();
+    REQUIRE(f.proc.canSave());
+    setStateText(f.proc, stateText(f.proc)); // a project load does the same
+    f.proc.waitForLoads();
+    CHECK_FALSE(f.proc.canSave());
+    CHECK_FALSE(f.proc.savePass());
+}
+
 TEST_CASE("Processor: a free slot is required, and Save is off while a replay is requested", "[processor][passes]")
 {
     PassFixture f;

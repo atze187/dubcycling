@@ -112,6 +112,11 @@ void DubcyclingProcessor::applyState(const PluginState& s) {
             tryRelink(i); // a success also retries the other slot if it is Missing
     }
     engine_.setReplay(0); // a loaded state (project or preset) brings its own passes: replay off
+    // A pass finished before the load belongs to the previous state: only passes finished after
+    // the load can be saved into this one.
+    Pass last;
+    if (std::uint32_t id = 0; engine_.lastPass(last, id))
+        lastSavedId_ = id;
     publish();
 }
 
