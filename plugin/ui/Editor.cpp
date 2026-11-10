@@ -22,7 +22,8 @@ constexpr int kFxPanelMinW = 440; // four modules
 constexpr int kFxPanelMaxW = 600;
 constexpr int kBottomMinH = 190;  // FxPanel: title, switch and four knob rows
 constexpr int kMinW = 800;
-constexpr int kMinH = 540;
+constexpr int kMinH = 600;
+constexpr int kResizerSize = 18; // JUCE's resize corner (AudioProcessorEditor::editorResized)
 
 using namespace panel;
 
@@ -49,6 +50,14 @@ LoopRef& refOf(PluginState& s, int slot) { return slot == 0 ? s.loop1 : s.loop2;
 bool fileIsMissing(DubcyclingProcessor::SlotStatus status, const LoopRef& ref)
 {
     return status == DubcyclingProcessor::SlotStatus::Missing && !juce::File(ref.path).existsAsFile();
+}
+
+// The state a Replace/Suggest question is about: everything but the pass slots, which a MIDI Save
+// or a slot clear may change while the question is open without touching the loops.
+juce::MemoryBlock askedStateOf(PluginState s)
+{
+    s.passes = {};
+    return serialize(s);
 }
 } // namespace
 
@@ -209,7 +218,7 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
         styleLcd(status_[i], kAmber, juce::Justification::centredLeft);
         addAndMakeVisible(status_[i]);
 
-        barsLabel_[i].setText("TAKTE", juce::dontSendNotification);
+        barsLabel_[i].setText("BARS", juce::dontSendNotification);
         barsLabel_[i].setFont(mono(10.0f));
         barsLabel_[i].setColour(juce::Label::textColourId, kDim);
         barsLabel_[i].setJustificationType(juce::Justification::centredRight);
@@ -273,10 +282,11 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
     fxPanel_.onParamsChanged = [this](const FxParams& params) { paramsEdited(params); };
     addAndMakeVisible(fxStrip_);
     addAndMakeVisible(fxPanel_);
+    addAndMakeVisible(passes_);
 
     setResizable(true, true);
     setResizeLimits(kMinW, kMinH, 1800, 1400);
-    setSize(900, 600);
+    setSize(900, 660);
     for (int i = 0; i < 2; ++i)
         seenFailure_[i] = proc_.replaceFailure(i).id; // only failures from now on are shown
     refresh();
@@ -371,6 +381,7 @@ void Editor::refresh()
                    juce::dontSendNotification);
     mode_.setButtonText(proc_.triggerMode() == TriggerMode::Midi ? "MIDI" : "Autoplay");
     presetBar_.refresh();
+    passes_.refresh(st.passes);
 }
 
 void Editor::updatePlayheads()
@@ -551,7 +562,7 @@ void Editor::suggestRegions(int slot)
     }
 
     pending_[slot].active = true;
-    pending_[slot].state = serialize(st);
+    pending_[slot].state = askedStateOf(st);
     juce::Component::SafePointer<Editor> safe(this);
     auto answer = [safe, slot, commit](bool ok) {
         if (safe == nullptr || !safe->pending_[slot].active)
@@ -561,7 +572,7 @@ void Editor::suggestRegions(int slot)
         if (!ok)
             return;
         // The answer only covers the state the user was asked about; never ask twice.
-        if (serialize(safe->proc_.getPluginState()) == asked)
+        if (askedStateOf(safe->proc_.getPluginState()) == asked)
             commit();
         else
             safe->showNotice(slot, "Not replaced: Loop " + juce::String(slot + 1) + " changed in the meantime");
@@ -613,13 +624,13 @@ void Editor::handleFile(int slot, const juce::File& file, const juce::MemoryBloc
             if (confirmedState != nullptr)
             {
                 // The answer only covers the state the user was asked about; never ask twice.
-                if (serialize(st) == *confirmedState)
+                if (askedStateOf(st) == *confirmedState)
                     replace(slot, file);
                 else
                     showNotice(slot, "Not replaced: Loop " + juce::String(slot + 1) + " changed in the meantime");
                 return;
             }
-            askReplace(slot, file, serialize(st));
+            askReplace(slot, file, askedStateOf(st));
             return;
     }
 }
@@ -701,7 +712,16 @@ void Editor::paint(juce::Graphics& g)
 
 void Editor::resized()
 {
-    auto area = getLocalBounds().reduced(kMargin);
+    // The pad bar takes the bottom edge over the full window width; everything else keeps the margin.
+    // JUCE's resize corner (always on top, 18 px in AudioProcessorEditor::editorResized) covers the
+    // bar's bottom-right; the last pad keeps its strip and note label clear of it.
+    auto window = getLocalBounds();
+    const int corner = resizableCorner == nullptr ? 0
+                       : resizableCorner->getWidth() > 0 ? resizableCorner->getWidth()
+                                                         : kResizerSize;
+    passes_.setCornerNotch(corner);
+    passes_.setBounds(window.removeFromBottom(PassPanel::heightFor(getHeight())));
+    auto area = window.reduced(kMargin);
 
     // Top row: logo, preset bar, BPM on the right. The cycle readout sits left of BPM only when the
     // preset bar keeps its full width; otherwise it is hidden (cycleText() still has the text).
@@ -724,9 +744,10 @@ void Editor::resized()
     presetBar_.setBounds(top);
     area.removeFromTop(kGap + 3);
 
-    // Lanes and the bottom row (rule panel, effects panel) share what is left: the bottom row gets
-    // about a third (at least what the effects panel needs), the rest goes to Loop 1 (58 %) and
-    // Loop 2 (42 %). The insert strip sits inside the Loop-2 box, right under the lane.
+    // Lanes and the bottom row (rule panel, effects panel) share what is left above the pad bar after
+    // the fixed rows (headers, insert strip): the bottom row gets about a third (at least what the
+    // effects panel needs), the rest goes to Loop 1 (58 %) and Loop 2 (42 %). The insert strip sits
+    // inside the Loop-2 box, right under the lane.
     const int shared = area.getHeight() - 2 * kHeaderH - 2 * kGap - kFxStripH;
     const int rulesH = std::clamp(shared * 38 / 100, kBottomMinH, 320);
     const int laneSpace = std::max(shared - rulesH, 80);

@@ -26,7 +26,7 @@ constexpr int kButtonRoomW = 6 + kSaveW + kButtonGap + kSaveAsW + kButtonGap + k
 constexpr int kFixedW = kBankCaptionW + kCaptionGap + kGroupGap + kPresetCaptionW + kCaptionGap + kButtonRoomW;
 static_assert(PresetBar::kPreferredWidth == kFixedW + 2 * kFieldMaxW, "kPreferredWidth must follow the layout");
 constexpr int kConfirmLoadW = 56;
-constexpr int kCancelW = 84; // ABBRECHEN, in the confirm question and the name prompt
+constexpr int kCancelW = 84; // CANCEL, in the confirm question and the name prompt
 constexpr int kPromptOkW = 36;
 constexpr int kPromptMessageMinW = 110; // room for an error next to the name field
 

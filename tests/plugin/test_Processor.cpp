@@ -908,3 +908,478 @@ TEST_CASE("Processor: a note-off while bypassed is not lost", "[processor][midi]
     CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f); // the note is released
     CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
 }
+
+// ---- Pass slots: Save, Clear, replay control, MIDI bindings and learn ---------------------------
+
+namespace {
+
+Pass onePass(int region2)
+{
+    Pass p;
+    p.events = { PassEvent { 0.0, false, region2, PlayMode::Gate } };
+    return p;
+}
+
+// Both loops loaded (one bar each), Loop-1 region 0 always starts Loop-2 region 0, so every finished
+// pass has one event. Autoplay with a running host at 120 bpm, 44.1 kHz, 512-frame blocks.
+struct PassFixture : ProcFixture
+{
+    static constexpr int kBlock = 512;
+    static constexpr double kRate = 44100.0;
+    FixedPlayHead head;
+    double ppq = 0.0;
+
+    PassFixture()
+    {
+        proc.replaceLoop(0, wav("l1.wav"), 1);
+        proc.replaceLoop(1, wav("l2.wav"), 1);
+        proc.waitForLoads();
+        REQUIRE(proc.getSlotStatus(0) == Status::Loaded);
+        REQUIRE(proc.getSlotStatus(1) == Status::Loaded);
+        auto s = proc.getPluginState();
+        s.rules = { RuleEntry { 0, { RuleTarget { 0, 1.0f } } } };
+        proc.applyEdit(s);
+        proc.prepareToPlay(kRate, kBlock);
+        proc.setPlayHead(&head);
+    }
+    ~PassFixture() { proc.setPlayHead(nullptr); }
+
+    void block(juce::MidiBuffer& midi)
+    {
+        juce::AudioPlayHead::PositionInfo info;
+        info.setBpm(120.0);
+        info.setIsPlaying(true);
+        info.setPpqPosition(ppq);
+        info.setTimeSignature(juce::AudioPlayHead::TimeSignature { 4, 4 });
+        head.pos = info;
+        juce::AudioBuffer<float> buf(2, kBlock);
+        buf.clear();
+        proc.processBlock(buf, midi);
+        ppq += kBlock * 120.0 / (60.0 * kRate);
+    }
+    void block()
+    {
+        juce::MidiBuffer none;
+        block(none);
+    }
+    // Plays on until the next bar line has been passed.
+    void bar()
+    {
+        const double next = std::floor(ppq / 4.0 + 1e-9) * 4.0 + 4.0;
+        while (ppq <= next)
+            block();
+    }
+    void fill(std::initializer_list<int> slots)
+    {
+        auto s = proc.getPluginState();
+        for (int i : slots)
+            s.passes[static_cast<size_t>(i)] = onePass(0);
+        proc.applyEdit(s);
+    }
+};
+
+juce::MidiBuffer noteOn(int note, int channel = 1)
+{
+    juce::MidiBuffer m;
+    m.addEvent(juce::MidiMessage::noteOn(channel, note, 1.0f), 0);
+    return m;
+}
+
+juce::MidiBuffer noteOff(int note, int channel = 1)
+{
+    juce::MidiBuffer m;
+    m.addEvent(juce::MidiMessage::noteOff(channel, note), 0);
+    return m;
+}
+
+// Binds `note` to `target` through learn (one block with the note-on, one with its note-off).
+void learn(MidiFixture& f, int target, int note)
+{
+    f.proc.armLearn(target);
+    auto on = noteOn(note);
+    f.run(on);
+    auto off = noteOff(note);
+    f.run(off);
+}
+
+juce::String stateText(DubcyclingProcessor& proc)
+{
+    juce::MemoryBlock block;
+    proc.getStateInformation(block);
+    return juce::String::fromUTF8(static_cast<const char*>(block.getData()), static_cast<int>(block.getSize()));
+}
+
+void setStateText(DubcyclingProcessor& proc, const juce::String& text)
+{
+    proc.setStateInformation(text.toRawUTF8(), static_cast<int>(text.getNumBytesAsUTF8()));
+}
+
+} // namespace
+
+TEST_CASE("Processor: the default state has no passes, no bindings and replay off", "[processor][passes]")
+{
+    ProcFixture f;
+    CHECK(f.proc.replayRequest() == 0);
+    CHECK(f.proc.replaySlot() == -1);
+    CHECK_FALSE(f.proc.canSave());
+    CHECK_FALSE(f.proc.savePass());
+    CHECK(f.proc.learnArmed() == -1);
+    for (int t = 0; t < DubcyclingProcessor::kBindTargets; ++t)
+        CHECK(f.proc.boundNote(t) == -1);
+    for (int i = 0; i < kPassSlots; ++i)
+        CHECK_FALSE(f.proc.passFilled(i));
+    if (const auto m = f.proc.getModel()) // nothing published yet is silence, i.e. no passes either
+        for (const auto& p : m->passes)
+            CHECK(p.empty());
+    CHECK_FALSE(stateText(f.proc).contains("Bind"));
+    CHECK_FALSE(stateText(f.proc).contains("Passes"));
+}
+
+TEST_CASE("Processor: savePass stores each finished pass once in the lowest free slot", "[processor][passes]")
+{
+    PassFixture f;
+    CHECK_FALSE(f.proc.savePass()); // nothing finished yet
+    f.bar();
+    f.bar(); // two full passes have played
+    REQUIRE(f.proc.canSave());
+    CHECK(f.proc.savePass());
+    CHECK(f.proc.passFilled(0));
+    CHECK_FALSE(f.proc.passFilled(1));
+    const auto saved = f.proc.getPluginState().passes[0];
+    REQUIRE(saved.events.size() == 1);
+    CHECK(saved.events[0].region2 == 0);
+    CHECK(f.proc.getModel()->passes[0] == saved);
+
+    CHECK_FALSE(f.proc.canSave()); // the same pass again
+    CHECK_FALSE(f.proc.savePass());
+    CHECK_FALSE(f.proc.passFilled(1));
+
+    f.bar(); // a new pass
+    CHECK(f.proc.savePass());
+    CHECK(f.proc.passFilled(1));
+    CHECK(f.proc.getModel()->passes[1] == f.proc.getPluginState().passes[1]);
+}
+
+TEST_CASE("Processor: a pass finished before a state load cannot be saved into the loaded state", "[processor][passes]")
+{
+    PassFixture f;
+    f.bar();
+    f.bar();
+    REQUIRE(f.proc.canSave());
+
+    f.proc.restoreState(f.proc.getPluginState()); // e.g. a preset load
+    f.proc.waitForLoads();
+    CHECK_FALSE(f.proc.canSave());
+    CHECK_FALSE(f.proc.savePass());
+    CHECK_FALSE(f.proc.passFilled(0));
+
+    f.bar(); // the pass running at the load is not complete
+    f.bar(); // a pass finished after the load can be saved
+    CHECK(f.proc.canSave());
+    CHECK(f.proc.savePass());
+    CHECK(f.proc.passFilled(0));
+
+    f.bar();
+    REQUIRE(f.proc.canSave());
+    setStateText(f.proc, stateText(f.proc)); // a project load does the same
+    f.proc.waitForLoads();
+    CHECK_FALSE(f.proc.canSave());
+    CHECK_FALSE(f.proc.savePass());
+}
+
+TEST_CASE("Processor: a free slot is required, and Save is off while a replay is requested", "[processor][passes]")
+{
+    PassFixture f;
+    f.fill({ 0, 1, 2, 3, 4, 5, 6, 7 });
+    f.bar();
+    f.bar();
+    CHECK_FALSE(f.proc.canSave());
+    CHECK_FALSE(f.proc.savePass());
+
+    f.proc.clearPass(5);
+    CHECK_FALSE(f.proc.passFilled(5));
+    CHECK(f.proc.canSave());
+    f.proc.setReplayRequest(1);
+    CHECK(f.proc.replayRequest() == 1);
+    CHECK_FALSE(f.proc.canSave());
+    CHECK_FALSE(f.proc.savePass());
+    f.proc.setReplayRequest(0);
+    CHECK(f.proc.savePass());
+    CHECK(f.proc.passFilled(5)); // the lowest free slot
+}
+
+TEST_CASE("Processor: an empty finished pass cannot be saved", "[processor][passes]")
+{
+    PassFixture f;
+    auto s = f.proc.getPluginState();
+    s.rules.clear(); // nothing is drawn: the pass has no events
+    f.proc.applyEdit(s);
+    f.bar();
+    f.bar();
+    CHECK_FALSE(f.proc.canSave());
+    CHECK_FALSE(f.proc.savePass());
+}
+
+TEST_CASE("Processor: clearPass and clearAllPasses empty the slots in state and model", "[processor][passes]")
+{
+    PassFixture f;
+    f.fill({ 0, 2, 3 });
+    CHECK(f.proc.passFilled(2));
+    CHECK(f.proc.getModel()->passes[2] == onePass(0));
+    f.proc.clearPass(2);
+    CHECK_FALSE(f.proc.passFilled(2));
+    CHECK(f.proc.getModel()->passes[2].empty());
+    CHECK(f.proc.passFilled(0));
+    f.proc.clearPass(-1); // out of range: nothing
+    f.proc.clearPass(8);
+    f.proc.clearAllPasses();
+    for (int i = 0; i < kPassSlots; ++i)
+    {
+        CHECK_FALSE(f.proc.passFilled(i));
+        CHECK(f.proc.getModel()->passes[static_cast<size_t>(i)].empty());
+    }
+    CHECK(f.proc.getPluginState().loop1.fileName == "l1.wav"); // nothing else changed
+    CHECK(f.proc.getPluginState().rules.size() == 1);
+}
+
+TEST_CASE("Processor: learn binds the next note-on, which never gates, and moves a bound note", "[processor][passes][learn]")
+{
+    MidiFixture f;
+    f.proc.setTriggerMode(TriggerMode::Midi);
+    const int v0 = f.proc.bindingsVersion();
+    f.proc.armLearn(3);
+    CHECK(f.proc.learnArmed() == 3);
+    auto on = noteOn(60);
+    CHECK(peak(f.run(on), 0, MidiFixture::kBlock) == 0.0f); // consumed, no gate
+    CHECK(f.proc.boundNote(3) == 60);
+    CHECK(f.proc.learnArmed() == -1);
+    CHECK(f.proc.bindingsVersion() != v0);
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
+    auto off = noteOff(60);
+    f.run(off);
+
+    CHECK(peak(f.run(on), 0, MidiFixture::kBlock) == 0.0f); // bound: never gates
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
+    f.run(off);
+
+    auto on61 = noteOn(61); // others gate as before
+    f.run(on61);
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f);
+    auto off61 = noteOff(61);
+    f.run(off61);
+    f.run();
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
+
+    learn(f, 5, 60); // one note, one target
+    CHECK(f.proc.boundNote(5) == 60);
+    CHECK(f.proc.boundNote(3) == -1);
+
+    f.proc.armLearn(7);
+    f.proc.armLearn(-1); // cancel
+    CHECK(f.proc.learnArmed() == -1);
+    f.run(on61);
+    CHECK(f.proc.boundNote(7) == -1);
+    f.run(off61);
+
+    const int v1 = f.proc.bindingsVersion();
+    f.proc.clearBinding(5);
+    CHECK(f.proc.boundNote(5) == -1);
+    CHECK(f.proc.bindingsVersion() != v1);
+}
+
+TEST_CASE("Processor: learning a held note does not leave the gate stuck", "[processor][passes][learn]")
+{
+    MidiFixture f;
+    f.proc.setTriggerMode(TriggerMode::Midi);
+    auto on = noteOn(60);
+    f.run(on);
+    REQUIRE(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f); // held, plays
+
+    f.proc.armLearn(2);
+    auto again = noteOn(60, 2); // the same note from another channel binds it
+    f.run(again);
+    CHECK(f.proc.boundNote(2) == 60);
+    f.run();
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f); // the held gate was released
+    auto off = noteOff(60);
+    f.run(off); // the bound note-off is consumed
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f);
+
+    auto on61 = noteOn(61);
+    f.run(on61);
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f);
+    auto off61 = noteOff(61);
+    f.run(off61);
+    f.run();
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f); // no held note left over
+}
+
+TEST_CASE("Processor: bound slot and Play notes set the replay request", "[processor][passes][learn]")
+{
+    MidiFixture f;
+    auto s = f.proc.getPluginState();
+    s.passes[1] = onePass(0);
+    f.proc.applyEdit(s);
+    learn(f, 1, 62);
+    learn(f, 4, 63); // slot 4 is empty
+    learn(f, DubcyclingProcessor::kTargetPlay, 64);
+    CHECK(f.proc.boundNote(DubcyclingProcessor::kTargetPlay) == 64);
+
+    auto empty = noteOn(63);
+    f.run(empty);
+    CHECK(f.proc.replayRequest() == 0); // ignored for an empty slot
+    auto slot1 = noteOn(62);
+    f.run(slot1);
+    CHECK(f.proc.replayRequest() == 2 + 1);
+
+    auto play = noteOn(64);
+    auto playOff = noteOff(64);
+    f.run(play); // any replay -> off
+    CHECK(f.proc.replayRequest() == 0);
+    f.run(playOff);
+    f.run(play); // off -> chain
+    CHECK(f.proc.replayRequest() == 1);
+    f.run(playOff);
+    f.run(play);
+    CHECK(f.proc.replayRequest() == 0);
+}
+
+TEST_CASE("Processor: a bound Play note does not turn replay on while every slot is empty", "[processor][passes][learn]")
+{
+    PassFixture f;
+    f.proc.armLearn(DubcyclingProcessor::kTargetPlay);
+    auto on = noteOn(64);
+    auto off = noteOff(64);
+    f.block(on);
+    f.block(off);
+    REQUIRE(f.proc.boundNote(DubcyclingProcessor::kTargetPlay) == 64);
+    f.bar();
+    f.bar();
+    REQUIRE(f.proc.canSave());
+    f.block(on);
+    f.block(off);
+    CHECK(f.proc.replayRequest() == 0); // nothing to play
+    CHECK(f.proc.canSave());            // and Save stays available
+
+    f.proc.setReplayRequest(1); // any replay -> off still works
+    f.block(on);
+    CHECK(f.proc.replayRequest() == 0);
+}
+
+TEST_CASE("Processor: a held note that a state load binds does not leave the gate stuck", "[processor][passes][learn]")
+{
+    MidiFixture f;
+    f.proc.setTriggerMode(TriggerMode::Midi);
+    auto on = noteOn(60, 3);
+    f.run(on);
+    REQUIRE(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f); // held, plays
+
+    // A project whose bindings put note 60 on slot 1: its note-off will never reach the gate.
+    const auto text = stateText(f.proc).replace("<DubcyclingState", "<DubcyclingState BindSlot1=\"60\"");
+    setStateText(f.proc, text);
+    f.proc.waitForLoads();
+    REQUIRE(f.proc.boundNote(1) == 60);
+    REQUIRE(f.proc.triggerMode() == TriggerMode::Midi);
+    f.run();
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) == 0.0f); // the held gate was released
+
+    auto on61 = noteOn(61); // other notes still gate
+    f.run(on61);
+    CHECK(peak(f.run(), 0, MidiFixture::kBlock) > 0.0f);
+}
+
+TEST_CASE("Processor: a bound Save note saves on the message thread", "[processor][passes][learn]")
+{
+    PassFixture f;
+    f.proc.armLearn(DubcyclingProcessor::kTargetSave);
+    auto on = noteOn(65);
+    f.block(on);
+    CHECK(f.proc.boundNote(DubcyclingProcessor::kTargetSave) == 65);
+    f.bar();
+    f.bar();
+    f.proc.waitForLoads(); // runs the timer
+    CHECK_FALSE(f.proc.passFilled(0)); // learning did not save
+    f.block(on);
+    f.proc.waitForLoads();
+    CHECK(f.proc.passFilled(0));
+}
+
+TEST_CASE("Processor: bindings are saved with the project, not with presets", "[processor][passes][learn]")
+{
+    MidiFixture f;
+    learn(f, 0, 60);
+    learn(f, 7, 67);
+    learn(f, DubcyclingProcessor::kTargetSave, 70);
+    learn(f, DubcyclingProcessor::kTargetPlay, 71);
+    const auto text = stateText(f.proc);
+    CHECK(deserialize(text.toRawUTF8(), text.getNumBytesAsUTF8()).has_value());
+
+    DubcyclingProcessor other;
+    setStateText(other, text);
+    CHECK(other.boundNote(0) == 60);
+    CHECK(other.boundNote(7) == 67);
+    CHECK(other.boundNote(DubcyclingProcessor::kTargetSave) == 70);
+    CHECK(other.boundNote(DubcyclingProcessor::kTargetPlay) == 71);
+    CHECK(other.boundNote(3) == -1);
+
+    // Presets neither carry nor change them.
+    other.restoreState(PluginState {});
+    CHECK(other.boundNote(0) == 60);
+    CHECK(other.boundNote(DubcyclingProcessor::kTargetPlay) == 71);
+    Bank bank;
+    bank.presets.push_back(Preset { "p", f.proc.getPluginState() });
+    CHECK_FALSE(bankToJson(bank).containsIgnoreCase("bind"));
+
+    // Together with the trigger mode.
+    f.proc.setTriggerMode(TriggerMode::Midi);
+    setStateText(other, stateText(f.proc));
+    CHECK(other.triggerMode() == TriggerMode::Midi);
+    CHECK(other.boundNote(7) == 67);
+
+    // Invalid values are unbound, a duplicate note keeps the first target, a missing one is unbound.
+    auto bad = text.replace("=\"60\"", "=\"200\"").replace("=\"67\"", "=\"x\"").replace("=\"71\"", "=\"70\"");
+    setStateText(other, bad);
+    CHECK(other.boundNote(0) == -1);
+    CHECK(other.boundNote(7) == -1);
+    CHECK(other.boundNote(DubcyclingProcessor::kTargetSave) == 70);
+    CHECK(other.boundNote(DubcyclingProcessor::kTargetPlay) == -1);
+    setStateText(other, text.replace("Bind", "Xind"));
+    for (int t = 0; t < DubcyclingProcessor::kBindTargets; ++t)
+        CHECK(other.boundNote(t) == -1);
+}
+
+TEST_CASE("Processor: loading a preset with passes fills the model and resets replay", "[processor][passes][presets]")
+{
+    ProcFixture f;
+    f.proc.setReplayRequest(2 + 3);
+    PluginState s;
+    s.passes[3] = onePass(1);
+    s.passes[6] = onePass(2);
+    f.proc.restoreState(s);
+    CHECK(f.proc.replayRequest() == 0);
+    CHECK(f.proc.passFilled(3));
+    CHECK(f.proc.passFilled(6));
+    CHECK_FALSE(f.proc.passFilled(0));
+    const auto m = f.proc.getModel();
+    REQUIRE(m != nullptr);
+    CHECK(m->passes[3] == onePass(1));
+    CHECK(m->passes[6] == onePass(2));
+
+    // A project load does the same.
+    DubcyclingProcessor other;
+    other.setReplayRequest(1);
+    juce::MemoryBlock block;
+    f.proc.getStateInformation(block);
+    other.setStateInformation(block.getData(), static_cast<int>(block.getSize()));
+    CHECK(other.replayRequest() == 0);
+    CHECK(other.getModel()->passes[6] == onePass(2));
+
+    // An edit carries the passes too.
+    auto e = f.proc.getPluginState();
+    e.passes[3] = Pass {};
+    e.passes[0] = onePass(0);
+    f.proc.applyEdit(e);
+    CHECK_FALSE(f.proc.passFilled(3));
+    CHECK(f.proc.passFilled(0));
+    CHECK(f.proc.getModel()->passes[0] == onePass(0));
+}

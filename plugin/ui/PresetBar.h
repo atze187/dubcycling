@@ -8,8 +8,8 @@ namespace dc::ui {
 // Preset bar in the editor's top row: field BANK (chooses which presets the PRESET field lists and
 // where saving goes; loads nothing), field PRESET (choosing an entry loads it) and the buttons SAVE,
 // SAVE AS and "..." (bank menu). Loading with unsaved changes first asks in the same row
-// ("Ungespeicherte Aenderungen verwerfen?" with LADEN / ABBRECHEN); asking for a name shows a name
-// field with OK / ABBRECHEN in place of the PRESET field. All file IO runs here on the message
+// ("Discard unsaved changes?" with LOAD / CANCEL); asking for a name shows a name
+// field with OK / CANCEL in place of the PRESET field. All file IO runs here on the message
 // thread.
 class PresetBar final : public juce::Component
 {
@@ -60,7 +60,7 @@ public:
     // bankName first when the prompt asks for a bank. A bad or taken name, a Missing or Failed slot
     // or a failed save sets message() and stays in NamePrompt. On success the preset is active.
     void submitName(const juce::String& presetName, const juce::String& bankName = {});
-    // ABBRECHEN in the name field: back to Normal, nothing written.
+    // CANCEL in the name field: back to Normal, nothing written.
     void cancel();
     // "New bank...": NamePrompt asking for the name of a new bank (OK calls createBank).
     void requestNewBank();

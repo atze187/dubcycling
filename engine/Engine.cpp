@@ -340,6 +340,8 @@ void Engine::resetPlayback(bool keepLoop1)
     pending_.valid = false;
     lastEntryFrame_ = -1;
     sequencer_.reset();
+    recorder_.abandon(); // stop, invalid transport, hard restart: the pass is not complete
+    replayWaiting_ = true; // a replay goes on from the next boundary (the next frame is no boundary unless at ~0)
     for (Voice* v : { &voice_, &tail_ })
     {
         v->state = Voice::State::Idle;
@@ -403,6 +405,8 @@ void Engine::adoptSwap(const Model& m, double beats1)
         requestStop();
         sequencer_.onVoiceEnded();
     }
+    // Replay: the pass in progress goes on with the events copied at its boundary, also when the
+    // slot was cleared or changed meanwhile; the next boundary reads the slot again.
     // A switch toggled or a mix moved in the editor acts on the sounding region at once.
     refreshMask(m);
     refreshMix(m);
@@ -549,7 +553,84 @@ bool Engine::stepVoice(Voice& v, const StereoData& d, GrainFrame gf, double adv,
     return false;
 }
 
-void Engine::planEarlyDraw(const Model& m, double ppq, double bpm, double beats1)
+int Engine::pickReplaySlot(const Model& m) const
+{
+    const int req = replayReq_.load(std::memory_order_relaxed);
+    if (req >= 2 && req < 2 + kPassSlots)
+        return m.passes[static_cast<size_t>(req - 2)].empty() ? -1 : req - 2;
+    if (req == 1)
+        for (int k = 1; k <= kPassSlots; ++k)
+        {
+            // From random (-1) the chain starts at slot 0; from slot i it goes on after i.
+            const int s = (replaySlot_ + k + kPassSlots) % kPassSlots;
+            if (!m.passes[static_cast<size_t>(s)].empty())
+                return s;
+        }
+    return -1;
+}
+
+void Engine::replayBoundary(const Model& m)
+{
+    const int slot = pickReplaySlot(m);
+    if (slot < 0 && replaySlot_ < 0)
+        return; // random goes on
+    // A replayed pass starts with Loop 2 silent (a Start at ~0 fires right after and crossfades);
+    // leaving replay stops the replay voice before random draws this entry.
+    requestStop();
+    if ((slot < 0) != (replaySlot_ < 0))
+        sequencer_.reset(); // entering or leaving replay
+    pending_.valid = false;
+    replaySlot_ = slot;
+    replayNext_ = 0;
+    replayWaiting_ = false;
+    // The pass is replayed from a copy (fixed storage, no allocation): a later model swap that
+    // clears or changes the slot does not touch the pass in progress.
+    replayCount_ = 0;
+    if (slot >= 0)
+    {
+        const std::vector<PassEvent>& events = m.passes[static_cast<size_t>(slot)].events;
+        replayCount_ = static_cast<int>(std::min<size_t>(events.size(), replayEvents_.size()));
+        std::copy_n(events.begin(), replayCount_, replayEvents_.begin());
+    }
+}
+
+void Engine::leaveReplay()
+{
+    // Nothing to replay any more (request off or no filled slot left) outside a pass boundary:
+    // random takes over at once, so the entry being handled draws.
+    requestStop();
+    sequencer_.reset();
+    replaySlot_ = -1;
+    replayCount_ = 0;
+    replayNext_ = 0;
+    replayWaiting_ = false;
+}
+
+void Engine::fireReplay(const Model& m, const PassEvent& ev)
+{
+    if (ev.stop)
+    {
+        requestStop();
+        return;
+    }
+    if (ev.region2 < 0 || ev.region2 >= m.loop2.regions.regionCount())
+        return; // the Loop-2 region is gone
+    Sequencer::Command c;
+    c.type = Sequencer::Command::Type::Start;
+    c.region2 = ev.region2;
+    c.mode = ev.mode;
+    c.region1 = m.loop1.regions.regionAt(std::clamp(ev.phase, 0.0, 1.0));
+    c.mix = 0.5f;
+    for (const RuleTarget& t : m.rules.targets(c.region1))
+        if (t.region2 == ev.region2)
+        {
+            c.mix = t.mix;
+            break;
+        }
+    requestStart(m, c);
+}
+
+void Engine::planEarlyDraw(const Model& m, double ppq, double bpm, double beats1, bool drawWrap)
 {
     const double lookBeats = teaserSec_.load(std::memory_order_relaxed) * bpm / 60.0;
     if (!(lookBeats > 0.0))
@@ -561,6 +642,8 @@ void Engine::planEarlyDraw(const Model& m, double ppq, double bpm, double beats1
     const int region = m.loop1.regions.regionAt(ph);
     const double hi = m.loop1.regions.bounds(region).second;
     const bool wrap = !(hi < 1.0);
+    if (wrap && !drawWrap)
+        return;
     const long long nextCycle = wrap ? cycle + 1 : cycle;
     const int nextRegion = wrap ? 0 : region + 1;
     const double entryPpq = (static_cast<double>(cycle) + (wrap ? 1.0 : hi)) * beats1;
@@ -661,12 +744,17 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         }
         if (running_)
             resetPlayback();
+        // A replay waiting for the next pass start whose request went off (or whose slots were all
+        // cleared) meanwhile is left now, so the display does not show a slot that will not play.
+        if (replaySlot_ >= 0 && replayWaiting_ && m != nullptr && pickReplaySlot(*m) < 0)
+            leaveReplay();
         gain1_ = 1.0f; // Loop 1 is silent here and restarts at full level
         mixPreview(l, r, bl, br, n);
         if (m != nullptr)
             chain_.setParams(m->fx.params);
         finishSlice(l, r, n, useBus);
         publishPlayhead(-1.0f, -1.0f, -1);
+        replaySlotOut_.store(replaySlot_, std::memory_order_relaxed);
         return;
     }
 
@@ -677,6 +765,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         releaseLeft_ = fadeLen_;
         requestStop(); // the voice takes its cancel fade; the effect tails ring out
         pending_.valid = false;
+        recorder_.abandon(); // the pass was cut off
     }
     else if (!t.release && releasing_)
     {
@@ -723,13 +812,22 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
     if (entry)
         lastPpq_ = t.ppq;
     const bool jumped = running_ && entry;
+    // Continuous playback would have reached a cycle start here (expectedPpq_ is still the previous
+    // block's end): a jump from there to a cycle start, as a host loop split at its end makes it,
+    // completes the open pass like a continuous wrap.
+    // Positive modulo: a position before 0 (a count-in) is no cycle end.
+    double expectedRest = std::fmod(expectedPpq_, beats1);
+    if (expectedRest < 0.0)
+        expectedRest += beats1;
+    const bool wrapExpected = jumped && std::min(expectedRest, beats1 - expectedRest) <= kJumpToleranceBeats;
     running_ = true;
 
     // An early draw is only good for continuous playback on the same model.
     if (entry || (pending_.valid && pending_.rt != current_))
         pending_.valid = false;
-    if (!entry && !releasing_)
-        planEarlyDraw(*m, t.ppq, t.bpm, beats1);
+    // No early draw while replaying, nor for the wrap where a requested replay will take over.
+    if (!entry && !releasing_ && replaySlot_ < 0)
+        planEarlyDraw(*m, t.ppq, t.bpm, beats1, pickReplaySlot(*m) < 0);
     // A host that loops without splitting the block at the loop end reports the wrap twice: once as
     // the extrapolated position crossing the cycle (an entry draw in the previous block) and once as
     // the jump back at the start of this block. A jump that lands on the start of the region the last
@@ -758,13 +856,46 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
             const bool sameEntryAgain = jumpNow && lastEntryFrame_ >= 0 && region == lastRegion1_
                                         && frame - lastEntryFrame_ <= duplicateWindow
                                         && ph >= regionLo && (ph - regionLo) * beats1 <= kJumpToleranceBeats;
+            // Pass boundaries. A continuous cycle change, or a jump from a cycle end to a cycle start
+            // (wrapExpected), finishes the open pass; it, a fresh start or a jump begins a new one if
+            // it lands on the cycle start. Anything else (a jump, a fresh start mid-loop) leaves no
+            // pass open until the next wrap. The repeated report of a host wrap (sameEntryAgain) is
+            // no boundary: the pass begun at that wrap goes on.
+            if (!sameEntryAgain && (entry || cycle != lastCycle1_))
+            {
+                const bool atStart = ph * beats1 <= kJumpToleranceBeats;
+                if (atStart && (!entry || wrapExpected))
+                    recorder_.finish();
+                else
+                    recorder_.abandon();
+                // Replay requests apply here; a replayed pass is not recorded.
+                if (atStart)
+                {
+                    replayBoundary(*m);
+                    if (replaySlot_ < 0)
+                        recorder_.begin();
+                }
+                else if (replaySlot_ >= 0 && pickReplaySlot(*m) < 0)
+                {
+                    // A jump or a fresh start mid-loop with nothing left to replay: random at once.
+                    leaveReplay();
+                }
+                else if (replaySlot_ >= 0)
+                {
+                    // A jump or a fresh start mid-loop: the replay waits for the next boundary.
+                    requestStop();
+                    sequencer_.reset();
+                    replayWaiting_ = true;
+                }
+            }
             entry = false;
             lastRegion1_ = region;
             std::tie(lastLo1_, lastHi1_) = m->loop1.regions.bounds(region);
             lastCycle1_ = cycle;
             if (!sameEntryAgain)
-            {
                 lastEntryFrame_ = frame;
+            if (!sameEntryAgain && replaySlot_ < 0)
+            {
                 // The early draw for exactly this entry, if there is one; else draw now. None: region
                 // without rule, not a draw.
                 if (pending_.valid && pending_.rt == current_ && pending_.cycle == cycle && pending_.region == region)
@@ -772,16 +903,35 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
                 else
                     c = sequencer_.onRegion1(region, m->rules);
                 pending_.valid = false; // consumed, or for an entry that is not coming any more
+                // The open pass (if any) records every voice command at the phase it is issued.
                 if (c.type == Sequencer::Command::Type::Start)
+                {
                     requestStart(*m, c);
+                    recorder_.add(ph, false, c.region2, c.mode);
+                }
                 else if (c.type == Sequencer::Command::Type::Stop)
+                {
                     requestStop();
+                    recorder_.add(ph, true, -1, PlayMode::Gate);
+                }
                 else if (jumpNow)
                 {
                     // Spec: a transport jump ends Loop 2, also when the new region has no rule.
                     requestStop();
                     sequencer_.reset();
+                    recorder_.add(ph, true, -1, PlayMode::Gate);
                 }
+            }
+        }
+        // Replay: the slot's events whose phase Loop 1 has reached, in order. A MIDI release
+        // passes over them without playing them.
+        if (replaySlot_ >= 0 && !replayWaiting_)
+        {
+            while (replayNext_ < replayCount_ && replayEvents_[static_cast<size_t>(replayNext_)].phase <= ph)
+            {
+                if (!releasing_)
+                    fireReplay(*m, replayEvents_[static_cast<size_t>(replayNext_)]);
+                ++replayNext_;
             }
         }
         // Gate ends when Loop 1 leaves its region and no new draw took over (same frame as the entry).
@@ -789,6 +939,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         {
             requestStop();
             sequencer_.onVoiceEnded();
+            recorder_.add(ph, true, -1, PlayMode::Gate);
         }
 
         // Loop 1 (already in l/r; the bus and the Loop-1 audition are added later) at the level the
@@ -844,6 +995,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
     publishPlayhead(static_cast<float>(std::clamp(lastPhase1, 0.0, 1.0)),
                     voiceShown ? static_cast<float>(std::clamp((voice_.lo + voice_.elapsed) / len2, 0.0, 1.0)) : -1.0f,
                     voiceShown ? voice_.region2 : -1, teaser, eta);
+    replaySlotOut_.store(replaySlot_, std::memory_order_relaxed);
 }
 
 void Engine::finishSlice(float* l, float* r, int n, bool useBus)

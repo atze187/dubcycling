@@ -11,6 +11,7 @@ add_executable(dc_tests
     test_TransientDetector.cpp
     test_Sequencer.cpp
     test_MidiTrigger.cpp
+    test_Pass.cpp
     test_Engine.cpp)
 target_link_libraries(dc_tests PRIVATE dc_engine Catch2::Catch2WithMain)
 include(Catch)
@@ -28,6 +29,8 @@ target_sources(dc_plugin_tests PRIVATE
     plugin/test_FxPanel.cpp
     plugin/test_Editor.cpp
     plugin/test_RulePanel.cpp
+    plugin/test_PadLook.cpp
+    plugin/test_PassPanel.cpp
     plugin/test_Processor.cpp
     plugin/test_SlotTracker.cpp
     plugin/test_BankFormat.cpp

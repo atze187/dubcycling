@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -96,6 +98,41 @@ public:
     void previewRegion(int slot, int region) { engine_.requestPreview(slot, region); }
     // Loop positions at the end of the last block, for the editor's playheads. Any thread.
     Engine::Playhead playhead() const { return engine_.playhead(); }
+
+    // ---- Pass slots (saved passes, see Engine) ----
+    // True when the engine has a finished, non-empty pass that was not saved yet, a slot is free and
+    // no replay is requested. Message thread.
+    bool canSave() const;
+    // Stores the last finished pass in the lowest free slot (through applyEdit, so the model is
+    // republished seamlessly). False when !canSave(). Message thread.
+    bool savePass();
+    // Empties one slot (out of range: nothing) or all of them. A replay request that only named the
+    // cleared slot(s) is reset to off. Message thread.
+    void clearPass(int slot);
+    void clearAllPasses();
+    bool passFilled(int slot) const;
+    // Replay request (0 off, 1 chain, 2 + i slot i; see Engine::setReplay). Any thread.
+    void setReplayRequest(int request) { engine_.setReplay(request); }
+    int replayRequest() const { return engine_.replayRequest(); }
+    int replaySlot() const { return engine_.replaySlot(); }
+
+    // ---- MIDI note bindings (per instance: saved with the project, NOT with presets or banks) ----
+    // Targets 0..7 are the pass slots (a bound note requests that slot's replay, ignored while it is
+    // empty), kTargetSave saves the last pass (on the message thread), kTargetPlay toggles replay
+    // (off -> chain while a slot is filled, any replay -> off). One note per target and one target
+    // per note. Bound notes (on and off) never reach the MIDI gate; after bindings are loaded with a
+    // state, the next block releases every bound note in the gate. Bound notes also act while the
+    // host bypasses the plugin. Any thread (atomics only).
+    static constexpr int kTargetSave = 8;
+    static constexpr int kTargetPlay = 9;
+    static constexpr int kBindTargets = 10;
+    // The next note-on binds to `target` (moved if bound elsewhere) and is consumed; -1 cancels.
+    void armLearn(int target);
+    int learnArmed() const { return learnTarget_.load(std::memory_order_relaxed); }
+    int boundNote(int target) const;
+    void clearBinding(int target);
+    // Increments whenever a binding changes (for the UI to refresh).
+    int bindingsVersion() const { return bindingsVersion_.load(std::memory_order_relaxed); }
 #ifdef DC_TEST_HOOKS
     // Test hook (only compiled into dc_plugin_tests, which defines DC_TEST_HOOKS): blocks until
     // pending loads are decoded and takes their results. Message thread.
@@ -137,6 +174,27 @@ private:
     std::atomic<int> hostBeatsPerBar_ { 4 };
     std::atomic<TriggerMode> triggerMode_ { TriggerMode::Autoplay };
     MidiTrigger trigger_; // audio thread only
+
+    // Pass slots and bindings.
+    // Bit i set: pass slot i is filled in the last published model (read on the audio thread).
+    std::atomic<unsigned> filledMask_ { 0 };
+    std::atomic<std::uint32_t> lastSavedId_ { 0 }; // id of the last pass savePass stored (or the last before a state load)
+    std::atomic<bool> releaseBoundNotes_ { false }; // set by readBindings; the next planTrigger releases bound notes
+    std::atomic<bool> saveRequested_ { false }; // a bound Save note; handled in timerCallback
+    std::atomic<int> learnTarget_ { -1 };
+    std::array<std::atomic<int>, kBindTargets> boundNotes_ {}; // -1 = unbound (set in the constructor)
+    std::atomic<int> bindingsVersion_ { 0 };
+    // Audio thread: a note-on with a learn armed binds (Learned); a bound note triggers its target
+    // (Bound); both are consumed. Anything else gates (Gate).
+    enum class NoteRoute { Gate, Bound, Learned };
+    NoteRoute routeNoteOn(int note);
+    int targetOfNote(int note) const;
+    void bindNote(int target, int note);
+    // Root attributes of the project state (outside PluginState).
+    juce::String bindingAttributes() const;
+    void readBindings(const juce::XmlElement& root);
+    // Clears slots and resets the replay request if it named only cleared slots. Message thread.
+    void clearPasses(unsigned mask);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DubcyclingProcessor)
 };

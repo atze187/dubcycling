@@ -83,6 +83,28 @@ struct EditorFixture
 
 } // namespace
 
+namespace {
+void collectLabels(juce::Component& c, juce::StringArray& out)
+{
+    if (auto* label = dynamic_cast<juce::Label*>(&c))
+        out.add(label->getText());
+    for (auto* child : c.getChildren())
+        collectLabels(*child, out);
+}
+} // namespace
+
+TEST_CASE("Editor: the bars captions are English", "[editor]")
+{
+    EditorFixture f;
+    juce::StringArray labels;
+    collectLabels(*f.editor, labels);
+    int bars = 0;
+    for (const auto& t : labels)
+        bars += t == "BARS" ? 1 : 0;
+    CHECK(bars == 2); // one per loop lane
+    CHECK_FALSE(labels.contains("TAKTE"));
+}
+
 TEST_CASE("decideLoopFileAction covers every combination", "[LoopLane][editor]")
 {
     using dc::ui::decideLoopFileAction;
@@ -342,6 +364,33 @@ TEST_CASE("Editor: OK after the slot became Missing relinks instead of wiping", 
 }
 
 namespace {
+// A pass slot filled or cleared while a confirmation is open (e.g. by a MIDI Save note).
+void fillPassSlot(DubcyclingProcessor& proc, int slot)
+{
+    auto s = proc.getPluginState();
+    s.passes[static_cast<std::size_t>(slot)].events = { PassEvent { 0.0, false, 0, PlayMode::Gate } };
+    proc.applyEdit(s);
+    REQUIRE(proc.passFilled(slot));
+}
+} // namespace
+
+TEST_CASE("Editor: saving or clearing a pass while the replace question is open does not cancel the replace", "[LoopLane][editor][passes]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(f.wav("good.wav"));
+    fillPassSlot(f.proc, 1);
+    f.editor->loadFile(0, f.wav("other.wav"));
+    REQUIRE(f.asked == 1);
+
+    fillPassSlot(f.proc, 0);
+    f.proc.clearPass(1);
+    f.pendingAnswer(true);
+    f.proc.waitForLoads();
+    CHECK(f.proc.getPluginState().loop1.fileName == "other.wav");
+    CHECK_FALSE(f.editor->statusText(0).startsWith("Not replaced"));
+}
+
+namespace {
 // 2 s stereo wav at 44.1 kHz with short noise clicks at 0, 25, 50 and 75 % (3 usable boundaries).
 juce::File clickWav(const juce::File& dir, const juce::String& name, int clicks = 4)
 {
@@ -441,6 +490,21 @@ TEST_CASE("Editor: an answer after the slot changed meanwhile does not overwrite
     f.proc.applyEdit(s);
     f.pendingAnswer(true);
     CHECK(f.proc.getPluginState().loop1.boundaries == std::vector<double> { 0.1 });
+}
+
+TEST_CASE("Editor: saving or clearing a pass while the Suggest question is open does not cancel it", "[editor][suggest][passes]")
+{
+    EditorFixture f;
+    f.loadedWithRegionsAndRules(clickWav(f.dir, "clicks.wav"));
+    fillPassSlot(f.proc, 2);
+    f.editor->refresh();
+    f.editor->suggestRegions(0);
+    REQUIRE(f.asked == 1);
+    fillPassSlot(f.proc, 0);
+    f.proc.clearAllPasses();
+    f.pendingAnswer(true);
+    CHECK(f.proc.getPluginState().loop1.boundaries.size() == 3);
+    CHECK_FALSE(f.editor->statusText(0).startsWith("Not replaced"));
 }
 
 TEST_CASE("Editor: Suggest without any transient changes nothing and says so", "[editor][suggest]")
@@ -1003,8 +1067,8 @@ TEST_CASE("Editor: strip, panels and lanes fit in the window without overlap", "
     f.editor->lane(1).setSelectedRegion(1);
     f.editor->refresh();
     REQUIRE(f.editor->getWidth() == 900);
-    REQUIRE(f.editor->getHeight() == 600);
-    for (const auto size : { juce::Point<int> { 0, 0 }, juce::Point<int> { 800, 540 }, juce::Point<int> { 1400, 900 } })
+    REQUIRE(f.editor->getHeight() == 660);
+    for (const auto size : { juce::Point<int> { 0, 0 }, juce::Point<int> { 800, 600 }, juce::Point<int> { 1400, 900 } })
     {
         if (size.x > 0)
             f.editor->setSize(size.x, size.y);
@@ -1028,8 +1092,20 @@ TEST_CASE("Editor: strip, panels and lanes fit in the window without overlap", "
                           { "strip", strip },
                           { "rules", f.editor->rulePanel().getBounds() },
                           { "fx", panel },
+                          { "passes", f.editor->passPanel().getBounds() },
                           { "presetBar", f.editor->presetBar().getBounds() } },
                         window);
+        // The pad bar sits at the bottom edge over the full window width, under the bottom panels.
+        const auto passes = f.editor->passPanel().getBounds();
+        CHECK(passes.getX() == 0);
+        CHECK(passes.getRight() == window.getRight());
+        CHECK(passes.getBottom() == window.getBottom());
+        CHECK(passes.getHeight() == dc::ui::PassPanel::heightFor(window.getHeight()));
+        CHECK(passes.getY() >= strip.getBottom());
+        CHECK(passes.getY() >= f.editor->rulePanel().getBottom());
+        CHECK(passes.getY() >= panel.getBottom());
+        CHECK(f.editor->lane(0).getHeight() >= 80);
+        CHECK(f.editor->lane(1).getHeight() >= 60);
         // The strip sits right under the Loop-2 lane, over the same x range.
         CHECK(strip.getX() == lane1.getX());
         CHECK(strip.getWidth() == lane1.getWidth());
@@ -1043,6 +1119,18 @@ TEST_CASE("Editor: strip, panels and lanes fit in the window without overlap", "
         CHECK(f.editor->rulePanel().getWidth() >= 300);
         CHECK(f.editor->rulePanel().getHeight() >= 190);
     }
+}
+
+TEST_CASE("Editor: the pass panel follows the processor on refresh", "[editor][passes]")
+{
+    EditorFixture f;
+    using SlotState = dc::ui::PassPanel::SlotState;
+    CHECK(f.editor->passPanel().slotState(2) == SlotState::Empty);
+    fillPassSlot(f.proc, 2);
+    f.proc.setReplayRequest(1);
+    f.editor->refresh(); // what the timer calls
+    CHECK(f.editor->passPanel().slotState(2) == SlotState::Filled);
+    CHECK(f.editor->passPanel().playButton().getToggleState());
 }
 
 TEST_CASE("Editor: the mode button reflects and sets the trigger mode", "[editor][midi]")
@@ -1065,10 +1153,49 @@ TEST_CASE("Editor: the mode button reflects and sets the trigger mode", "[editor
     CHECK(btn.getButtonText() == "MIDI");
 }
 
-TEST_CASE("Editor: top bar has no overlaps with the mode button at 800x540 and 900x600", "[editor][midi][layout]")
+TEST_CASE("Editor: pad 8's strip and note label stay clear of the resize corner", "[editor][layout][passes]")
 {
     EditorFixture f;
-    for (const auto size : { juce::Point<int> { 800, 540 }, juce::Point<int> { 900, 600 } })
+    for (const auto size : { juce::Point<int> { 800, 600 }, juce::Point<int> { 900, 660 }, juce::Point<int> { 1400, 900 } })
+    {
+        f.editor->setSize(size.x, size.y);
+        CAPTURE(size.x, size.y);
+        REQUIRE(f.editor->resizableCorner != nullptr);
+        const auto corner = f.editor->resizableCorner->getBounds();
+        REQUIRE(!corner.isEmpty());
+        CHECK(corner.getBottomRight() == f.editor->getLocalBounds().getBottomRight());
+        auto& passes = f.editor->passPanel();
+        const auto origin = passes.getPosition();
+        for (int i = 0; i < 8; ++i)
+        {
+            CAPTURE(i);
+            const auto strip = passes.padStripBounds(i) + origin;
+            const auto note = passes.padNoteBounds(i) + origin;
+            CAPTURE(strip.toString(), note.toString(), corner.toString());
+            CHECK_FALSE(strip.intersects(corner));
+            CHECK_FALSE(note.intersects(corner));
+            // Still usable: the strip keeps most of the pad's width, the label room for "C#-2".
+            CHECK(strip.getWidth() >= passes.slotButton(i).getWidth() / 2);
+            CHECK(note.getWidth() >= 30);
+            CHECK(note.getHeight() >= 12);
+        }
+    }
+}
+
+TEST_CASE("Editor: default size 900x660, at least 800x600", "[editor][layout]")
+{
+    EditorFixture f;
+    CHECK(f.editor->getWidth() == 900);
+    CHECK(f.editor->getHeight() == 660);
+    REQUIRE(f.editor->getConstrainer() != nullptr);
+    CHECK(f.editor->getConstrainer()->getMinimumWidth() == 800);
+    CHECK(f.editor->getConstrainer()->getMinimumHeight() == 600);
+}
+
+TEST_CASE("Editor: top bar has no overlaps with the mode button at 800x600 and 900x660", "[editor][midi][layout]")
+{
+    EditorFixture f;
+    for (const auto size : { juce::Point<int> { 800, 600 }, juce::Point<int> { 900, 660 } })
     {
         f.editor->setSize(size.x, size.y);
         CAPTURE(size.x, size.y);
@@ -1231,3 +1358,91 @@ TEST_CASE("Editor: the suggestion snaps its boundaries to the grid", "[editor][g
     }
 }
 
+
+namespace {
+struct SnapshotHead : juce::AudioPlayHead
+{
+    juce::Optional<PositionInfo> pos;
+    juce::Optional<PositionInfo> getPosition() const override { return pos; }
+};
+} // namespace
+
+TEST_CASE("Editor: snapshot of the pad bar with filled, playing, queued and armed pads (DC_SNAPSHOT_DIR)", "[editor][passes][snapshot]")
+{
+    // Look at it: DC_SNAPSHOT_DIR=<dir> writes pad-bar-snapshot.png (900x660: pads 1, 2, 4, 5, 7 and 8
+    // filled, 4 playing, 7 queued) and pad-bar-snapshot-learn.png (Learn mode: 2 bound to C3, 6 armed).
+    const auto dir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {});
+    if (dir.isEmpty())
+        return;
+    EditorFixture f;
+    constexpr int kBlock = 512;
+    constexpr double kRate = 44100.0;
+    f.proc.prepareToPlay(kRate, kBlock);
+    f.proc.replaceLoop(0, f.wav("a.wav"), 1);
+    f.proc.replaceLoop(1, f.wav("b.wav"), 1);
+    f.proc.waitForLoads();
+    auto s = f.proc.getPluginState();
+    s.loop1.boundaries = { 0.5 };
+    s.loop2.boundaries = { 0.25, 0.5, 0.75 };
+    s.rules = { RuleEntry { 0, { RuleTarget { 0, 1.0f } } }, RuleEntry { 1, { RuleTarget { 2, 1.0f } } } };
+    auto ev = [](double phase, int region) { return PassEvent { phase, region < 0, region, PlayMode::Gate }; };
+    s.passes[0].events = { ev(0.0, 0), ev(0.5, 2) };
+    s.passes[1].events = { ev(0.0, 1), ev(0.25, -1), ev(0.5, 3), ev(0.875, -1) };
+    s.passes[3].events = { ev(0.0, 0), ev(0.125, 1), ev(0.375, 2), ev(0.5, -1), ev(0.625, 3) };
+    s.passes[4].events = { ev(0.25, 2), ev(0.75, 0) };
+    s.passes[6].events = { ev(0.0, 3), ev(0.5, 1), ev(0.75, -1) };
+    s.passes[7].events = { ev(0.0, 2), ev(0.5, 0) }; // its strip ends left of the resize corner
+    f.proc.applyEdit(s);
+
+    SnapshotHead head;
+    f.proc.setPlayHead(&head);
+    double ppq = 0.0;
+    auto block = [&] {
+        juce::AudioPlayHead::PositionInfo info;
+        info.setBpm(120.0);
+        info.setIsPlaying(true);
+        info.setPpqPosition(ppq);
+        info.setTimeSignature(juce::AudioPlayHead::TimeSignature { 4, 4 });
+        head.pos = info;
+        juce::AudioBuffer<float> buf(2, kBlock);
+        buf.clear();
+        juce::MidiBuffer midi;
+        f.proc.processBlock(buf, midi);
+        ppq += kBlock * 120.0 / (60.0 * kRate);
+    };
+    f.proc.setReplayRequest(2 + 3);
+    for (int i = 0; i < 400 && f.proc.replaySlot() != 3; ++i)
+        block();
+    REQUIRE(f.proc.replaySlot() == 3);
+    for (int i = 0; i < 20; ++i)
+        block(); // somewhere inside the pass
+    f.proc.setReplayRequest(2 + 6);
+    f.editor->setSize(900, 660);
+    f.editor->refresh();
+
+    auto snap = [&](const juce::String& name) {
+        const auto img = f.editor->createComponentSnapshot(f.editor->getLocalBounds());
+        auto png = juce::File(dir).getChildFile(name);
+        png.deleteFile();
+        if (auto out = png.createOutputStream())
+            juce::PNGImageFormat().writeImageToStream(img, *out);
+    };
+    auto& passes = f.editor->passPanel();
+    CHECK(passes.slotState(3) == dc::ui::PadState::Playing);
+    CHECK(passes.slotState(6) == dc::ui::PadState::Queued);
+    snap("pad-bar-snapshot.png");
+
+    passes.learnButton().onClick();
+    passes.slotButton(1).onClick();
+    juce::MidiBuffer on;
+    on.addEvent(juce::MidiMessage::noteOn(1, 60, 1.0f), 0);
+    juce::AudioBuffer<float> buf(2, kBlock);
+    f.proc.processBlock(buf, on);
+    passes.slotButton(5).onClick();
+    f.editor->refresh();
+    CHECK(passes.padNote(1) == "C3");
+    CHECK(passes.padNote(5) == "...");
+    snap("pad-bar-snapshot-learn.png");
+    passes.learnButton().onClick();
+    f.proc.setPlayHead(nullptr);
+}

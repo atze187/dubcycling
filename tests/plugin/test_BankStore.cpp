@@ -320,16 +320,16 @@ TEST_CASE("BankStore: a damaged or too-new bank.json is not overwritten")
         CHECK(f.bankJson("B").loadFileAsString() == text);
         CHECK(f.store.loadPreset("B", "P").result.error == Error::BankTooNew);
     }
-    SECTION("version 4 is too new, version 2 is saved as version 3")
+    SECTION("version 5 is too new, version 2 is saved as version 4")
     {
-        const juce::String text = "{\"version\": 4, \"presets\": []}";
+        const juce::String text = "{\"version\": 5, \"presets\": []}";
         REQUIRE(f.bankJson("B").replaceWithText(text));
         CHECK(f.store.savePreset("B", "P", StoreFixture::state(a, b), false).error == Error::BankTooNew);
         CHECK(f.bankJson("B").loadFileAsString() == text);
 
         REQUIRE(f.bankJson("B").replaceWithText("{\"version\": 2, \"presets\": []}"));
         CHECK(f.store.savePreset("B", "P", StoreFixture::state(a, b), false).ok());
-        CHECK(static_cast<int>(juce::JSON::parse(f.bankJson("B").loadFileAsString())["version"]) == 3);
+        CHECK(static_cast<int>(juce::JSON::parse(f.bankJson("B").loadFileAsString())["version"]) == 4);
     }
     SECTION("missing bank")
     {
@@ -607,4 +607,53 @@ TEST_CASE("BankStore: reusing a sample keeps its spelling on disk, so export agr
     const auto r = exportBank(f.store, "B", zip);
     CHECK(r.message == "");
     CHECK(r.ok());
+}
+
+namespace {
+
+// A state with non-default effect settings and two filled pass slots.
+PluginState stateWithFxAndPasses(const juce::File& f1, const juce::File& f2)
+{
+    auto s = StoreFixture::state(f1, f2);
+    s.fx.params.set(FxParam::ReverbMix, 0.9);
+    s.fx.params.set(FxParam::FlangerMix, 0.3);
+    s.fx.setSwitch(1, FxInsert::Reverb, true);
+    s.fx.setSwitch(0, FxInsert::Filter, true);
+    s.passes[0].events = { PassEvent { 0.0, false, 1, PlayMode::Gate }, PassEvent { 0.5, true, -1, PlayMode::Gate } };
+    s.passes[5].events = { PassEvent { 0.25, false, 0, PlayMode::Gate } };
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("BankStore: a saved preset keeps the effect settings and the pass slots")
+{
+    StoreFixture f;
+    REQUIRE(f.store.createBank("B").ok());
+    const auto a = f.wav("a.wav", 0.01f);
+    const auto b = f.wav("b.wav", 0.02f);
+    const auto s = stateWithFxAndPasses(a, b);
+    REQUIRE(f.store.savePreset("B", "P", s, false).ok());
+
+    const auto loaded = f.store.loadPreset("B", "P");
+    REQUIRE(loaded.result.ok());
+    CHECK(loaded.state.fx == s.fx);
+    CHECK(loaded.state.fx.maskFor(1) != 0);
+    CHECK(loaded.state.passes == s.passes);
+    CHECK_FALSE(loaded.state.passes[0].empty());
+    CHECK_FALSE(loaded.state.passes[5].empty());
+
+    // Overwriting with other passes and effects replaces both.
+    auto s2 = s;
+    s2.passes[0].events = { PassEvent { 0.125, false, 1, PlayMode::Gate } };
+    s2.passes[5].events.clear();
+    s2.passes[7].events = { PassEvent { 0.0, false, 0, PlayMode::Gate } };
+    s2.fx.params.set(FxParam::ReverbMix, 0.2);
+    s2.fx.setSwitch(0, FxInsert::Filter, false);
+    s2.fx.setSwitch(0, FxInsert::Flanger, true); // region 1 keeps its switch, so no trailing zero mask
+    REQUIRE(f.store.savePreset("B", "P", s2, true).ok());
+    const auto again = f.store.loadPreset("B", "P");
+    REQUIRE(again.result.ok());
+    CHECK(again.state.fx == s2.fx);
+    CHECK(again.state.passes == s2.passes);
 }
