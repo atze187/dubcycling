@@ -37,7 +37,7 @@ struct PanelFixture
     PanelFixture()
     {
         dir.createDirectory();
-        panel.setSize(800, 28);
+        panel.setSize(900, PassPanel::heightFor(660));
         proc.prepareToPlay(kRate, kBlock);
     }
     ~PanelFixture()
@@ -305,13 +305,16 @@ TEST_CASE("PassPanel: a learned note shows on the button; the wait ends when it 
     click(f.panel.learnButton());
     click(f.panel.slotButton(0));
     REQUIRE(f.panel.isWaiting(0));
+    CHECK(f.panel.padNote(0) == "...");
+    CHECK(f.panel.slotButton(0).getButtonText() == "1"); // the pad keeps its number
 
     f.note(60);
     REQUIRE(f.proc.boundNote(0) == 60);
     f.panel.refresh(); // polled by the editor timer
     CHECK_FALSE(f.panel.isWaiting(0));
     CHECK(f.panel.noteText(0) == "C3");
-    CHECK(f.panel.slotButton(0).getButtonText().contains("C3"));
+    CHECK(f.panel.padNote(0) == "C3"); // small label on the pad
+    CHECK(f.panel.slotButton(0).getButtonText() == "1");
     CHECK(f.panel.slotButton(0).getTooltip().contains("C3"));
 
     click(f.panel.playButton());
@@ -326,6 +329,7 @@ TEST_CASE("PassPanel: a learned note shows on the button; the wait ends when it 
     CHECK(f.panel.slotButton(0).getButtonText() == "1");
     CHECK(f.panel.playButton().getButtonText() == "PLAY");
     CHECK(f.panel.slotButton(0).getTooltip().contains("C3"));
+    CHECK(f.panel.padNote(0).isEmpty()); // note labels only in Learn mode
     CHECK(f.panel.noteText(1).isEmpty());
 }
 
@@ -409,61 +413,193 @@ TEST_CASE("PassPanel: in Learn mode a right-click removes the target's note", "[
     CHECK(f.proc.boundNote(2) == 62);
 }
 
-TEST_CASE("PassPanel: all strings are English and the buttons fit side by side", "[passpanel][layout]")
+TEST_CASE("padStateFor: playing wins, then empty, then queued, else filled", "[passpanel][pads]")
+{
+    using dc::ui::padStateFor;
+    using dc::ui::PadState;
+    CHECK(padStateFor(2, false, 0, -1) == PadState::Empty);
+    CHECK(padStateFor(2, true, 0, -1) == PadState::Filled);
+    CHECK(padStateFor(2, true, 1, -1) == PadState::Filled);   // the chain is not a request for this pad
+    CHECK(padStateFor(2, true, 2 + 2, -1) == PadState::Queued);
+    CHECK(padStateFor(2, true, 2 + 3, -1) == PadState::Filled); // another pad is queued
+    CHECK(padStateFor(2, true, 2 + 2, 2) == PadState::Playing);
+    CHECK(padStateFor(2, true, 1, 2) == PadState::Playing);     // chain playing this slot
+    CHECK(padStateFor(2, false, 0, 2) == PadState::Playing);    // cleared while playing: plays to the pass end
+    CHECK(padStateFor(2, false, 2 + 2, -1) == PadState::Empty); // a request for an empty slot shows nothing
+    CHECK(padStateFor(2, true, 2 + 2, 5) == PadState::Queued);  // waits while pad 6 plays
+}
+
+TEST_CASE("PassPanel: the bar height grows with the editor and keeps a minimum", "[passpanel][layout]")
+{
+    const int atMin = PassPanel::heightFor(600);
+    const int atDefault = PassPanel::heightFor(660);
+    const int atLarge = PassPanel::heightFor(900);
+    CHECK(atDefault >= 115);
+    CHECK(atDefault <= 130);
+    CHECK(atMin >= 110);
+    CHECK(atMin <= atDefault);
+    CHECK(atLarge > atDefault);
+    CHECK(atLarge <= 160);
+    CHECK(PassPanel::heightFor(300) == atMin); // never below the minimum
+    CHECK(PassPanel::heightFor(5000) == PassPanel::heightFor(1400)); // and capped
+}
+
+TEST_CASE("PassPanel: control strip on top, eight equal pads across the full width", "[passpanel][layout]")
 {
     PanelFixture f;
-    f.fill({ 0 });
+    f.fill({ 0, 3 });
     f.panel.refresh();
-    for (const int w : { 772, 884 })
+    for (const auto size : { juce::Point<int> { 800, 600 }, juce::Point<int> { 900, 660 }, juce::Point<int> { 1400, 900 } })
     {
-        f.panel.setSize(w, 28);
-        CAPTURE(w);
-        std::vector<juce::Component*> parts { &f.panel.saveButton(), &f.panel.playButton(), &f.panel.learnButton(),
-                                              &f.panel.clearAllButton() };
+        const int w = size.x;
+        f.panel.setSize(w, PassPanel::heightFor(size.y));
+        CAPTURE(w, f.panel.getHeight());
+        const auto bounds = f.panel.getLocalBounds();
+
+        // Strip: PLAY, SAVE, LEARN from the left, CLEAR ALL on the right, one row, no overlaps.
+        auto& play = f.panel.playButton();
+        auto& save = f.panel.saveButton();
+        auto& learn = f.panel.learnButton();
+        auto& clearAll = f.panel.clearAllButton();
+        const std::vector<juce::Component*> strip { &play, &save, &learn, &clearAll };
+        for (std::size_t i = 0; i < strip.size(); ++i)
+        {
+            const auto r = strip[i]->getBounds();
+            CAPTURE(i, r.toString());
+            CHECK(bounds.contains(r));
+            CHECK(r.getWidth() >= 48);
+            CHECK(r.getHeight() >= 20);
+            CHECK(r.getY() == play.getY());
+            for (std::size_t j = i + 1; j < strip.size(); ++j)
+                CHECK_FALSE(r.intersects(strip[j]->getBounds()));
+        }
+        CHECK(play.getX() <= 12);
+        CHECK(save.getX() > play.getRight());
+        CHECK(learn.getX() > save.getRight());
+        CHECK(clearAll.getRight() >= w - 12);
+        CHECK(clearAll.getX() > learn.getRight() + 100);
+
+        // Pads: one row under the strip, equal widths, ~6 px gaps, margin to margin.
+        const int stripBottom = play.getBottom();
         for (int i = 0; i < 8; ++i)
         {
-            parts.push_back(&f.panel.slotButton(i));
-            parts.push_back(&f.panel.clearButton(i));
+            CAPTURE(i);
+            const auto pad = f.panel.slotButton(i).getBounds();
+            CHECK(bounds.contains(pad));
+            CHECK(pad.getY() >= stripBottom + 4);
+            CHECK(pad.getY() == f.panel.slotButton(0).getY());
+            CHECK(pad.getHeight() >= 70);
+            CHECK(std::abs(pad.getWidth() - f.panel.slotButton(0).getWidth()) <= 1);
+            CHECK(f.panel.slotButton(i).getButtonText() == juce::String(i + 1));
+            if (i > 0)
+            {
+                const int gap = pad.getX() - f.panel.slotButton(i - 1).getRight();
+                CHECK(gap >= 5);
+                CHECK(gap <= 7);
+            }
+            // The clear x sits in the pad's top-right corner, at least 16x16.
+            auto& x = f.panel.clearButton(i);
+            CHECK(x.getParentComponent() == &f.panel.slotButton(i));
+            const auto xr = x.getBounds();
+            CHECK(xr.getWidth() >= 16);
+            CHECK(xr.getHeight() >= 16);
+            CHECK(f.panel.slotButton(i).getLocalBounds().contains(xr));
+            CHECK(xr.getRight() >= pad.getWidth() - 3);
+            CHECK(xr.getY() <= 3);
         }
-        for (std::size_t i = 0; i < parts.size(); ++i)
-        {
-            const auto r = parts[i]->getBounds();
-            CHECK(r.getWidth() >= 12);
-            CHECK(r.getHeight() >= 16);
-            CHECK(f.panel.getLocalBounds().contains(r));
-            for (std::size_t j = i + 1; j < parts.size(); ++j)
-                CHECK_FALSE(r.intersects(parts[j]->getBounds()));
-        }
-        // Play sits right of the slot group.
-        CHECK(f.panel.playButton().getX() >= f.panel.clearButton(7).getRight());
+        CHECK(f.panel.slotButton(0).getX() <= 12);
+        CHECK(f.panel.slotButton(7).getRight() >= w - 12);
+        CHECK(f.panel.slotButton(0).getBottom() <= f.panel.getHeight() - 4);
     }
     CHECK(f.panel.clearAllButton().getButtonText() == "CLEAR ALL");
     CHECK(f.panel.clearButton(0).getTooltip() == "Clear slot 1");
-
-    // Look at it: DC_SNAPSHOT_DIR=<dir> writes passpanel_normal.png and passpanel_learn.png.
-    if (const auto dir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {}); dir.isNotEmpty())
-    {
-        dc::ui::PanelLook look;
-        f.panel.setLookAndFeel(&look);
-        auto snap = [&](const juce::String& name) {
-            const auto img = f.panel.createComponentSnapshot(f.panel.getLocalBounds());
-            auto png = juce::File(dir).getChildFile(name);
-            png.deleteFile();
-            if (auto out = png.createOutputStream())
-                juce::PNGImageFormat().writeImageToStream(img, *out);
-        };
-        f.proc.setReplayRequest(2);
-        f.panel.refresh();
-        snap("passpanel_normal.png");
-        click(f.panel.learnButton());
-        click(f.panel.slotButton(1));
-        f.note(61);
-        click(f.panel.playButton());
-        snap("passpanel_learn.png");
-        click(f.panel.learnButton());
-        f.panel.setLookAndFeel(nullptr);
-    }
 }
+
+TEST_CASE("PassPanel: the Learn hint sits in the strip between the groups", "[passpanel][layout][learn]")
+{
+    PanelFixture f;
+    click(f.panel.learnButton());
+    click(f.panel.slotButton(7));
+    CHECK(f.panel.hintText() == "Waiting for note: slot 8");
+    f.panel.resized();
+    // The hint label is the LCD between LEARN and CLEAR ALL.
+    juce::Label* hint = nullptr;
+    for (auto* c : f.panel.getChildren())
+        if (auto* l = dynamic_cast<juce::Label*>(c); l != nullptr && l->getText() == f.panel.hintText())
+            hint = l;
+    REQUIRE(hint != nullptr);
+    CHECK(hint->isVisible());
+    CHECK(hint->getX() > f.panel.learnButton().getRight());
+    CHECK(hint->getRight() < f.panel.clearAllButton().getX());
+    CHECK(hint->getBottom() <= f.panel.slotButton(0).getY());
+    click(f.panel.learnButton());
+    CHECK_FALSE(hint->isVisible());
+}
+
+TEST_CASE("PassPanel: a filled pad carries its pass's Loop-2 strip", "[passpanel][pads]")
+{
+    PanelFixture f;
+    auto s = f.proc.getPluginState();
+    s.passes[2].events = { PassEvent { 0.0, false, 1, PlayMode::Gate }, PassEvent { 0.5, true, -1, PlayMode::Gate },
+                           PassEvent { 0.75, false, 0, PlayMode::Gate } };
+    f.proc.applyEdit(s);
+    f.panel.refresh();
+    const auto expected = dc::ui::pads::passStripSegments(f.proc.getPluginState().passes[2]);
+    REQUIRE(expected.size() == 2);
+    CHECK(f.panel.padSegments(2) == expected);
+    CHECK(f.panel.padSegments(0).empty());
+
+    f.proc.clearPass(2);
+    f.panel.refresh();
+    CHECK(f.panel.padSegments(2).empty());
+}
+
+TEST_CASE("PassPanel: the clear x is inactive in Learn mode; CLEAR ALL still works", "[passpanel][learn]")
+{
+    PanelFixture f;
+    f.fill({ 1, 4 });
+    f.panel.refresh();
+    CHECK(f.panel.clearButton(1).isEnabled());
+    CHECK(f.panel.clearButton(1).isVisible());
+    CHECK_FALSE(f.panel.clearButton(2).isVisible()); // empty pad: no x
+
+    click(f.panel.learnButton());
+    CHECK_FALSE(f.panel.clearButton(1).isEnabled());
+    CHECK_FALSE(f.panel.clearButton(1).isVisible());
+    click(f.panel.clearAllButton());
+    CHECK_FALSE(f.proc.passFilled(1));
+    CHECK_FALSE(f.proc.passFilled(4));
+}
+
+TEST_CASE("PassPanel: snapshot of the pad bar (DC_SNAPSHOT_DIR)", "[passpanel][snapshot]")
+{
+    // Look at it: DC_SNAPSHOT_DIR=<dir> writes passpanel_normal.png and passpanel_learn.png.
+    const auto dir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {});
+    if (dir.isEmpty())
+        return;
+    PanelFixture f;
+    dc::ui::PanelLook look;
+    f.panel.setLookAndFeel(&look);
+    f.fill({ 0, 1, 3, 6 });
+    auto snap = [&](const juce::String& name) {
+        const auto img = f.panel.createComponentSnapshot(f.panel.getLocalBounds());
+        auto png = juce::File(dir).getChildFile(name);
+        png.deleteFile();
+        if (auto out = png.createOutputStream())
+            juce::PNGImageFormat().writeImageToStream(img, *out);
+    };
+    f.proc.setReplayRequest(2 + 3);
+    f.panel.refresh();
+    snap("passpanel_normal.png");
+    click(f.panel.learnButton());
+    click(f.panel.slotButton(1));
+    f.note(61);
+    click(f.panel.slotButton(6));
+    snap("passpanel_learn.png");
+    click(f.panel.learnButton());
+    f.panel.setLookAndFeel(nullptr);
+}
+
 
 TEST_CASE("midiNoteName names middle C C3", "[passpanel]")
 {

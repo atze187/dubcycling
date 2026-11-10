@@ -7,16 +7,27 @@ namespace dc::ui {
 namespace {
 using namespace panel;
 
-constexpr int kCaptionW = 50;
-constexpr int kSaveW = 48;
-constexpr int kSlotW = 34;
-constexpr int kClearW = 16;
-constexpr int kSlotGap = 4;
-constexpr int kPlayW = 48;
-constexpr int kLearnW = 52;
-constexpr int kClearAllW = 72;
+// Bar: top padding, control strip, gap, pads, bottom padding; side margin as the editor's.
+constexpr int kMargin = 8;
+constexpr int kTopPad = 6;
+constexpr int kStripH = 24;
+constexpr int kRowGap = 6;
+constexpr int kBottomPad = 8;
+constexpr int kPadGap = 6;
+constexpr int kPadMinH = 72;
+constexpr int kPadMaxH = 110;
+// Control strip.
+constexpr int kPlayW = 64;
+constexpr int kSaveW = 64;
+constexpr int kLearnW = 64;
+constexpr int kClearAllW = 86;
 constexpr int kGap = 6;
 constexpr int kHintMinW = 100;
+constexpr int kHintMaxW = 320;
+// Pad parts.
+constexpr int kClearSize = 18; // hit area of the clear "x"
+constexpr int kInset = 4;      // strip and labels from the pad edge
+constexpr int kRegionStripH = 6;
 
 const juce::Colour kPlayingFill { 0xff24402e }; // dark green behind the green text
 const juce::Colour kWaitingFill { 0xff3d3222 }; // dark amber
@@ -31,18 +42,22 @@ void paintButton(juce::TextButton& b, juce::Colour fill, juce::Colour text)
 }
 } // namespace
 
-void PassPanel::CompactButton::paintButton(juce::Graphics& g, bool highlighted, bool down)
+PadState padStateFor(int slot, bool filled, int request, int playing)
 {
-    const bool on = getToggleState();
-    getLookAndFeel().drawButtonBackground(g, *this, findColour(on ? buttonOnColourId : buttonColourId), highlighted,
-                                          down);
-    auto text = findColour(on ? textColourOnId : textColourOffId);
-    if (!isEnabled())
-        text = text.withMultipliedAlpha(0.5f);
-    g.setColour(text);
-    g.setFont(juce::Font(mono(std::min(11.0f, static_cast<float>(getHeight()) * 0.6f))));
-    g.drawFittedText(getButtonText(), getLocalBounds().reduced(1, 0), juce::Justification::centred, 1, 0.7f);
+    if (playing == slot)
+        return PadState::Playing; // also while the slot was just cleared: it plays to the pass end
+    if (!filled)
+        return PadState::Empty;
+    return request == 2 + slot ? PadState::Queued : PadState::Filled;
 }
+
+int PassPanel::heightFor(int editorHeight)
+{
+    const int pads = std::clamp(editorHeight * 12 / 100, kPadMinH, kPadMaxH);
+    return kTopPad + kStripH + kRowGap + pads + kBottomPad;
+}
+
+// ---- Buttons ----
 
 void PassPanel::TargetButton::mouseDown(const juce::MouseEvent& e)
 {
@@ -65,6 +80,119 @@ void PassPanel::TargetButton::mouseUp(const juce::MouseEvent& e)
         juce::TextButton::mouseUp(e);
 }
 
+void PassPanel::ClearButton::paintButton(juce::Graphics& g, bool highlighted, bool down)
+{
+    const auto text = findColour(textColourOffId);
+    if (highlighted || down)
+    {
+        g.setColour(text.withAlpha(down ? 0.3f : 0.18f));
+        g.fillRect(getLocalBounds().reduced(2));
+    }
+    g.setColour(highlighted ? text : text.withMultipliedAlpha(0.8f));
+    g.setFont(juce::Font(mono(12.0f, true)));
+    g.drawText("x", getLocalBounds(), juce::Justification::centred, false);
+}
+
+PassPanel::Pad::Pad()
+{
+    clear.setButtonText("x");
+    addChildComponent(clear);
+}
+
+void PassPanel::Pad::show(int index, PadState st, bool learn, bool waiting, const juce::String& noteLabel,
+                          const std::vector<pads::StripSegment>& segs)
+{
+    clear.setColour(juce::TextButton::textColourOffId, st == PadState::Playing ? pads::padPlayingText(index) : kText);
+    if (index == index_ && st == state && learn == learn_ && waiting == waiting_ && noteLabel == note
+        && segs == segments)
+        return;
+    index_ = index;
+    state = st;
+    learn_ = learn;
+    waiting_ = waiting;
+    note = noteLabel;
+    segments = segs;
+    repaint();
+}
+
+void PassPanel::Pad::resized()
+{
+    clear.setBounds(getWidth() - kClearSize - 2, 2, kClearSize, kClearSize);
+}
+
+void PassPanel::Pad::paintButton(juce::Graphics& g, bool highlighted, bool down)
+{
+    const auto r = getLocalBounds();
+    const auto colour = pads::padColour(index_);
+    const bool playing = state == PadState::Playing;
+    const bool empty = state == PadState::Empty;
+
+    auto fill = playing ? colour : (empty ? kLcd : pads::padRestingFill(index_));
+    if (down)
+        fill = fill.brighter(0.15f);
+    g.setColour(fill);
+    g.fillRect(r);
+    const auto text = playing ? pads::padPlayingText(index_) : (empty ? kDim : kText);
+
+    auto inner = r.reduced(kInset);
+    // Loop-2 regions of the pass along the bottom: segments in the pad's colour (dark on a playing
+    // pad), gaps where Loop 2 is silent, a 1 px cut between touching segments.
+    if (!segments.empty())
+    {
+        const auto track = inner.removeFromBottom(kRegionStripH);
+        g.setColour(playing ? text.withAlpha(0.2f) : kLcd.withAlpha(0.7f));
+        g.fillRect(track);
+        g.setColour(playing ? text : colour);
+        const float w = static_cast<float>(track.getWidth());
+        for (std::size_t i = 0; i < segments.size(); ++i)
+        {
+            const auto& s = segments[i];
+            const int x0 = track.getX() + juce::roundToInt(s.start * w);
+            int x1 = track.getX() + juce::roundToInt(s.end * w);
+            if (i + 1 < segments.size() && segments[i + 1].start <= s.end)
+                --x1;
+            g.fillRect(x0, track.getY(), std::max(1, x1 - x0), track.getHeight());
+        }
+        inner.removeFromBottom(2);
+    }
+
+    // The number, large, in the middle of what is left.
+    const float numberH = std::clamp(static_cast<float>(inner.getHeight()) * 0.55f, 16.0f, 44.0f);
+    g.setColour(text);
+    g.setFont(juce::Font(mono(numberH, true)));
+    g.drawText(getButtonText(), inner, juce::Justification::centred, false);
+
+    // Learn mode: "..." while waiting, otherwise the bound note, small, bottom-right.
+    if (note.isNotEmpty())
+    {
+        g.setColour(playing ? text : (waiting_ ? kAmber : kText));
+        g.setFont(juce::Font(mono(11.0f, true)));
+        g.drawText(note, inner.removeFromBottom(14), juce::Justification::bottomRight, false);
+    }
+
+    // Edges: 1 px edge (lighter on hover); playing adds a light inner edge, queued an amber frame,
+    // a waiting learn an accent frame.
+    g.setColour(highlighted ? kEdgeLight : kEdge);
+    g.drawRect(r, 1);
+    if (playing)
+    {
+        g.setColour(colour.brighter(0.8f).withAlpha(0.9f));
+        g.drawRect(r.reduced(1), 1);
+    }
+    if (state == PadState::Queued)
+    {
+        g.setColour(kAmber);
+        g.drawRect(r, 2);
+    }
+    if (learn_ && waiting_)
+    {
+        g.setColour(kAccent);
+        g.drawRect(r, 2);
+    }
+}
+
+// ---- Panel ----
+
 juce::String midiNoteName(int note)
 {
     if (note < 0 || note > 127)
@@ -75,39 +203,32 @@ juce::String midiNoteName(int note)
 PassPanel::PassPanel(DubcyclingProcessor& proc) : proc_(proc)
 {
     notes_.fill(-1);
-    caption_.setText("PASSES", juce::dontSendNotification);
-    caption_.setFont(mono(10.0f));
-    caption_.setColour(juce::Label::textColourId, kDim);
-    caption_.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(caption_);
-
     for (int i = 0; i < kPassSlots; ++i)
     {
-        auto& s = slots_[static_cast<std::size_t>(i)];
-        s.setButtonText(juce::String(i + 1));
-        s.onClick = [this, i] { targetClicked(i); };
-        s.onRightClick = [this, i] { return targetRightClicked(i); };
-        addAndMakeVisible(s);
-
-        auto& c = clears_[static_cast<std::size_t>(i)];
-        c.setButtonText("x");
-        c.setTooltip("Clear slot " + juce::String(i + 1));
-        c.onClick = [this, i] {
+        auto& p = pads_[static_cast<std::size_t>(i)];
+        p.setButtonText(juce::String(i + 1));
+        p.onClick = [this, i] { targetClicked(i); };
+        p.onRightClick = [this, i] { return targetRightClicked(i); };
+        p.clear.setTooltip("Clear slot " + juce::String(i + 1));
+        p.clear.onClick = [this, i] {
+            if (learn_)
+                return; // inactive in Learn mode
             proc_.clearPass(i);
             refresh();
         };
-        addAndMakeVisible(c);
+        p.show(i, PadState::Empty, false, false, {}, {});
+        addAndMakeVisible(p);
     }
-
-    save_.setButtonText("SAVE");
-    save_.onClick = [this] { targetClicked(DubcyclingProcessor::kTargetSave); };
-    save_.onRightClick = [this] { return targetRightClicked(DubcyclingProcessor::kTargetSave); };
-    addAndMakeVisible(save_);
 
     play_.setButtonText("PLAY");
     play_.onClick = [this] { targetClicked(DubcyclingProcessor::kTargetPlay); };
     play_.onRightClick = [this] { return targetRightClicked(DubcyclingProcessor::kTargetPlay); };
     addAndMakeVisible(play_);
+
+    save_.setButtonText("SAVE");
+    save_.onClick = [this] { targetClicked(DubcyclingProcessor::kTargetSave); };
+    save_.onRightClick = [this] { return targetRightClicked(DubcyclingProcessor::kTargetSave); };
+    addAndMakeVisible(save_);
 
     learnBtn_.setButtonText("LEARN");
     learnBtn_.onClick = [this] { setLearnMode(!learn_); };
@@ -143,6 +264,16 @@ juce::String PassPanel::noteText(int target) const
     if (target < 0 || target >= kTargets)
         return {};
     return midiNoteName(notes_[static_cast<std::size_t>(target)]);
+}
+
+juce::String PassPanel::padNote(int slot) const
+{
+    return pads_[static_cast<std::size_t>(clampSlot(slot))].note;
+}
+
+std::vector<pads::StripSegment> PassPanel::padSegments(int slot) const
+{
+    return pads_[static_cast<std::size_t>(clampSlot(slot))].segments;
 }
 
 juce::TextButton& PassPanel::targetButton(int target)
@@ -235,6 +366,11 @@ void PassPanel::setLearnMode(bool on)
 
 void PassPanel::refresh()
 {
+    refresh(proc_.getPluginState().passes);
+}
+
+void PassPanel::refresh(const std::array<Pass, kPassSlots>& passes)
+{
     const int request = proc_.replayRequest();
     const int playing = proc_.replaySlot();
     waiting_ = proc_.learnArmed();
@@ -244,16 +380,13 @@ void PassPanel::refresh()
     bool anyFilled = false;
     for (int i = 0; i < kPassSlots; ++i)
     {
-        const bool filled = proc_.passFilled(i);
-        auto& st = state_[static_cast<std::size_t>(i)];
-        if (playing == i)
-            st = SlotState::Playing; // also while the slot was just cleared: it plays to the pass end
-        else if (!filled)
-            st = SlotState::Empty;
-        else
-            st = request == 2 + i ? SlotState::Queued : SlotState::Filled;
+        const auto idx = static_cast<std::size_t>(i);
+        const bool filled = !passes[idx].empty();
+        state_[idx] = padStateFor(i, filled, request, playing);
         anyFilled = anyFilled || filled;
-        clears_[static_cast<std::size_t>(i)].setEnabled(filled);
+        auto& x = pads_[idx].clear;
+        x.setEnabled(filled && !learn_);
+        x.setVisible(filled && !learn_);
     }
     clearAll_.setEnabled(anyFilled);
 
@@ -262,28 +395,14 @@ void PassPanel::refresh()
     save_.setEnabled(learn_ || proc_.canSave());
     learnBtn_.setToggleState(learn_, juce::dontSendNotification);
     paintButton(learnBtn_, learn_ ? kLearnFill : kButton, learn_ ? kAccent : kText);
-    learnBtn_.setTooltip(learn_ ? "Learn mode: click a slot, SAVE or PLAY, then play a MIDI note to bind it; "
+    learnBtn_.setTooltip(learn_ ? "Learn mode: click a pad, SAVE or PLAY, then play a MIDI note to bind it; "
                                   "right-click one to remove its note. Click LEARN again to leave."
-                                : "Bind MIDI notes to the slots, SAVE and PLAY");
+                                : "Bind MIDI notes to the pads, SAVE and PLAY");
 
     for (int t = 0; t < kTargets; ++t)
     {
-        auto& b = targetButton(t);
         const auto note = noteText(t);
         const bool slot = t < kPassSlots;
-        const auto slotState = slot ? state_[static_cast<std::size_t>(t)] : SlotState::Filled;
-        juce::Colour fill = kButton;
-        juce::Colour text = kText;
-        if (slot && slotState == SlotState::Empty)
-            text = kDim;
-        if (slot && slotState == SlotState::Queued)
-            text = kAmber;
-        if ((slot && slotState == SlotState::Playing) || (t == DubcyclingProcessor::kTargetPlay && request != 0))
-        {
-            fill = kPlayingFill;
-            text = kGreen;
-        }
-
         juce::String label = targetLabel(t);
         juce::String tip = normalTooltip(t);
         if (note.isNotEmpty())
@@ -293,8 +412,6 @@ void PassPanel::refresh()
             if (isWaiting(t))
             {
                 label = "...";
-                fill = kWaitingFill;
-                text = kAmber;
                 tip = "Waiting for note: play a MIDI note to bind it to " + targetName(t)
                       + " (click again to cancel, right-click to remove its note)";
             }
@@ -309,8 +426,30 @@ void PassPanel::refresh()
                                                         + ". Click to learn a note."));
             }
         }
-        b.setButtonText(label);
+        auto& b = targetButton(t);
         b.setTooltip(tip);
+        if (slot)
+        {
+            // A pad keeps its number; the Learn label goes to its corner.
+            const auto idx = static_cast<std::size_t>(t);
+            pads_[idx].show(t, state_[idx], learn_, isWaiting(t), learn_ && label != targetLabel(t) ? label : juce::String(),
+                            pads::passStripSegments(passes[idx]));
+            continue;
+        }
+        // SAVE and PLAY: the label itself changes; PLAY lights green while a replay is requested.
+        juce::Colour fill = kButton;
+        juce::Colour text = kText;
+        if (t == DubcyclingProcessor::kTargetPlay && request != 0)
+        {
+            fill = kPlayingFill;
+            text = kGreen;
+        }
+        if (isWaiting(t))
+        {
+            fill = kWaitingFill;
+            text = kAmber;
+        }
+        b.setButtonText(label);
         paintButton(b, fill, text);
     }
 
@@ -327,32 +466,37 @@ void PassPanel::paint(juce::Graphics& g)
     g.setColour(kStrip);
     g.fillRect(getLocalBounds());
     g.setColour(kEdge);
-    g.drawRect(getLocalBounds(), 1);
+    g.drawHorizontalLine(0, 0.0f, static_cast<float>(getWidth()));
 }
 
 void PassPanel::resized()
 {
-    auto row = getLocalBounds().reduced(6, 4);
-    caption_.setBounds(row.removeFromLeft(kCaptionW));
-    row.removeFromLeft(kGap);
-    save_.setBounds(row.removeFromLeft(kSaveW));
-    row.removeFromLeft(kGap * 2);
+    auto area = getLocalBounds().reduced(kMargin, 0);
+    area.removeFromTop(kTopPad);
+    area.removeFromBottom(kBottomPad);
+
+    // Control strip: PLAY, SAVE, LEARN | hint | CLEAR ALL.
+    auto strip = area.removeFromTop(kStripH);
+    play_.setBounds(strip.removeFromLeft(kPlayW));
+    strip.removeFromLeft(kGap);
+    save_.setBounds(strip.removeFromLeft(kSaveW));
+    strip.removeFromLeft(kGap);
+    learnBtn_.setBounds(strip.removeFromLeft(kLearnW));
+    clearAll_.setBounds(strip.removeFromRight(kClearAllW));
+    strip.reduce(kGap * 2, 0);
+    const auto hint = strip.withSizeKeepingCentre(std::min(strip.getWidth(), kHintMaxW), strip.getHeight());
+    hint_.setBounds(hint.getWidth() >= kHintMinW ? hint : juce::Rectangle<int>());
+    hint_.setVisible(learn_ && hint_.getWidth() >= kHintMinW);
+    area.removeFromTop(kRowGap);
+
+    // Pads: equal widths (within 1 px) and gaps from margin to margin.
+    const int avail = area.getWidth() - kPadGap * (kPassSlots - 1);
     for (int i = 0; i < kPassSlots; ++i)
     {
-        if (i > 0)
-            row.removeFromLeft(kSlotGap);
-        slots_[static_cast<std::size_t>(i)].setBounds(row.removeFromLeft(kSlotW));
-        clears_[static_cast<std::size_t>(i)].setBounds(row.removeFromLeft(kClearW));
+        const int x0 = area.getX() + i * kPadGap + avail * i / kPassSlots;
+        const int x1 = area.getX() + i * kPadGap + avail * (i + 1) / kPassSlots;
+        pads_[static_cast<std::size_t>(i)].setBounds(x0, area.getY(), x1 - x0, area.getHeight());
     }
-    row.removeFromLeft(kGap);
-    play_.setBounds(row.removeFromLeft(kPlayW));
-    row.removeFromLeft(kGap * 2);
-    learnBtn_.setBounds(row.removeFromLeft(kLearnW));
-    row.removeFromLeft(kGap);
-    clearAll_.setBounds(row.removeFromLeft(kClearAllW));
-    row.removeFromLeft(kGap * 2);
-    hint_.setBounds(row.getWidth() >= kHintMinW ? row : juce::Rectangle<int>());
-    hint_.setVisible(learn_ && hint_.getWidth() >= kHintMinW);
 }
 
 } // namespace dc::ui

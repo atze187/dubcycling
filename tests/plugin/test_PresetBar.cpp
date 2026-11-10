@@ -322,7 +322,7 @@ TEST_CASE("PresetBar: the bar fits next to the BPM readout at the default editor
     LoopPair loops(f.proc);
     f.open();
     REQUIRE(f.editor->getWidth() == 900); // grown for the effects panel (was 760x480)
-    REQUIRE(f.editor->getHeight() == 600);
+    REQUIRE(f.editor->getHeight() == 660); // grown for the pad bar (was 600)
     f.editor->refresh();
     CHECK(f.editor->cycleText() == "Cycle: 2 Bars");
 

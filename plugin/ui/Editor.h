@@ -82,9 +82,11 @@ juce::String suggestConfirmMessage();
 
 // Edit view: top row with logo, preset bar and BPM (the cycle readout only when it fits);
 // Loop 1 lane on top, Loop 2 below, each with bars field, "Load..." button and slot
-// status; the insert strip right under the Loop-2 lane; the combined cycle length; under it the
-// pass slots row (PassPanel: Save, slots 1..8, Play, Learn, Clear); at the bottom the rule panel for the selected Loop-1 region (left) and the effects panel for the selected
-// Loop-2 region (right). A 10 Hz timer polls the processor and refreshes lanes and panels; edits go
+// status; the insert strip right under the Loop-2 lane; under it the rule panel for the selected
+// Loop-1 region (left) and the effects panel for the selected Loop-2 region (right); at the bottom
+// edge, over the full window width, the pad bar (PassPanel: PLAY, SAVE, LEARN, CLEAR ALL and the
+// eight pass pads). Default size 900x660, at least 800x600.
+// A 10 Hz timer polls the processor and refreshes lanes and panels; edits go
 // through processor.applyEdit. A switch toggle (strip or panel) is heard at once: the engine
 // re-evaluates the sounding voice's mask on the model swap.
 class Editor final : public juce::AudioProcessorEditor, private juce::Timer

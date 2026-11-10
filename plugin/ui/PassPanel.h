@@ -1,42 +1,64 @@
 #pragma once
 #include <array>
 #include <functional>
+#include <vector>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
+#include "plugin/ui/PadLook.h"
 
 namespace dc::ui {
 
 // MIDI note name with middle C (60) as "C3", sharps: 61 -> "C#3", 0 -> "C-2".
 juce::String midiNoteName(int note);
 
-// Pass slots row of the editor:
-//   PASSES [SAVE]  [1][x] [2][x] ... [8][x]  [PLAY]  [LEARN] [CLEAR ALL]  hint
-// Slot buttons show empty (dim), filled, queued (requested, waits for the next pass start: amber)
-// and playing (green). A click on a filled slot requests its replay (DubcyclingProcessor::
-// setReplayRequest(2 + i)); an empty slot does nothing. PLAY is lit while any replay is requested;
-// a click turns the chain on (off -> 1) or any replay off. SAVE (enabled while canSave()) stores the
-// last finished pass in the lowest free slot. "x" clears one slot, CLEAR ALL every slot.
+enum class PadState { Empty, Filled, Queued, Playing };
+// State of pass pad `slot` from the processor's view: Playing while replaySlot() names it (also
+// while it was just cleared: it plays to the pass end), else Empty when not filled, else Queued
+// when replayRequest() asks for it (it waits for the next pass start), else Filled.
+PadState padStateFor(int slot, bool filled, int request, int playing);
+
+// Pad bar at the bottom edge of the editor, over the full window width:
+//   [PLAY] [SAVE] [LEARN]            hint LCD            [CLEAR ALL]
+//   [  1  ] [  2  ] [  3  ] [  4  ] [  5  ] [  6  ] [  7  ] [  8  ]
+// Each pad has its own colour (pads::padColour). Empty: LCD black, dim number. Filled: a dim
+// version of its colour, the number in text colour, a strip along the bottom with the pass's Loop-2
+// regions (pads::passStripSegments) and a small "x" top-right that clears the slot. Queued
+// (requested, waits for the next pass start): 2 px amber frame. Playing: the full colour with dark
+// text and a light inner edge.
 //
-// LEARN toggles Learn mode (not persisted). In Learn mode a click on a slot, SAVE or PLAY arms that
-// target (armLearn): the button waits ("...", amber) until the processor has bound the next MIDI
-// note; a second click on a waiting button only cancels the wait (so a double-click never deletes a
-// binding). A right-click on a slot, SAVE or PLAY in Learn mode removes that target's note (and
-// cancels its wait); outside Learn mode a right-click is a normal click. Bound buttons show their
-// note name in Learn mode and in the tooltip always. Turning Learn off cancels an armed learn.
-// Clear and CLEAR ALL work the same in both modes.
+// A click on a filled pad requests its replay (DubcyclingProcessor::setReplayRequest(2 + i)); an
+// empty pad does nothing. PLAY is lit (green) while any replay is requested; a click turns the chain
+// on (off -> 1) or any replay off. SAVE (enabled while canSave()) stores the last finished pass in
+// the lowest free slot. CLEAR ALL clears every slot.
 //
-// refresh() polls the processor (atomics and the message-thread state, no audio-thread locks); the
-// editor calls it from its timer, and every click refreshes at once.
+// LEARN toggles Learn mode (not persisted). In Learn mode a click on a pad, SAVE or PLAY arms that
+// target (armLearn): it waits ("...", amber; a pad also gets an accent frame) until the processor has bound the next MIDI note; a
+// second click on a waiting target only cancels the wait (so a double-click never deletes a
+// binding). A right-click on a pad, SAVE or PLAY in Learn mode removes that target's note (and
+// cancels its wait); outside Learn mode a right-click is a normal click. In Learn mode the pads show
+// their note name in a small label bottom-right (SAVE and PLAY as their text); tooltips always name
+// it. The pads' clear "x" is inactive in Learn mode; CLEAR ALL works in both. Turning Learn off
+// cancels an armed learn.
+//
+// refresh() polls the processor (atomics and one copy of the message-thread state, no audio-thread
+// locks); the editor calls refresh(passes) from its timer with the state it already copied, and
+// every click refreshes at once.
 class PassPanel final : public juce::Component
 {
 public:
-    enum class SlotState { Empty, Filled, Queued, Playing };
+    using SlotState = PadState;
 
     explicit PassPanel(DubcyclingProcessor& proc);
     // Learn mode ends with the panel (editor closed): an armed learn is cancelled.
     ~PassPanel() override;
 
     void refresh();
+    // The same with the passes of a PluginState the caller already holds.
+    void refresh(const std::array<Pass, kPassSlots>& passes);
+
+    // Height of the bar for an editor of the given height: the pads grow with the window between
+    // a minimum (72 px) and a maximum (110 px).
+    static int heightFor(int editorHeight);
 
     // As of the last refresh.
     SlotState slotState(int slot) const;
@@ -45,9 +67,14 @@ public:
     bool isWaiting(int target) const { return learn_ && target >= 0 && target == waiting_; }
     // Note name bound to the target ("C3"), empty when unbound.
     juce::String noteText(int target) const;
+    // Small label bottom-right on a pad: "..." while its learn waits, its note name in Learn mode.
+    juce::String padNote(int slot) const;
+    // Loop-2 strip of the pad's pass (passStripSegments).
+    std::vector<pads::StripSegment> padSegments(int slot) const;
 
-    juce::TextButton& slotButton(int slot) { return slots_[static_cast<std::size_t>(clampSlot(slot))]; }
-    juce::TextButton& clearButton(int slot) { return clears_[static_cast<std::size_t>(clampSlot(slot))]; }
+    juce::TextButton& slotButton(int slot) { return pads_[static_cast<std::size_t>(clampSlot(slot))]; }
+    // The pad's clear "x" (a child of the pad).
+    juce::TextButton& clearButton(int slot) { return pads_[static_cast<std::size_t>(clampSlot(slot))].clear; }
     juce::TextButton& saveButton() { return save_; }
     juce::TextButton& playButton() { return play_; }
     juce::TextButton& learnButton() { return learnBtn_; }
@@ -71,19 +98,39 @@ private:
     private:
         bool consumed_ = false; // the current press was a consumed right-click
     };
-    // A narrow TextButton: the panel's background, the text centred without side indents (squeezed
-    // rather than cut to "..." when it does not fit).
-    class CompactButton final : public TargetButton
+    // The small "x" in a pad's corner: no background, the letter only.
+    class ClearButton final : public juce::TextButton
     {
     public:
         void paintButton(juce::Graphics& g, bool highlighted, bool down) override;
     };
+    // One pass pad; paints itself from what refresh() hands it.
+    class Pad final : public TargetButton
+    {
+    public:
+        Pad();
+        // Repaints only when something changed.
+        void show(int index, PadState state, bool learn, bool waiting, const juce::String& note,
+                  const std::vector<pads::StripSegment>& segments);
+        void paintButton(juce::Graphics& g, bool highlighted, bool down) override;
+        void resized() override;
+
+        ClearButton clear;
+        PadState state = PadState::Empty;
+        juce::String note;
+        std::vector<pads::StripSegment> segments;
+
+    private:
+        int index_ = 0;
+        bool learn_ = false;
+        bool waiting_ = false;
+    };
 
     static constexpr int kTargets = DubcyclingProcessor::kBindTargets;
     static int clampSlot(int slot) { return slot < 0 ? 0 : (slot > kPassSlots - 1 ? kPassSlots - 1 : slot); }
-    // A click on a slot / SAVE / PLAY: learns in Learn mode, otherwise triggers.
+    // A click on a pad / SAVE / PLAY: learns in Learn mode, otherwise triggers.
     void targetClicked(int target);
-    // A right-click on a slot / SAVE / PLAY: in Learn mode removes the target's note (and cancels
+    // A right-click on a pad / SAVE / PLAY: in Learn mode removes the target's note (and cancels
     // its wait) and returns true; outside Learn mode returns false (a normal click).
     bool targetRightClicked(int target);
     void trigger(int target);
@@ -99,9 +146,7 @@ private:
     std::array<SlotState, kPassSlots> state_ {};
     std::array<int, kTargets> notes_ {}; // boundNote() at the last refresh
 
-    juce::Label caption_;
-    std::array<CompactButton, kPassSlots> slots_;
-    std::array<CompactButton, kPassSlots> clears_;
+    std::array<Pad, kPassSlots> pads_;
     TargetButton save_, play_;
     juce::TextButton learnBtn_, clearAll_;
     juce::Label hint_;

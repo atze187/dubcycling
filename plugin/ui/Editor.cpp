@@ -21,9 +21,8 @@ constexpr int kFxStripH = 17;     // incl. the 1 px bottom border of the Loop-2 
 constexpr int kFxPanelMinW = 440; // four modules
 constexpr int kFxPanelMaxW = 600;
 constexpr int kBottomMinH = 190;  // FxPanel: title, switch and four knob rows
-constexpr int kPassH = 28;        // pass slots row (PassPanel)
 constexpr int kMinW = 800;
-constexpr int kMinH = 540;
+constexpr int kMinH = 600;
 
 using namespace panel;
 
@@ -286,7 +285,7 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
 
     setResizable(true, true);
     setResizeLimits(kMinW, kMinH, 1800, 1400);
-    setSize(900, 600);
+    setSize(900, 660);
     for (int i = 0; i < 2; ++i)
         seenFailure_[i] = proc_.replaceFailure(i).id; // only failures from now on are shown
     refresh();
@@ -381,7 +380,7 @@ void Editor::refresh()
                    juce::dontSendNotification);
     mode_.setButtonText(proc_.triggerMode() == TriggerMode::Midi ? "MIDI" : "Autoplay");
     presetBar_.refresh();
-    passes_.refresh();
+    passes_.refresh(st.passes);
 }
 
 void Editor::updatePlayheads()
@@ -712,7 +711,10 @@ void Editor::paint(juce::Graphics& g)
 
 void Editor::resized()
 {
-    auto area = getLocalBounds().reduced(kMargin);
+    // The pad bar takes the bottom edge over the full window width; everything else keeps the margin.
+    auto window = getLocalBounds();
+    passes_.setBounds(window.removeFromBottom(PassPanel::heightFor(getHeight())));
+    auto area = window.reduced(kMargin);
 
     // Top row: logo, preset bar, BPM on the right. The cycle readout sits left of BPM only when the
     // preset bar keeps its full width; otherwise it is hidden (cycleText() still has the text).
@@ -735,11 +737,11 @@ void Editor::resized()
     presetBar_.setBounds(top);
     area.removeFromTop(kGap + 3);
 
-    // Lanes and the bottom row (rule panel, effects panel) share what is left after the fixed rows
-    // (headers, insert strip, pass row): the bottom row gets about a third (at least what the
+    // Lanes and the bottom row (rule panel, effects panel) share what is left above the pad bar after
+    // the fixed rows (headers, insert strip): the bottom row gets about a third (at least what the
     // effects panel needs), the rest goes to Loop 1 (58 %) and Loop 2 (42 %). The insert strip sits
-    // inside the Loop-2 box, right under the lane; the pass row follows the Loop-2 box.
-    const int shared = area.getHeight() - 2 * kHeaderH - 3 * kGap - kFxStripH - kPassH;
+    // inside the Loop-2 box, right under the lane.
+    const int shared = area.getHeight() - 2 * kHeaderH - 2 * kGap - kFxStripH;
     const int rulesH = std::clamp(shared * 38 / 100, kBottomMinH, 320);
     const int laneSpace = std::max(shared - rulesH, 80);
     const int lane0H = std::max(laneSpace * 58 / 100, 40);
@@ -775,8 +777,6 @@ void Editor::resized()
         }
         area.removeFromTop(kGap);
     }
-    passes_.setBounds(area.removeFromTop(kPassH));
-    area.removeFromTop(kGap);
     const int fxW = std::clamp(area.getWidth() / 2, kFxPanelMinW, kFxPanelMaxW);
     fxPanel_.setBounds(area.removeFromRight(fxW));
     area.removeFromRight(kGap);
