@@ -109,6 +109,28 @@ region parameters).
 - **Threading and UI refresh** (playing slot, Save enabled): the editor polls atomics, as it does today;
   saved passes are handed to the message thread through a lock-free snapshot. Builder's call.
 
+## UI: pad bar
+
+Decided with the user after the first build (the single PASSES row was too inconspicuous):
+
+- The pass controls are a **pad bar at the bottom edge** of the editor, over the full window width, in the
+  panel look (flat dark surfaces, 1 px edges, monospace, squared corners; no gradients, glows or shadows).
+- On top a slim **control strip**: PLAY, SAVE, LEARN on the left, CLEAR ALL on the right, the Learn hint
+  LCD ("Waiting for note: slot 8") between the two groups when it fits. PLAY lights green while replay is on.
+- Under it **eight equal pads** labelled 1..8 in large monospace, ~6 px apart; they grow with the window
+  (72..110 px tall). Each pad has a fixed colour from one 8-colour palette (red, amber, green, aqua, blue,
+  violet, magenta, orange; `plugin/ui/PadLook`), tested for distinct hues and a text-on-playing contrast of
+  at least 4.5:1 (WCAG).
+- **Pad states:** empty = LCD black, dim number, edge only. Filled = a dim version of the pad colour, number in
+  text colour, a 6 px strip along the bottom with the pass's Loop-2 sequence (one segment per Start, from its
+  phase to the next event; Stops and silence are gaps; `passStripSegments`) and a small x top-right
+  (18x18 hit area) that clears the slot. Queued = 2 px amber frame. Playing = the full colour, dark text, a light
+  inner edge.
+- **Learn mode:** a waiting pad shows "..." (and an accent frame), a bound pad its note name (small label
+  bottom-right); first click arms, a second click only cancels, right-click removes the note; the x is inactive.
+- **Window:** default 900x660 (was 900x600), minimum 800x600 (was 800x540). The bar takes ~120 px at the
+  default size; loop lanes and the rule/effects row share what is left above it.
+
 ## Constraints
 
 - Audio thread: no allocation, no locks. Recording and replay live in the JUCE-free `engine/` where
@@ -123,6 +145,6 @@ region parameters).
 
 - Data layout of a recorded pass, and where the recorder sits relative to `Sequencer`/`Engine`.
 - How replay is injected into the Sequencer so that "what fits" is decided at playback.
-- Widget layout of slots, Play, Save, Learn, Clear in the editor.
+- Widget layout of slots, Play, Save, Learn, Clear in the editor (since settled: see "UI: pad bar").
 - Serialisation names and version handling.
 - How MIDI notes are routed between gate logic, Learn and bindings in `MidiTrigger`/processor.
