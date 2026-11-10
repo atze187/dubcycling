@@ -755,3 +755,33 @@ TEST_CASE("PresetBar: save and load keep the host program list unchanged", "[Pre
     REQUIRE(f.proc.getPluginState().activePreset == "Eins");
     check();
 }
+
+TEST_CASE("PresetBar: a preset saved from the processor restores its effects and passes", "[PresetBar]")
+{
+    BarFixture f;
+    LoopPair loops(f.proc);
+    auto s = f.proc.getPluginState();
+    s.fx.params.set(FxParam::ReverbMix, 0.9);
+    s.fx.setSwitch(1, FxInsert::Reverb, true);
+    s.passes[0].events = { PassEvent { 0.0, false, 1, PlayMode::Gate }, PassEvent { 0.5, true, -1, PlayMode::Gate } };
+    s.passes[5].events = { PassEvent { 0.25, false, 0, PlayMode::Gate } };
+    f.proc.applyEdit(s);
+    const auto saved = f.proc.getPluginState();
+    REQUIRE_FALSE(saved.passes[0].empty());
+
+    BankStore store(f.root);
+    REQUIRE(store.createBank("A").ok());
+    REQUIRE(store.savePreset("A", "Eins", saved, false).ok());
+
+    DubcyclingProcessor other;
+    const auto loaded = store.loadPreset("A", "Eins");
+    REQUIRE(loaded.result.ok());
+    other.restoreState(loaded.state);
+    CHECK(other.passFilled(0));
+    CHECK_FALSE(other.passFilled(1));
+    CHECK(other.passFilled(5));
+    CHECK(other.getPluginState().passes == saved.passes);
+    CHECK(other.getPluginState().fx == saved.fx);
+    CHECK(other.getModel()->passes == saved.passes);
+    CHECK(other.getModel()->fx == saved.fx);
+}

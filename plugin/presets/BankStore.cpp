@@ -208,6 +208,8 @@ BankStore::Result BankStore::savePreset(const juce::String& bank, const juce::St
     Preset preset;
     preset.name = name;
     preset.state.rules = current.rules;
+    preset.state.fx = current.fx;
+    preset.state.passes = current.passes;
     LoopRef* targets[] = { &preset.state.loop1, &preset.state.loop2 };
     for (int i = 0; i < 2; ++i)
     {
