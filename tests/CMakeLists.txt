@@ -29,6 +29,7 @@ target_sources(dc_plugin_tests PRIVATE
     plugin/test_FxPanel.cpp
     plugin/test_Editor.cpp
     plugin/test_RulePanel.cpp
+    plugin/test_PadLook.cpp
     plugin/test_PassPanel.cpp
     plugin/test_Processor.cpp
     plugin/test_SlotTracker.cpp

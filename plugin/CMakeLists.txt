@@ -45,6 +45,8 @@ target_sources(dc_plugin_ui INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/RulePanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PresetBar.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PresetBar.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/PadLook.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/PadLook.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PassPanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PassPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/Editor.h
