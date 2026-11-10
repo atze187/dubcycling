@@ -16,6 +16,9 @@ enum class PadState { Empty, Filled, Queued, Playing };
 // while it was just cleared: it plays to the pass end), else Empty when not filled, else Queued
 // when replayRequest() asks for it (it waits for the next pass start), else Filled.
 PadState padStateFor(int slot, bool filled, int request, int playing);
+// Whether a pad shows hover and press feedback: not for an empty pad outside Learn mode (a click
+// does nothing there).
+bool padReactsToMouse(PadState state, bool learnMode);
 
 // Pad bar at the bottom edge of the editor, over the full window width:
 //   [PLAY] [SAVE] [LEARN]            hint LCD            [CLEAR ALL]
@@ -59,6 +62,13 @@ public:
     // Height of the bar for an editor of the given height: the pads grow with the window between
     // a minimum (72 px) and a maximum (110 px).
     static int heightFor(int editorHeight);
+
+    // Size of the square the editor's resize corner covers at the panel's bottom-right (0 = none).
+    // The pads lay their region strip and note label out around it.
+    void setCornerNotch(int size);
+    // Where a pad draws its region strip and its note label, in panel coordinates.
+    juce::Rectangle<int> padStripBounds(int slot) const;
+    juce::Rectangle<int> padNoteBounds(int slot) const;
 
     // As of the last refresh.
     SlotState slotState(int slot) const;
@@ -114,6 +124,11 @@ private:
                   const std::vector<pads::StripSegment>& segments);
         void paintButton(juce::Graphics& g, bool highlighted, bool down) override;
         void resized() override;
+        // Part of the pad (local coordinates) covered by something on top, e.g. the resize corner.
+        void setNotch(juce::Rectangle<int> notch);
+        // Local rectangles of the region strip and the note label (around the notch).
+        juce::Rectangle<int> stripBounds() const;
+        juce::Rectangle<int> noteBounds() const;
 
         ClearButton clear;
         PadState state = PadState::Empty;
@@ -124,6 +139,7 @@ private:
         int index_ = 0;
         bool learn_ = false;
         bool waiting_ = false;
+        juce::Rectangle<int> notch_;
     };
 
     static constexpr int kTargets = DubcyclingProcessor::kBindTargets;
@@ -143,6 +159,7 @@ private:
     DubcyclingProcessor& proc_;
     bool learn_ = false;
     int waiting_ = -1; // learnArmed() at the last refresh
+    int cornerNotch_ = 0;
     std::array<SlotState, kPassSlots> state_ {};
     std::array<int, kTargets> notes_ {}; // boundNote() at the last refresh
 

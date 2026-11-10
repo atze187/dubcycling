@@ -28,6 +28,7 @@ constexpr int kHintMaxW = 320;
 constexpr int kClearSize = 18; // hit area of the clear "x"
 constexpr int kInset = 4;      // strip and labels from the pad edge
 constexpr int kRegionStripH = 6;
+constexpr int kNoteH = 14; // note label above the strip
 
 const juce::Colour kPlayingFill { 0xff24402e }; // dark green behind the green text
 const juce::Colour kWaitingFill { 0xff3d3222 }; // dark amber
@@ -49,6 +50,11 @@ PadState padStateFor(int slot, bool filled, int request, int playing)
     if (!filled)
         return PadState::Empty;
     return request == 2 + slot ? PadState::Queued : PadState::Filled;
+}
+
+bool padReactsToMouse(PadState state, bool learnMode)
+{
+    return learnMode || state != PadState::Empty;
 }
 
 int PassPanel::heightFor(int editorHeight)
@@ -120,12 +126,44 @@ void PassPanel::Pad::resized()
     clear.setBounds(getWidth() - kClearSize - 2, 2, kClearSize, kClearSize);
 }
 
+void PassPanel::Pad::setNotch(juce::Rectangle<int> notch)
+{
+    if (notch == notch_)
+        return;
+    notch_ = notch;
+    repaint();
+}
+
+namespace {
+// `r` shortened from the right so it ends 2 px left of `notch` when they overlap.
+juce::Rectangle<int> clearOfNotch(juce::Rectangle<int> r, juce::Rectangle<int> notch)
+{
+    if (!notch.isEmpty() && r.intersects(notch))
+        r.setRight(std::max(r.getX(), notch.getX() - 2));
+    return r;
+}
+} // namespace
+
+juce::Rectangle<int> PassPanel::Pad::stripBounds() const
+{
+    return clearOfNotch(getLocalBounds().reduced(kInset).removeFromBottom(kRegionStripH), notch_);
+}
+
+juce::Rectangle<int> PassPanel::Pad::noteBounds() const
+{
+    auto inner = getLocalBounds().reduced(kInset);
+    inner.removeFromBottom(kRegionStripH + 2);
+    return clearOfNotch(inner.removeFromBottom(kNoteH), notch_);
+}
+
 void PassPanel::Pad::paintButton(juce::Graphics& g, bool highlighted, bool down)
 {
     const auto r = getLocalBounds();
     const auto colour = pads::padColour(index_);
     const bool playing = state == PadState::Playing;
     const bool empty = state == PadState::Empty;
+    if (!padReactsToMouse(state, learn_))
+        highlighted = down = false;
 
     auto fill = playing ? colour : (empty ? kLcd : pads::padRestingFill(index_));
     if (down)
@@ -139,7 +177,8 @@ void PassPanel::Pad::paintButton(juce::Graphics& g, bool highlighted, bool down)
     // pad), gaps where Loop 2 is silent, a 1 px cut between touching segments.
     if (!segments.empty())
     {
-        const auto track = inner.removeFromBottom(kRegionStripH);
+        inner.removeFromBottom(kRegionStripH);
+        const auto track = stripBounds();
         g.setColour(playing ? text.withAlpha(0.2f) : kLcd.withAlpha(0.7f));
         g.fillRect(track);
         g.setColour(playing ? text : colour);
@@ -167,7 +206,7 @@ void PassPanel::Pad::paintButton(juce::Graphics& g, bool highlighted, bool down)
     {
         g.setColour(playing ? text : (waiting_ ? kAmber : kText));
         g.setFont(juce::Font(mono(11.0f, true)));
-        g.drawText(note, inner.removeFromBottom(14), juce::Justification::bottomRight, false);
+        g.drawText(note, noteBounds(), juce::Justification::bottomRight, false);
     }
 
     // Edges: 1 px edge (lighter on hover); playing adds a light inner edge, queued an amber frame,
@@ -274,6 +313,27 @@ juce::String PassPanel::padNote(int slot) const
 std::vector<pads::StripSegment> PassPanel::padSegments(int slot) const
 {
     return pads_[static_cast<std::size_t>(clampSlot(slot))].segments;
+}
+
+void PassPanel::setCornerNotch(int size)
+{
+    size = std::max(0, size);
+    if (size == cornerNotch_)
+        return;
+    cornerNotch_ = size;
+    resized();
+}
+
+juce::Rectangle<int> PassPanel::padStripBounds(int slot) const
+{
+    const auto& p = pads_[static_cast<std::size_t>(clampSlot(slot))];
+    return p.stripBounds() + p.getPosition();
+}
+
+juce::Rectangle<int> PassPanel::padNoteBounds(int slot) const
+{
+    const auto& p = pads_[static_cast<std::size_t>(clampSlot(slot))];
+    return p.noteBounds() + p.getPosition();
 }
 
 juce::TextButton& PassPanel::targetButton(int target)
@@ -495,7 +555,13 @@ void PassPanel::resized()
     {
         const int x0 = area.getX() + i * kPadGap + avail * i / kPassSlots;
         const int x1 = area.getX() + i * kPadGap + avail * (i + 1) / kPassSlots;
-        pads_[static_cast<std::size_t>(i)].setBounds(x0, area.getY(), x1 - x0, area.getHeight());
+        auto& pad = pads_[static_cast<std::size_t>(i)];
+        pad.setBounds(x0, area.getY(), x1 - x0, area.getHeight());
+        // The editor's resize corner (on top of everything) at the bar's bottom-right: the pad lays
+        // its strip and note label out around the part it covers.
+        const auto notch = juce::Rectangle<int>(getWidth() - cornerNotch_, getHeight() - cornerNotch_,
+                                                cornerNotch_, cornerNotch_);
+        pad.setNotch((notch.getIntersection(pad.getBounds()) - pad.getPosition()));
     }
 }
 

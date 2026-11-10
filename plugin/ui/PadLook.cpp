@@ -49,6 +49,8 @@ float contrastRatio(juce::Colour a, juce::Colour b)
 
 std::vector<StripSegment> passStripSegments(const Pass& pass)
 {
+    if (pass.empty())
+        return {}; // the common case for most pads at every poll: no copy, no allocation
     const Pass p = sanitizePass(pass);
     std::vector<StripSegment> out;
     for (std::size_t i = 0; i < p.events.size(); ++i)

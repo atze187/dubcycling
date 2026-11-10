@@ -23,6 +23,7 @@ constexpr int kFxPanelMaxW = 600;
 constexpr int kBottomMinH = 190;  // FxPanel: title, switch and four knob rows
 constexpr int kMinW = 800;
 constexpr int kMinH = 600;
+constexpr int kResizerSize = 18; // JUCE's resize corner (AudioProcessorEditor::editorResized)
 
 using namespace panel;
 
@@ -712,7 +713,13 @@ void Editor::paint(juce::Graphics& g)
 void Editor::resized()
 {
     // The pad bar takes the bottom edge over the full window width; everything else keeps the margin.
+    // JUCE's resize corner (always on top, 18 px in AudioProcessorEditor::editorResized) covers the
+    // bar's bottom-right; the last pad keeps its strip and note label clear of it.
     auto window = getLocalBounds();
+    const int corner = resizableCorner == nullptr ? 0
+                       : resizableCorner->getWidth() > 0 ? resizableCorner->getWidth()
+                                                         : kResizerSize;
+    passes_.setCornerNotch(corner);
     passes_.setBounds(window.removeFromBottom(PassPanel::heightFor(getHeight())));
     auto area = window.reduced(kMargin);
 

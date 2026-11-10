@@ -429,6 +429,80 @@ TEST_CASE("padStateFor: playing wins, then empty, then queued, else filled", "[p
     CHECK(padStateFor(2, true, 2 + 2, 5) == PadState::Queued);  // waits while pad 6 plays
 }
 
+TEST_CASE("padReactsToMouse: no hover or press feedback on an empty pad outside Learn mode", "[passpanel][pads]")
+{
+    using dc::ui::padReactsToMouse;
+    using dc::ui::PadState;
+    CHECK_FALSE(padReactsToMouse(PadState::Empty, false));
+    CHECK(padReactsToMouse(PadState::Empty, true)); // an empty pad can be learned
+    for (const auto s : { PadState::Filled, PadState::Queued, PadState::Playing })
+    {
+        CHECK(padReactsToMouse(s, false));
+        CHECK(padReactsToMouse(s, true));
+    }
+}
+
+namespace {
+// A left-button press and release at `pos` (panel coordinates) on whatever component is there, as
+// the mouse would deliver them. Returns the component that got the click.
+juce::Component* leftClickAt(juce::Component& panel, juce::Point<int> pos)
+{
+    auto* target = panel.getComponentAt(pos);
+    REQUIRE(target != nullptr);
+    const auto local = target->getLocalPoint(&panel, pos).toFloat();
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto now = juce::Time::getCurrentTime();
+    auto event = [&](juce::ModifierKeys mods) {
+        return juce::MouseEvent(source, local, mods, juce::MouseInputSource::defaultPressure,
+                                juce::MouseInputSource::defaultOrientation, juce::MouseInputSource::defaultRotation,
+                                juce::MouseInputSource::defaultTiltX, juce::MouseInputSource::defaultTiltY, target,
+                                target, now, local, now, 1, false);
+    };
+    juce::MouseListener& listener = *target;
+    listener.mouseDown(event(juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier)));
+    listener.mouseUp(event(juce::ModifierKeys()));
+    return target;
+}
+} // namespace
+
+TEST_CASE("PassPanel: a click on the x clears, a click on the pad body plays; in Learn mode the x is inert", "[passpanel][pads]")
+{
+    PanelFixture f;
+    f.panel.setVisible(true); // getComponentAt only finds visible components (as in a shown editor)
+    f.fill({ 2, 5 });
+    f.panel.refresh();
+    auto& pad2 = f.panel.slotButton(2);
+    auto& x2 = f.panel.clearButton(2);
+    const auto xCentre = f.panel.getLocalPoint(&x2, x2.getLocalBounds().getCentre());
+    const auto body = pad2.getBounds().getCentre();
+
+    // The x sits on top of the pad body: its centre reaches the x.
+    CHECK(f.panel.getComponentAt(xCentre) == &x2);
+    CHECK(f.panel.getComponentAt(body) == &pad2);
+    CHECK(leftClickAt(f.panel, xCentre) == &x2);
+    CHECK_FALSE(f.proc.passFilled(2));
+    CHECK(f.proc.replayRequest() == 0); // clearing does not start a replay
+
+    // Pad body: requests the replay, clears nothing.
+    auto& pad5 = f.panel.slotButton(5);
+    CHECK(leftClickAt(f.panel, pad5.getBounds().getCentre()) == &pad5);
+    CHECK(f.proc.replayRequest() == 2 + 5);
+    CHECK(f.proc.passFilled(5));
+
+    // Learn mode: the x is hidden; its corner belongs to the pad, which arms instead of clearing.
+    f.proc.setReplayRequest(0);
+    click(f.panel.learnButton());
+    auto& x5 = f.panel.clearButton(5);
+    const auto x5Centre = pad5.getPosition() + x5.getBounds().getCentre();
+    CHECK(f.panel.getComponentAt(x5Centre) == &pad5);
+    leftClickAt(f.panel, x5Centre);
+    CHECK(f.proc.passFilled(5));
+    CHECK(f.proc.learnArmed() == 5);
+    REQUIRE(x5.onClick != nullptr);
+    x5.onClick(); // even a direct call does nothing in Learn mode
+    CHECK(f.proc.passFilled(5));
+}
+
 TEST_CASE("PassPanel: the bar height grows with the editor and keeps a minimum", "[passpanel][layout]")
 {
     const int atMin = PassPanel::heightFor(600);

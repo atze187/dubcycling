@@ -1153,6 +1153,35 @@ TEST_CASE("Editor: the mode button reflects and sets the trigger mode", "[editor
     CHECK(btn.getButtonText() == "MIDI");
 }
 
+TEST_CASE("Editor: pad 8's strip and note label stay clear of the resize corner", "[editor][layout][passes]")
+{
+    EditorFixture f;
+    for (const auto size : { juce::Point<int> { 800, 600 }, juce::Point<int> { 900, 660 }, juce::Point<int> { 1400, 900 } })
+    {
+        f.editor->setSize(size.x, size.y);
+        CAPTURE(size.x, size.y);
+        REQUIRE(f.editor->resizableCorner != nullptr);
+        const auto corner = f.editor->resizableCorner->getBounds();
+        REQUIRE(!corner.isEmpty());
+        CHECK(corner.getBottomRight() == f.editor->getLocalBounds().getBottomRight());
+        auto& passes = f.editor->passPanel();
+        const auto origin = passes.getPosition();
+        for (int i = 0; i < 8; ++i)
+        {
+            CAPTURE(i);
+            const auto strip = passes.padStripBounds(i) + origin;
+            const auto note = passes.padNoteBounds(i) + origin;
+            CAPTURE(strip.toString(), note.toString(), corner.toString());
+            CHECK_FALSE(strip.intersects(corner));
+            CHECK_FALSE(note.intersects(corner));
+            // Still usable: the strip keeps most of the pad's width, the label room for "C#-2".
+            CHECK(strip.getWidth() >= passes.slotButton(i).getWidth() / 2);
+            CHECK(note.getWidth() >= 30);
+            CHECK(note.getHeight() >= 12);
+        }
+    }
+}
+
 TEST_CASE("Editor: default size 900x660, at least 800x600", "[editor][layout]")
 {
     EditorFixture f;
@@ -1340,7 +1369,7 @@ struct SnapshotHead : juce::AudioPlayHead
 
 TEST_CASE("Editor: snapshot of the pad bar with filled, playing, queued and armed pads (DC_SNAPSHOT_DIR)", "[editor][passes][snapshot]")
 {
-    // Look at it: DC_SNAPSHOT_DIR=<dir> writes pad-bar-snapshot.png (900x660: pads 1, 2, 4, 5 and 7
+    // Look at it: DC_SNAPSHOT_DIR=<dir> writes pad-bar-snapshot.png (900x660: pads 1, 2, 4, 5, 7 and 8
     // filled, 4 playing, 7 queued) and pad-bar-snapshot-learn.png (Learn mode: 2 bound to C3, 6 armed).
     const auto dir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {});
     if (dir.isEmpty())
@@ -1362,6 +1391,7 @@ TEST_CASE("Editor: snapshot of the pad bar with filled, playing, queued and arme
     s.passes[3].events = { ev(0.0, 0), ev(0.125, 1), ev(0.375, 2), ev(0.5, -1), ev(0.625, 3) };
     s.passes[4].events = { ev(0.25, 2), ev(0.75, 0) };
     s.passes[6].events = { ev(0.0, 3), ev(0.5, 1), ev(0.75, -1) };
+    s.passes[7].events = { ev(0.0, 2), ev(0.5, 0) }; // its strip ends left of the resize corner
     f.proc.applyEdit(s);
 
     SnapshotHead head;

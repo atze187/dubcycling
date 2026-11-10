@@ -100,6 +100,25 @@ TEST_CASE("passStripSegments: events at the same phase leave no zero-width segme
     CHECK(t.empty());
 }
 
+TEST_CASE("passStripSegments: a full pass of 256 events stays sorted and inside the pass", "[padlook][strip]")
+{
+    std::vector<PassEvent> events;
+    for (int i = 0; i < kMaxPassEvents; ++i) // reversed phases, a Stop every fourth event
+        events.push_back(i % 4 == 3 ? stop(1.0 - i / 256.0) : start(1.0 - i / 256.0, i % 7));
+    const auto s = passStripSegments(pass(events));
+    CHECK(!s.empty());
+    CHECK(s.size() <= static_cast<std::size_t>(kMaxPassEvents));
+    for (std::size_t i = 0; i < s.size(); ++i)
+    {
+        CAPTURE(i);
+        CHECK(s[i].start >= 0.0f);
+        CHECK(s[i].end <= 1.0f);
+        CHECK(s[i].end > s[i].start);
+        if (i > 0)
+            CHECK(s[i].start >= s[i - 1].end);
+    }
+}
+
 TEST_CASE("passStripSegments: phases are clamped to the pass and non-finite ones dropped", "[padlook][strip]")
 {
     const double nan = std::numeric_limits<double>::quiet_NaN();
