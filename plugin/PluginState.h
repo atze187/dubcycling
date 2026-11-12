@@ -39,6 +39,8 @@ struct LoopRef
     std::vector<juce::String> labels;
 };
 
+// Each target is stored as a Target element; RuleTarget::reverse is an optional attribute
+// (reverse="1", only written when set; absent = forwards), so kStateVersion stays 1.
 struct RuleEntry
 {
     int region1 = 0;

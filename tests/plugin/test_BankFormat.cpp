@@ -145,7 +145,7 @@ TEST_CASE("BankFormat: json carries version and a presets list")
 {
     const auto v = juce::JSON::parse(bankToJson(sampleBank()));
     REQUIRE(v.isObject());
-    CHECK(static_cast<int>(v["version"]) == 4);
+    CHECK(static_cast<int>(v["version"]) == 5);
     REQUIRE(v["presets"].isArray());
     CHECK(v["presets"].size() == 2);
 }
@@ -186,7 +186,7 @@ TEST_CASE("BankFormat: json nested deeper than kMaxJsonDepth gives no bank witho
 
 TEST_CASE("BankFormat: a newer version is flagged tooNew")
 {
-    const auto r = bankFromJson("{\"version\": 5, \"presets\": []}");
+    const auto r = bankFromJson("{\"version\": 6, \"presets\": []}");
     CHECK_FALSE(r.bank.has_value());
     CHECK(r.tooNew);
 }
@@ -303,13 +303,13 @@ BankParseResult parseOnePreset(const juce::String& fxJson, const juce::String& l
 }
 }
 
-TEST_CASE("Bank: bankToJson writes version 4")
+TEST_CASE("Bank: bankToJson writes version 5")
 {
-    CHECK(kBankVersion == 4);
+    CHECK(kBankVersion == 5);
     Bank b;
     b.presets.push_back(makePreset("A", "a.wav"));
     const auto v = juce::JSON::parse(bankToJson(b));
-    CHECK(static_cast<int>(v["version"]) == 4);
+    CHECK(static_cast<int>(v["version"]) == 5);
     CHECK(v["presets"][0]["fx"].isObject()); // written even for default fx
     CHECK(v["presets"][0]["fx"]["params"].isObject());
     CHECK(v["presets"][0]["fx"]["switches"].isObject());
@@ -414,13 +414,13 @@ TEST_CASE("Bank: a changed switch or knob changes the fingerprint, a default fx 
     CHECK(presetFingerprint(sw2) != presetFingerprint(sw));
 }
 
-TEST_CASE("Bank: saving a loaded version 1 or 2 bank writes version 4")
+TEST_CASE("Bank: saving a loaded version 1 or 2 bank writes version 5")
 {
     for (const char* v : { "1", "2" })
     {
         const auto r = bankFromJson("{\"version\":" + juce::String(v) + ",\"presets\":[{\"name\":\"Old\"}]}");
         REQUIRE(r.bank.has_value());
-        CHECK(static_cast<int>(juce::JSON::parse(bankToJson(*r.bank))["version"]) == 4);
+        CHECK(static_cast<int>(juce::JSON::parse(bankToJson(*r.bank))["version"]) == 5);
     }
 }
 
@@ -516,12 +516,12 @@ Preset passPreset()
 
 TEST_CASE("Bank: version 4 round trips the passes exactly", "[passes]")
 {
-    CHECK(kBankVersion == 4);
+    CHECK(kBankVersion == 5);
     Bank bank;
     bank.presets.push_back(passPreset());
     const auto json = bankToJson(bank);
     const auto v = juce::JSON::parse(json);
-    CHECK(static_cast<int>(v["version"]) == 4);
+    CHECK(static_cast<int>(v["version"]) == 5);
     REQUIRE(v["presets"][0]["passes"].size() == 8);
     CHECK(v["presets"][0]["passes"][0][0]["mode"].toString() == "oneshot");
     CHECK(static_cast<bool>(v["presets"][0]["passes"][0][1]["stop"]));
@@ -545,9 +545,9 @@ TEST_CASE("Bank: version 1 to 3 files load with empty passes", "[passes]")
     }
 }
 
-TEST_CASE("Bank: a version 5 file is refused as too new", "[passes]")
+TEST_CASE("Bank: a version 6 file is refused as too new", "[passes]")
 {
-    const auto r = bankFromJson("{\"version\":5,\"presets\":[{\"name\":\"X\"}]}");
+    const auto r = bankFromJson("{\"version\":6,\"presets\":[{\"name\":\"X\"}]}");
     CHECK(r.tooNew);
     CHECK_FALSE(r.bank.has_value());
 }
@@ -603,4 +603,93 @@ TEST_CASE("Bank: editing a pass slot changes the fingerprint, empty slots do not
     d.passes[2] = {};
     CHECK(presetFingerprint(d) != fa);
     CHECK(presetFingerprint(a) == fa);
+}
+
+// --- Reverse (version 5) ------------------------------------------------------------------------
+namespace {
+Preset reversePreset()
+{
+    auto p = makePreset("Rev", "a.wav");
+    p.state.rules[0].targets[1].reverse = true; // One-Shot backwards
+    p.state.rules[1].targets[0].reverse = true;
+    return p;
+}
+
+bool reverseOf(const juce::String& reverseJson)
+{
+    const auto r = bankFromJson("{\"version\":5,\"presets\":[{\"name\":\"P\",\"rules\":[{\"region1\":0,\"targets\":[{\"region2\":1,\"weight\":1,\"reverse\":"
+                                + reverseJson + "}]}]}]}");
+    REQUIRE(r.bank.has_value());
+    REQUIRE(r.bank->presets[0].state.rules.size() == 1);
+    REQUIRE(r.bank->presets[0].state.rules[0].targets.size() == 1);
+    return r.bank->presets[0].state.rules[0].targets[0].reverse;
+}
+} // namespace
+
+TEST_CASE("Bank: version 5 round trips the reverse flag of a target", "[reverse]")
+{
+    Bank bank;
+    bank.presets.push_back(reversePreset());
+    const auto json = bankToJson(bank);
+    const auto v = juce::JSON::parse(json);
+    CHECK(static_cast<int>(v["version"]) == 5);
+    const auto& t0 = v["presets"][0]["rules"][0]["targets"];
+    CHECK_FALSE(t0[0].hasProperty("reverse")); // forwards is not written
+    CHECK(t0[1]["reverse"].isBool());
+    CHECK(static_cast<bool>(t0[1]["reverse"]));
+    const auto r = bankFromJson(json);
+    REQUIRE(r.bank.has_value());
+    const auto& rules = r.bank->presets[0].state.rules;
+    CHECK_FALSE(rules[0].targets[0].reverse);
+    CHECK(rules[0].targets[1].reverse);
+    CHECK(rules[1].targets[0].reverse);
+    CHECK(rules[0].targets[1].mode == PlayMode::OneShot);
+    CHECK(presetFingerprint(r.bank->presets[0].state) == presetFingerprint(bank.presets[0].state));
+}
+
+TEST_CASE("Bank: version 1 to 4 files load with every target forwards", "[reverse]")
+{
+    for (int ver = 1; ver <= 4; ++ver)
+    {
+        CAPTURE(ver);
+        const auto r = bankFromJson("{\"version\":" + juce::String(ver)
+                                    + ",\"presets\":[{\"name\":\"P\",\"rules\":[{\"region1\":0,\"targets\":[{\"region2\":1,\"weight\":1,\"mode\":1}]}]}]}");
+        REQUIRE(r.bank.has_value());
+        REQUIRE(r.bank->presets[0].state.rules.size() == 1);
+        CHECK_FALSE(r.bank->presets[0].state.rules[0].targets[0].reverse);
+    }
+}
+
+TEST_CASE("Bank: reverse values are read as a bool and never throw", "[reverse][hardening]")
+{
+    CHECK(reverseOf("true"));
+    CHECK(reverseOf("1"));
+    CHECK_FALSE(reverseOf("false"));
+    CHECK_FALSE(reverseOf("0"));
+    CHECK_FALSE(reverseOf("null"));
+    CHECK_FALSE(reverseOf("\"true\""));
+    CHECK_FALSE(reverseOf("\"abc\""));
+    CHECK_FALSE(reverseOf("{}"));
+    CHECK_FALSE(reverseOf("[1]"));
+    CHECK_FALSE(reverseOf("1e99"));
+    CHECK_FALSE(reverseOf("-1"));
+}
+
+TEST_CASE("Bank: the fingerprint is unchanged without reverse and changes with it", "[reverse]")
+{
+    PluginState s;
+    s.loop1.hash = "h1";
+    s.loop2.hash = "h2";
+    s.rules.push_back({ 0, { { 1, 0.5f, PlayMode::Gate }, { 0, 0.25f, PlayMode::OneShot, 0.2f } } });
+    // The exact text of version 0.3.0: presets saved before reverse keep their fingerprint.
+    const juce::String old = "L|h1|1|B|T\nL|h2|1|B|T\nR|0|1,0.50000000000000000,0|0,0.25000000000000000,1,m0.20000000298023224\n";
+    CHECK(presetFingerprint(s) == old);
+
+    auto rev = s;
+    rev.rules[0].targets[0].reverse = true;
+    CHECK(presetFingerprint(rev) != old);
+    auto rev2 = s;
+    rev2.rules[0].targets[1].reverse = true;
+    CHECK(presetFingerprint(rev2) != old);
+    CHECK(presetFingerprint(rev2) != presetFingerprint(rev));
 }

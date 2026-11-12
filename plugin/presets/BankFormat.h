@@ -7,9 +7,10 @@
 namespace dc {
 
 // 2 adds the per-preset "fx" object, 3 the per-target "mix" in the rules, 4 the per-preset "passes"
-// array (8 slots, each a list of events); version 1 to 3 files are still read (default fx, mix 0.5,
-// empty pass slots).
-constexpr int kBankVersion = 4;
+// array (8 slots, each a list of events), 5 the optional per-target "reverse" (true = the Loop-2
+// region plays backwards, only written when true); version 1 to 4 files are still read (default fx,
+// mix 0.5, empty pass slots, every target forwards).
+constexpr int kBankVersion = 5;
 constexpr int kMaxPresetNameLength = 32;
 constexpr int kMaxBankNameLength = 64;
 constexpr int kMaxPresetsPerBank = 1024;
@@ -62,7 +63,7 @@ struct BankParseResult
 BankParseResult bankFromJson(const juce::String& json);
 
 // Canonical text of everything that makes a preset sound the way it does: hash, bars, boundaries
-// and labels of both loops plus the rules and, unless default, the effect settings and the non-empty pass slots. Without paths, file names and the active fields.
+// and labels of both loops plus the rules (a target's mix and reverse only when not the default) and, unless default, the effect settings and the non-empty pass slots. Without paths, file names and the active fields.
 juce::String presetFingerprint(const PluginState& state);
 
 } // namespace dc
