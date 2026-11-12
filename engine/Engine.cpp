@@ -221,6 +221,7 @@ void Engine::startPreview(int slot, int region)
     v.mode = PlayMode::OneShot;
     v.region2 = region;
     v.mix = 0.5f; // the audition ignores the mix
+    v.reverse = false; // the audition always plays forwards (it has no mapping)
     v.level2 = 1.0f;
     v.mixRegion1 = -1;
     v.elapsed = 0.0;
@@ -351,6 +352,7 @@ void Engine::resetPlayback(bool keepLoop1)
         v->mix = 0.5f;
         v->level2 = 1.0f;
         v->mixRegion1 = -1;
+        v->reverse = false;
         v->gl.reset();
         v->gr.reset();
     }
@@ -438,6 +440,7 @@ void Engine::startVoice(const Model& m, const Sequencer::Command& c)
     v.mode = mode;
     v.region2 = region2;
     // Mix of its target; the Loop-2 level starts on it (the fade-in covers the start), Loop 1 ramps.
+    v.reverse = c.reverse;
     v.mix = sanitizeMix(c.mix);
     v.level2 = mixGains(v.mix).loop2;
     v.mixRegion1 = c.region1;
@@ -446,8 +449,9 @@ void Engine::startVoice(const Model& m, const Sequencer::Command& c)
     v.state = Voice::State::Playing;
     v.gain = 0.0f;
     v.fadeLeft = fadeLen_; // fade in
-    v.gl.start(v.lo, 1.0, grainLen_);
-    v.gr.start(v.lo, 1.0, grainLen_);
+    // Reversed: the first grain starts at the region end and reads backwards.
+    v.gl.start(sourcePos(v), v.reverse ? -1.0 : 1.0, grainLen_);
+    v.gr.start(sourcePos(v), v.reverse ? -1.0 : 1.0, grainLen_);
     // The new voice takes the switches of its region from this frame on (the cancelled tail too).
     maskOwner_ = MaskOwner::Voice;
     setTargetMask(m.fx.maskFor(region2));
@@ -493,7 +497,9 @@ bool Engine::stepVoice(Voice& v, const StereoData& d, GrainFrame gf, double adv,
     // Gate: grains wrap inside the region (it repeats). One-Shot: grains read the whole loop, so a
     // grain overshooting the region end (host tempo below loop tempo: the region position advances
     // slower than the grains read) plays the real continuation, not the region start. The voice
-    // still ends at its own region end (elapsed vs. hi - lo below).
+    // still ends at its own region end (elapsed vs. hi - lo below). Reversed, the same holds mirrored:
+    // a Gate's grains wrap below lo to the region end, a One-Shot's overshoot below lo reads what lies
+    // before the region; elapsed counts up in both directions.
     if (v.mode == PlayMode::Gate)
     {
         gf.lo = v.lo;
@@ -504,7 +510,8 @@ bool Engine::stepVoice(Voice& v, const StereoData& d, GrainFrame gf, double adv,
         gf.lo = 0.0;
         gf.hi = static_cast<double>(framesOf(&d));
     }
-    const double src = v.lo + v.elapsed;
+    gf.dir = v.reverse ? -1.0 : 1.0; // grain windows unchanged, read positions decrease
+    const double src = sourcePos(v);
     const float yl = v.gl.process(d.left, src, grainLen_, gf);
     const float yr = v.gr.process(d.right, src, grainLen_, gf);
     // Mix level before the bus (exactly 1 at the centre, then the product is bit-identical).
@@ -625,6 +632,7 @@ void Engine::fireReplay(const Model& m, const PassEvent& ev)
         if (t.region2 == ev.region2)
         {
             c.mix = t.mix;
+            c.reverse = t.reverse; // like the mix: from the current rule, not the recording
             break;
         }
     requestStart(m, c);
@@ -993,7 +1001,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
     }
     const bool voiceShown = voice_.state != Voice::State::Idle && len2 > 0.0;
     publishPlayhead(static_cast<float>(std::clamp(lastPhase1, 0.0, 1.0)),
-                    voiceShown ? static_cast<float>(std::clamp((voice_.lo + voice_.elapsed) / len2, 0.0, 1.0)) : -1.0f,
+                    voiceShown ? static_cast<float>(std::clamp(sourcePos(voice_) / len2, 0.0, 1.0)) : -1.0f,
                     voiceShown ? voice_.region2 : -1, teaser, eta);
     replaySlotOut_.store(replaySlot_, std::memory_order_relaxed);
 }

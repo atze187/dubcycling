@@ -189,3 +189,31 @@ TEST_CASE("Sequencer: a draw carries the mix", "[Sequencer]")
     REQUIRE(c.mix == 0.2f);
     REQUIRE(c.region1 == 1);
 }
+
+TEST_CASE("Sequencer: a draw and its start command carry the reverse flag of the drawn target", "[Sequencer][reverse]")
+{
+    dc::RuleSet rs;
+    dc::RuleTarget fwd = T(2, 0.5f);
+    dc::RuleTarget rev = T(3, 0.5f, PlayMode::OneShot);
+    rev.reverse = true;
+    rs.setTargets(1, { fwd, rev });
+    REQUIRE(rs.targets(1)[1].reverse); // setTargets keeps the flag
+    REQUIRE_FALSE(dc::RuleTarget {}.reverse);
+    REQUIRE_FALSE(dc::Sequencer::Draw {}.reverse);
+    REQUIRE_FALSE(dc::Sequencer::Command {}.reverse);
+
+    dc::Sequencer s;
+    s.setRandom(seq({ 0.75f, 0.1f }));
+    const auto d = s.draw(1, rs);
+    REQUIRE(d.type == dc::Sequencer::Draw::Type::Target);
+    REQUIRE(d.region2 == 3);
+    REQUIRE(d.reverse);
+    const auto c = s.apply(1, d);
+    REQUIRE(c.type == Type::Start);
+    REQUIRE(c.reverse);
+    REQUIRE(c.mode == PlayMode::OneShot);
+
+    const auto c2 = s.onRegion1(1, rs); // draws the forwards target
+    REQUIRE(c2.region2 == 2);
+    REQUIRE_FALSE(c2.reverse);
+}
