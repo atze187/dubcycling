@@ -1,6 +1,6 @@
 # Reverse playback of Loop-2 regions — design
 
-Date: 2026-11-12. Status: draft.
+Date: 2026-11-12. Status: implemented.
 
 ## Intent
 

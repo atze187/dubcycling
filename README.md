@@ -21,7 +21,14 @@ Status: edit view, audio engine and presets implemented. The plugin has stereo o
   probability that this Loop-2 region plays when Loop 1 enters the selected region, the GATE/ONESHOT toggle
   sets the play mode (GATE repeats until Loop 1 leaves the region, ONESHOT plays the region once). "Silence"
   shows the remainder (probability that nothing new plays).
-- **Presets and banks:** the top row has BANK and PRESET. A bank is a folder in `Documents/Dubcycling/Presets/<Bank>/` with `bank.json` and the used samples in `samples/`. SAVE overwrites the active preset, SAVE AS makes a variant, a name field asks for new names. Loading a preset with unsaved changes asks first. The "⋯" menu creates a bank, exports a bank as a zip (only the samples in use), imports a zip (never overwrites, a name clash becomes "Name (2)") and opens the folder. Presets cannot be deleted or renamed in the plugin yet. Saving a preset into an existing bank rewrites it as `bank.json` version 4, which older plugin versions then refuse to open.
+- **Reverse (REV):** the REV button next to GATE / 1-SHOT plays that Loop-2 region backwards for this mapping
+  only (the same region can play forwards from another Loop-1 region). GATE plays it backwards and loops it
+  backwards seamlessly until Loop 1 leaves the region; 1-SHOT plays it once from its end to its start, with the
+  same fades as forwards. Tempo stays locked to the host and the pitch is unchanged (only time is reversed); the
+  Loop-2 playhead moves backwards meanwhile. Right-click audition always plays forwards. A replayed pass uses the
+  current REV setting of its mapping (like the mix). REV is saved with projects and presets (bank format version
+  5; older plugin versions refuse such banks, and a project re-saved by an older version loses the setting).
+- **Presets and banks:** the top row has BANK and PRESET. A bank is a folder in `Documents/Dubcycling/Presets/<Bank>/` with `bank.json` and the used samples in `samples/`. SAVE overwrites the active preset, SAVE AS makes a variant, a name field asks for new names. Loading a preset with unsaved changes asks first. The "⋯" menu creates a bank, exports a bank as a zip (only the samples in use), imports a zip (never overwrites, a name clash becomes "Name (2)") and opens the folder. Presets cannot be deleted or renamed in the plugin yet. Saving a preset into an existing bank rewrites it as `bank.json` version 5, which older plugin versions then refuse to open.
 - **Missing files:** when a saved project's loop file is gone, the plugin looks for a file with the same name
   and content (hash) in the folder of the other loop and the folder of the last loaded file (this session);
   regions, rules and bars are always kept. If it is not found, the lane says "File missing" and "RELINK" (or dropping a file)
