@@ -50,7 +50,7 @@ juce::String mixString(float mix)
 }
 
 // Columns of a rule row (row bounds without the 2 px top/bottom inset):
-//   name | weight slider | percent | GATE/1-SHOT REV | mix slider | mix readout
+//   name | weight slider | percent | GATE/ONE REV | mix slider | mix readout
 // The two sliders share what the fixed columns leave, the mix slider gets two fifths of it.
 constexpr int kNameW = 60;
 constexpr int kPercentW = 34;
@@ -87,7 +87,7 @@ RowColumns rowColumns(juce::Rectangle<int> r)
     return c;
 }
 
-// Two-position switch: GATE | 1-SHOT, the active side lit. A click anywhere flips it.
+// Two-position switch: GATE | ONE, the active side lit. A click anywhere flips it.
 struct ModeSwitch final : public juce::Component, public juce::SettableTooltipClient
 {
     ModeSwitch()
@@ -109,7 +109,7 @@ struct ModeSwitch final : public juce::Component, public juce::SettableTooltipCl
         };
         auto left = r.removeFromLeft(r.getWidth() * 0.5f);
         cell(left, "GATE", mode == PlayMode::Gate, kEdgeLight, kText);
-        cell(r, "1-SHOT", mode == PlayMode::OneShot, juce::Colour(0xff6b4a14), juce::Colour(0xffffd9a0));
+        cell(r, "ONE", mode == PlayMode::OneShot, juce::Colour(0xff6b4a14), juce::Colour(0xffffd9a0));
         g.setColour(kEdgeLight);
         g.drawRect(getLocalBounds().toFloat().reduced(0.5f), 1.0f);
     }

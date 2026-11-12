@@ -790,7 +790,7 @@ TEST_CASE("RulePanel: controls do not overlap at the editor's panel width", "[Ru
                 CHECK(fits(*mixValue, text));
             }
             const auto modeHalf = static_cast<float>(control(p, row, "mode").getWidth()) * 0.5f - 2.0f;
-            CHECK(juce::GlyphArrangement::getStringWidth(dc::ui::panel::mono(10.0f), "1-SHOT") * 0.8f <= modeHalf);
+            CHECK(juce::GlyphArrangement::getStringWidth(dc::ui::panel::mono(10.0f), "ONE") * 0.8f <= modeHalf);
             // REV is not clipped either (same font, drawn at most 0.8 squeezed).
             const auto revW = static_cast<float>(control(p, row, "reverse").getWidth()) - 4.0f;
             CHECK(juce::GlyphArrangement::getStringWidth(dc::ui::panel::mono(10.0f), "REV") * 0.8f <= revW);

@@ -10,7 +10,7 @@ Loop-1 region and backwards from another.
 
 ## Decided with the user
 
-- A **REV** toggle sits in each target row of the rule panel, next to GATE and 1-SHOT. It is
+- A **REV** toggle sits in each target row of the rule panel, next to GATE and ONE. It is
   independent of the mode.
 - Reverse is a fixed switch per mapping (no chance); the random draw still only chooses which
   mapping fires.
