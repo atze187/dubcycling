@@ -50,30 +50,35 @@ juce::String mixString(float mix)
 }
 
 // Columns of a rule row (row bounds without the 2 px top/bottom inset):
-//   name | weight slider | percent | GATE/1-SHOT | mix slider | mix readout
+//   name | weight slider | percent | GATE/1-SHOT REV | mix slider | mix readout
 // The two sliders share what the fixed columns leave, the mix slider gets two fifths of it.
 constexpr int kNameW = 60;
 constexpr int kPercentW = 34;
-constexpr int kModeW = 72;
+constexpr int kModeW = 66;
+constexpr int kRevW = 28;
+constexpr int kTight = 2; // mode switch to REV (one control group)
 constexpr int kMixValueW = 46;
 constexpr int kNear = 3;  // slider to its readout
 constexpr int kApart = 6; // between column groups
 
 struct RowColumns
 {
-    juce::Rectangle<int> name, weight, percent, mode, mix, mixValue;
+    juce::Rectangle<int> name, weight, percent, mode, reverse, mix, mixValue;
 };
 
 RowColumns rowColumns(juce::Rectangle<int> r)
 {
     RowColumns c;
     c.name = r.removeFromLeft(kNameW);
-    const int flex = std::max(0, r.getWidth() - (kNear + kPercentW + kApart + kModeW + kApart + kNear + kMixValueW));
+    const int flex = std::max(0, r.getWidth()
+                                     - (kNear + kPercentW + kApart + kModeW + kTight + kRevW + kApart + kNear + kMixValueW));
     const int mixW = std::clamp(flex * 2 / 5, 36, 96);
     c.mixValue = r.removeFromRight(kMixValueW);
     r.removeFromRight(kNear);
     c.mix = r.removeFromRight(mixW);
     r.removeFromRight(kApart);
+    c.reverse = r.removeFromRight(kRevW);
+    r.removeFromRight(kTight);
     c.mode = r.removeFromRight(kModeW);
     r.removeFromRight(kApart);
     c.percent = r.removeFromRight(kPercentW);
@@ -119,13 +124,41 @@ struct ModeSwitch final : public juce::Component, public juce::SettableTooltipCl
     std::function<void()> onClick;
 };
 
+// On/off switch REV in the style of the mode switch's cells: lit while the row plays backwards.
+// The toggle state only shows the row's flag; a click asks the panel to flip it (onClick).
+struct ReverseButton final : public juce::Button
+{
+    ReverseButton() : juce::Button("REV")
+    {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        setTooltip("Play this Loop 2 region backwards");
+        setClickingTogglesState(false);
+    }
+
+    void paintButton(juce::Graphics& g, bool highlighted, bool down) override
+    {
+        const bool on = getToggleState();
+        const auto r = getLocalBounds().toFloat().reduced(0.5f);
+        auto fill = on ? juce::Colour(0xff1d3d57) : kWindow;
+        if (highlighted || down)
+            fill = fill.brighter(0.15f);
+        g.setColour(fill);
+        g.fillRect(r);
+        g.setColour(on ? kAccent : kDim);
+        g.setFont(mono(10.0f));
+        g.drawFittedText(getButtonText(), getLocalBounds(), juce::Justification::centred, 1, 0.8f);
+        g.setColour(on ? kAccent.withAlpha(0.7f) : kEdgeLight);
+        g.drawRect(r, 1.0f);
+    }
+};
+
 bool same(const std::vector<RuleTarget>& a, const std::vector<RuleTarget>& b)
 {
     if (a.size() != b.size())
         return false;
     for (std::size_t i = 0; i < a.size(); ++i)
         if (a[i].region2 != b[i].region2 || a[i].weight != b[i].weight || a[i].mode != b[i].mode
-            || sanitizeMix(a[i].mix) != sanitizeMix(b[i].mix))
+            || sanitizeMix(a[i].mix) != sanitizeMix(b[i].mix) || a[i].reverse != b[i].reverse)
             return false;
     return true;
 }
@@ -204,6 +237,10 @@ struct RulePanel::Row final : public juce::Component
         };
         addAndMakeVisible(toggle);
 
+        reverseButton.setComponentID("reverse");
+        reverseButton.onClick = [this] { owner_.setReverse(index_, !reverse); };
+        addAndMakeVisible(reverseButton);
+
         mixSlider.setComponentID("mix");
         mixSlider.setSliderStyle(juce::Slider::LinearHorizontal);
         mixSlider.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
@@ -246,6 +283,7 @@ struct RulePanel::Row final : public juce::Component
         mixValue.setText(mixString(mix), juce::dontSendNotification);
         toggle.mode = mode;
         toggle.repaint();
+        reverseButton.setToggleState(reverse, juce::dontSendNotification);
     }
 
     void paint(juce::Graphics& g) override
@@ -264,6 +302,7 @@ struct RulePanel::Row final : public juce::Component
         slider.setBounds(c.weight);
         value.setBounds(c.percent);
         toggle.setBounds(c.mode);
+        reverseButton.setBounds(c.reverse);
         mixSlider.setBounds(c.mix);
         mixValue.setBounds(c.mixValue);
     }
@@ -273,9 +312,11 @@ struct RulePanel::Row final : public juce::Component
     juce::Label letter, value, mixValue;
     juce::Slider slider, mixSlider;
     ModeSwitch toggle;
+    ReverseButton reverseButton;
     float percent = 0.0f;
     PlayMode mode = PlayMode::Gate;
     float mix = 0.5f;
+    bool reverse = false;
     bool touched = false; // edited since the last setContext/publish and not yet in stored_
     bool updating = false;
 };
@@ -345,6 +386,11 @@ PlayMode RulePanel::mode(int row) const
     return row >= 0 && row < rowCount() ? rows_[static_cast<std::size_t>(row)]->mode : PlayMode::Gate;
 }
 
+bool RulePanel::reverse(int row) const
+{
+    return row >= 0 && row < rowCount() && rows_[static_cast<std::size_t>(row)]->reverse;
+}
+
 juce::String RulePanel::percentText(int row) const
 {
     return row >= 0 && row < rowCount() ? rows_[static_cast<std::size_t>(row)]->value.getText() : juce::String();
@@ -399,6 +445,7 @@ void RulePanel::setContext(int region1, int region2Count, const std::vector<Rule
         row.percent = 0.0f;
         row.mode = PlayMode::Gate;
         row.mix = 0.5f;
+        row.reverse = false;
         row.touched = false;
         for (const auto& t : stored_)
             if (t.region2 == i)
@@ -406,6 +453,7 @@ void RulePanel::setContext(int region1, int region2Count, const std::vector<Rule
                 row.percent = toPercent(t.weight);
                 row.mode = t.mode;
                 row.mix = sanitizeMix(t.mix);
+                row.reverse = t.reverse;
                 break; // duplicates beyond the first count as "other" targets
             }
         row.show();
@@ -520,6 +568,20 @@ void RulePanel::setMode(int row, PlayMode newMode)
     publish();
 }
 
+void RulePanel::setReverse(int row, bool on)
+{
+    if (row < 0 || row >= rowCount())
+        return;
+    auto& r = *rows_[static_cast<std::size_t>(row)];
+    if (r.reverse == on)
+        return;
+    r.reverse = on;
+    r.touched = true;
+    dirty_ = true;
+    r.show();
+    publish();
+}
+
 void RulePanel::applyMix(int row, float newMix)
 {
     if (row < 0 || row >= rowCount())
@@ -585,6 +647,7 @@ std::vector<RuleTarget> RulePanel::buildTargets() const
                 n.weight = r.percent / 100.0f;
                 n.mode = r.mode;
                 n.mix = r.mix;
+                n.reverse = r.reverse;
             }
         }
         out.push_back(n); // stale and duplicate entries pass through untouched
@@ -593,7 +656,7 @@ std::vector<RuleTarget> RulePanel::buildTargets() const
     {
         const auto& r = *rows_[static_cast<std::size_t>(i)];
         if (!seen[static_cast<std::size_t>(i)] && r.touched)
-            out.push_back(RuleTarget { i, r.percent / 100.0f, r.mode, r.mix });
+            out.push_back(RuleTarget { i, r.percent / 100.0f, r.mode, r.mix, r.reverse });
     }
     return out;
 }
