@@ -746,13 +746,14 @@ TEST_CASE("RulePanel: controls do not overlap at the editor's panel width", "[Ru
     auto* editor = dynamic_cast<dc::ui::Editor*>(ed.get());
     REQUIRE(editor != nullptr);
     editor->refresh();
-    const char* ids[] = { "name", "weight", "percent", "mode", "mix", "mixValue" };
+    const char* ids[] = { "name", "weight", "percent", "mode", "reverse", "mix", "mixValue" };
     // Fits at the label's smallest horizontal scale (the label squeezes the text instead of cutting it).
     const auto fits = [](const juce::Label& l, const juce::String& text) {
         const float w = juce::GlyphArrangement::getStringWidth(l.getFont(), text) * l.getMinimumHorizontalScale();
         return w <= static_cast<float>(l.getBorderSize().subtractedFrom(l.getLocalBounds()).getWidth()) + 0.5f;
     };
-    for (const auto size : { juce::Point<int> { 800, 540 }, juce::Point<int> { 900, 600 }, juce::Point<int> { 1400, 900 } })
+    for (const auto size : { juce::Point<int> { 800, 540 }, juce::Point<int> { 800, 600 }, juce::Point<int> { 900, 600 },
+                             juce::Point<int> { 900, 660 }, juce::Point<int> { 1400, 900 } })
     {
         editor->setSize(size.x, size.y);
         auto& p = editor->rulePanel();
@@ -789,7 +790,11 @@ TEST_CASE("RulePanel: controls do not overlap at the editor's panel width", "[Ru
                 CHECK(fits(*mixValue, text));
             }
             const auto modeHalf = static_cast<float>(control(p, row, "mode").getWidth()) * 0.5f - 2.0f;
-            CHECK(juce::GlyphArrangement::getStringWidth(dc::ui::panel::mono(10.0f), "1-SHOT") * 0.8f <= modeHalf);
+            CHECK(juce::GlyphArrangement::getStringWidth(dc::ui::panel::mono(10.0f), "ONE") * 0.8f <= modeHalf);
+            // REV is not clipped either (same font, drawn at most 0.8 squeezed).
+            const auto revW = static_cast<float>(control(p, row, "reverse").getWidth()) - 4.0f;
+            CHECK(juce::GlyphArrangement::getStringWidth(dc::ui::panel::mono(10.0f), "REV") * 0.8f <= revW);
+            CHECK(control(p, row, "reverse").getHeight() >= 14);
         }
     }
     // Look at it: DC_SNAPSHOT_DIR=<dir> writes editor_mix_<w>x<h>.png.
@@ -826,5 +831,131 @@ TEST_CASE("RulePanel: with many rows the scrollbar does not hide the rightmost c
         const int right = r->getX() + control(p, row, "mixValue").getRight();
         CHECK(right <= vp->getViewWidth());
         CHECK(r->getRight() <= vp->getViewWidth());
+    }
+}
+
+// --- Reverse ------------------------------------------------------------------------------------
+TEST_CASE("RulePanel: setReverse toggles one row, keeps weight, mode and mix, and publishes once", "[RulePanel][reverse]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    p.setContext(0, 2, { RuleTarget { 0, 0.5f, PlayMode::OneShot, 0.3f }, RuleTarget { 1, 0.25f } });
+    CHECK_FALSE(p.reverse(0));
+    CHECK_FALSE(p.reverse(1));
+    CHECK_FALSE(p.reverse(7)); // no such row
+    p.setReverse(0, true);
+    CHECK(p.reverse(0));
+    CHECK_FALSE(p.reverse(1));
+    CHECK(out.calls == 1);
+    REQUIRE(out.targets.size() == 2);
+    CHECK(out.targets[0].reverse);
+    CHECK(out.targets[0].mode == PlayMode::OneShot);
+    CHECK(out.targets[0].weight == pct(50.0f));
+    CHECK(out.targets[0].mix == 0.3f);
+    CHECK_FALSE(out.targets[1].reverse);
+    p.setReverse(0, true); // no change: nothing published
+    CHECK(out.calls == 1);
+    p.setReverse(0, false);
+    CHECK(out.calls == 2);
+    CHECK_FALSE(out.targets[0].reverse);
+}
+
+TEST_CASE("RulePanel: setContext shows the stored reverse flags, edits of other fields keep them", "[RulePanel][reverse]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    Published out;
+    record(p, out);
+    RuleTarget rev { 1, 0.4f, PlayMode::Gate };
+    rev.reverse = true;
+    p.setContext(0, 3, { rev, RuleTarget { 7, 0.1f } }); // region 7 is stale
+    CHECK(p.reverse(1));
+    CHECK_FALSE(p.reverse(0));
+    p.setWeight(1, 60.0f);
+    p.setMode(1, PlayMode::OneShot);
+    p.setMix(1, 0.9f);
+    REQUIRE(out.targets.size() == 2);
+    CHECK(out.targets[0].region2 == 1);
+    CHECK(out.targets[0].reverse);
+    // A row touched only through REV is stored (weight 0), like a touched mix.
+    p.setReverse(2, true);
+    REQUIRE(out.targets.size() == 3);
+    CHECK(out.targets[2].region2 == 2);
+    CHECK(out.targets[2].weight == 0.0f);
+    CHECK(out.targets[2].reverse);
+    // A refresh with an equal list but a different flag is not swallowed as "nothing changed".
+    auto flipped = out.targets;
+    flipped[0].reverse = false;
+    p.setContext(0, 3, flipped);
+    CHECK_FALSE(p.reverse(1));
+}
+
+TEST_CASE("RulePanel: a click on the REV button toggles it and publishes", "[RulePanel][reverse]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    RulePanel p;
+    p.setSize(560, 200);
+    Published out;
+    record(p, out);
+    p.setContext(0, 2, { RuleTarget { 1, 0.5f } });
+    auto* button = dynamic_cast<juce::Button*>(&control(p, 1, "reverse"));
+    REQUIRE(button != nullptr);
+    CHECK_FALSE(button->getToggleState());
+    CHECK(button->getTooltip() == "Play this Loop 2 region backwards");
+    CHECK(button->getButtonText() == "REV");
+    REQUIRE(button->onClick);
+    button->onClick(); // what a mouse click runs (as the other panel tests do)
+    CHECK(p.reverse(1));
+    CHECK(button->getToggleState());
+    CHECK(out.calls == 1);
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].reverse);
+    // The state shown follows setContext.
+    p.setContext(0, 2, { RuleTarget { 1, 0.5f } });
+    CHECK_FALSE(button->getToggleState());
+}
+
+TEST_CASE("RulePanel: REV rows render at the default and the minimum editor size", "[RulePanel][reverse][layout]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    DubcyclingProcessor proc;
+    LoopPair loops(proc);
+    auto s = proc.getPluginState();
+    s.loop2.boundaries = { 0.5 };
+    RuleTarget rev { 0, 0.6f, PlayMode::OneShot, 0.5f };
+    rev.reverse = true;
+    s.rules = { RuleEntry { 0, { rev, RuleTarget { 1, 0.3f, PlayMode::Gate, 0.7f } } } };
+    proc.applyEdit(s);
+    std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
+    auto* editor = dynamic_cast<dc::ui::Editor*>(ed.get());
+    REQUIRE(editor != nullptr);
+    editor->refresh();
+    for (const auto size : { juce::Point<int> { 800, 600 }, juce::Point<int> { 900, 660 } })
+    {
+        editor->setSize(size.x, size.y);
+        auto& p = editor->rulePanel();
+        REQUIRE(p.rowCount() == 2);
+        CHECK(p.reverse(0));
+        CHECK_FALSE(p.reverse(1));
+        auto* on = dynamic_cast<juce::Button*>(&control(p, 0, "reverse"));
+        auto* off = dynamic_cast<juce::Button*>(&control(p, 1, "reverse"));
+        REQUIRE(on != nullptr);
+        REQUIRE(off != nullptr);
+        CHECK(on->getToggleState());
+        CHECK_FALSE(off->getToggleState());
+        // Look at it: DC_SNAPSHOT_DIR=<dir> writes reverse-rulepanel.png (900x660) and
+        // reverse-rulepanel-800x600.png.
+        if (const auto dir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {}); dir.isNotEmpty())
+        {
+            const auto img = p.createComponentSnapshot(p.getLocalBounds(), true, 2.0f);
+            auto png = juce::File(dir).getChildFile(size.x == 900 ? juce::String("reverse-rulepanel.png")
+                                                                  : "reverse-rulepanel-" + juce::String(size.x) + "x"
+                                                                        + juce::String(size.y) + ".png");
+            png.deleteFile();
+            if (auto o = png.createOutputStream())
+                juce::PNGImageFormat().writeImageToStream(img, *o);
+        }
     }
 }

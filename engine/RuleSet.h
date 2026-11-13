@@ -12,6 +12,7 @@ struct RuleTarget
     float weight = 0.0f; // 0..1
     PlayMode mode = PlayMode::Gate;
     float mix = 0.5f; // 0..1: 0 = only Loop 1, 0.5 = both full, 1 = only Loop 2 (see MixGain.h)
+    bool reverse = false; // true: the Loop-2 region plays backwards (Gate and One-Shot alike)
 };
 
 // Per source region (region1) a list of weighted targets. Copyable; draw/targets do not allocate.

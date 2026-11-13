@@ -79,6 +79,11 @@ struct Model
 // over kMixRampMs. Auditions ignore the mix. A seamless swap re-reads the mix of the sounding voice
 // if its Loop-2 region and the Loop-1 region that started it kept their bounds.
 //
+// Reverse: a voice started by a target with RuleTarget::reverse reads its region backwards (grains
+// with direction -1, same windows): Gate loops backwards from the region end, One-Shot plays from
+// the end to the start; start, stop and fades as forwards. The flag is taken at the start (a seamless
+// swap does not flip a sounding voice). The audition always plays forwards.
+//
 // Passes: the Loop-2 commands of one Loop-1 cycle (entry starts and stops, Gate ends, the jump stop)
 // are recorded at their Loop-1 phase. A pass begins at a cycle start reached continuously, or by a
 // fresh start or jump that lands within kJumpToleranceBeats of it, and is published (lastPass) at
@@ -90,8 +95,8 @@ struct Model
 // jump landing on it) the request is read. While a slot replays nothing is drawn (no early draw, no
 // teaser), nothing is recorded, and the slot's events are issued as voice commands when Loop 1
 // reaches their phase; each replayed pass starts with Loop 2 silent (a carried-over voice stops). A
-// Start takes the mix of the current rule target (Loop-1 region at its phase -> its Loop-2 region),
-// else 0.5; a Start of a Loop-2 region that no longer exists is skipped. The Sequencer is reset on
+// Start takes the mix and the reverse flag of the current rule target (Loop-1 region at its phase ->
+// its Loop-2 region), else 0.5 and forwards; a Start of a Loop-2 region that no longer exists is skipped. The Sequencer is reset on
 // entering and leaving replay. The slot's events are copied at the boundary: a seamless swap that
 // clears or changes the slot (Clear, Clear all) lets the pass in progress finish with the events it
 // was loaded with; the next boundary reads the slot again. A jump, stop or fresh start mid-loop stops
@@ -227,7 +232,10 @@ private:
         PlayMode mode = PlayMode::Gate;
         int region2 = -1;          // Loop-2 region index it was started with
         double lo = 0.0, hi = 0.0; // source frames
-        double elapsed = 0.0;      // source frames since region start (Gate: wrapped)
+        double elapsed = 0.0;      // source frames played since the voice started (Gate: wrapped), either direction
+        // Reversed (rule target's flag): the read position runs from hi - 1 down to lo (sourcePos);
+        // elapsed still counts up, so the Gate wrap and the One-Shot end fade work as forwards.
+        bool reverse = false;
         float gain = 0.0f;
         int fadeLeft = 0;        // frames left in the current fade (in or out); integer so fades end exactly
         float fadeDelta = 0.0f;  // fade-out gain decrement per frame
@@ -241,6 +249,10 @@ private:
         double mixLo1 = 0.0, mixHi1 = 0.0;
         GrainStretch gl, gr;
     };
+
+    // Source frame a voice reads now: lo + elapsed forwards; hi - 1 - elapsed backwards (the point
+    // samples lo..hi-1 in reverse order, so the first grain starts at the region end).
+    static double sourcePos(const Voice& v) { return v.reverse ? v.hi - 1.0 - v.elapsed : v.lo + v.elapsed; }
 
     // Linear per-sample ramp of a gain towards a target, kMixRampMs for a full 0..1 swing. It lands
     // exactly on the target, so a centre mix stays at exactly 1 (bit-identical output).

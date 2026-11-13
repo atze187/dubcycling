@@ -296,6 +296,8 @@ juce::MemoryBlock serialize(const PluginState& s)
             tt.setProperty("mode", t.mode == PlayMode::OneShot ? 1 : 0, nullptr);
             if (t.mix != 0.5f)
                 tt.setProperty("mix", num(static_cast<double>(t.mix)), nullptr);
+            if (t.reverse)
+                tt.setProperty("reverse", 1, nullptr); // optional: absent = forwards
             r.appendChild(tt, nullptr);
         }
         rules.appendChild(r, nullptr);
@@ -351,6 +353,8 @@ std::optional<PluginState> deserialize(const void* data, std::size_t size)
                     const double m = parseFxNumber(tt.getProperty("mix").toString());
                     t.mix = std::isfinite(m) ? sanitizeMix(static_cast<float>(std::clamp(m, 0.0, 1.0))) : 0.5f;
                 }
+                // Absent in states saved before reverse; only "1" means backwards.
+                t.reverse = tt.getProperty("reverse").toString().trim() == "1";
                 if (!addRuleTarget(targets, t))
                     break;
             }

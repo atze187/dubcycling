@@ -20,6 +20,7 @@ public:
         int region2 = -1;
         PlayMode mode = PlayMode::Gate;
         float mix = 0.5f;
+        bool reverse = false; // Start: play the Loop-2 region backwards
         int region1 = -1; // Start: the Loop-1 region that triggered it
     };
 
@@ -47,6 +48,7 @@ public:
         int region2 = -1;
         PlayMode mode = PlayMode::Gate;
         float mix = 0.5f;
+        bool reverse = false;
     };
     // The weighted draw for an entry into region1. Consumes the random source (only when a rule
     // exists); changes no state, so it may run before the entry.

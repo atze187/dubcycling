@@ -568,3 +568,64 @@ TEST_CASE("State: damaged passes are sanitized and the rest loads", "[PluginStat
         if (i != 3)
             CHECK(r->passes[static_cast<std::size_t>(i)].empty());
 }
+
+// --- Reverse --------------------------------------------------------------------------------------
+TEST_CASE("State: the reverse flag of a target survives a round trip", "[PluginState][reverse]")
+{
+    auto s = sample();
+    s.rules[0].targets[1].reverse = true;
+    const auto block = serialize(s);
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    REQUIRE(r->rules.size() == s.rules.size());
+    for (std::size_t i = 0; i < s.rules.size(); ++i)
+        for (std::size_t k = 0; k < s.rules[i].targets.size(); ++k)
+        {
+            CAPTURE(i, k);
+            CHECK(r->rules[i].targets[k].reverse == s.rules[i].targets[k].reverse);
+        }
+    CHECK(r->version == kStateVersion);
+    CHECK(kStateVersion == 1);
+}
+
+TEST_CASE("State: forwards writes no reverse attribute, an old state loads forwards", "[PluginState][reverse]")
+{
+    CHECK_FALSE(serialize(sample()).toString().contains("reverse"));
+    auto s = sample();
+    s.rules[0].targets[0].reverse = true;
+    CHECK(serialize(s).toString().contains("reverse=\"1\""));
+    const auto r = loadXml(mixDoc(""));
+    REQUIRE(r.has_value());
+    CHECK_FALSE(r->rules[0].targets[0].reverse);
+}
+
+TEST_CASE("State: reverse attributes are read as a bool and never throw", "[PluginState][reverse][hardening]")
+{
+    const auto reverseOf = [](const juce::String& text) {
+        const auto r = loadXml(mixDoc("reverse=\"" + text + "\""));
+        REQUIRE(r.has_value());
+        REQUIRE(r->rules.size() == 1);
+        return r->rules[0].targets[0].reverse;
+    };
+    CHECK(reverseOf("1"));
+    CHECK_FALSE(reverseOf("0"));
+    CHECK_FALSE(reverseOf(""));
+    CHECK_FALSE(reverseOf("abc"));
+    CHECK_FALSE(reverseOf("2"));
+    CHECK_FALSE(reverseOf("-1"));
+    CHECK_FALSE(reverseOf("1e99"));
+}
+
+TEST_CASE("State: sanitizing a rule entry keeps the reverse flag", "[PluginState][reverse]")
+{
+    std::vector<RuleTarget> targets;
+    RuleTarget t { 2, 0.4f, PlayMode::Gate };
+    t.reverse = true;
+    REQUIRE(addRuleTarget(targets, t));
+    REQUIRE(addRuleTarget(targets, RuleTarget { 3, 0.4f }));
+    const auto e = sanitizeRuleEntry(1, targets, true);
+    REQUIRE(e.has_value());
+    REQUIRE(e->targets.size() == 2);
+    CHECK(e->targets[0].reverse);
+    CHECK_FALSE(e->targets[1].reverse);
+}

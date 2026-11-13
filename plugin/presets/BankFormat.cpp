@@ -212,6 +212,8 @@ juce::var rulesToVar(const std::vector<RuleEntry>& rules)
             o->setProperty("mode", t.mode == PlayMode::OneShot ? 1 : 0);
             if (t.mix != 0.5f)
                 o->setProperty("mix", static_cast<double>(t.mix));
+            if (t.reverse)
+                o->setProperty("reverse", true); // version 5; absent = forwards
             targets.add(juce::var(o));
         }
         r->setProperty("targets", targets);
@@ -246,6 +248,9 @@ std::vector<RuleEntry> rulesFromVar(const juce::var& v)
                 t.mode = intOf(tv["mode"], 0) == 1 ? PlayMode::OneShot : PlayMode::Gate;
                 // Absent in version 1 and 2 files; clamped as a double before the float cast.
                 t.mix = sanitizeMix(static_cast<float>(clampedNumber(tv["mix"], 0.0, 1.0, 0.5)));
+                // Absent before version 5: forwards. true or the number 1 mean backwards, anything else forwards.
+                const auto& rv = tv["reverse"];
+                t.reverse = rv.isBool() ? static_cast<bool>(rv) : (isNumber(rv) && static_cast<double>(rv) == 1.0);
                 if (!addRuleTarget(targets, t))
                     break;
             }
@@ -519,7 +524,8 @@ juce::String presetFingerprint(const PluginState& state)
         out << "R|" << e.region1;
         for (auto& t : e.targets)
             out << '|' << t.region2 << ',' << num(static_cast<double>(t.weight)) << ',' << (t.mode == PlayMode::OneShot ? 1 : 0)
-                << (t.mix != 0.5f ? ",m" + num(static_cast<double>(t.mix)) : juce::String());
+                << (t.mix != 0.5f ? ",m" + num(static_cast<double>(t.mix)) : juce::String())
+                << (t.reverse ? ",r" : ""); // only when set: presets without reverse keep their fingerprint
         out << '\n';
     }
     // Effect settings: nothing at all for the default state, so presets without effect data keep their fingerprint.

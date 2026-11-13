@@ -14,9 +14,10 @@ juce::String regionLetters(int index);
 juce::String regionLabel(const std::vector<juce::String>& labels, int index);
 
 // The rules of one Loop-1 region: one row per CURRENT Loop-2 region
-//   A  |-------------o-------|  70 %  [GATE]  |----|-o--|  L1 60 %
-// (slider 0..100 %, percent value, Gate/One-Shot toggle, mix Loop 1 vs. Loop 2 with its readout)
-// and "Silence: x %" for the remainder.
+//   A  |-------------o-------|  70 %  [GATE] [REV]  |----|-o--|  L1 60 %
+// (slider 0..100 %, percent value, Gate/One-Shot toggle, REV on/off = play the Loop-2 region
+// backwards (RuleTarget::reverse), mix Loop 1 vs. Loop 2 with its readout) and "Silence: x %" for
+// the remainder. REV is stored like the mix: a row touched only through REV stores its target.
 //
 // Mix is 0..1 (RuleTarget::mix, see MixGain.h), 0.5 = both loops full; a double-click on the mix
 // slider sets the centre. It is kept when weight or mode change and behaves like the weight for
@@ -53,6 +54,8 @@ public:
 
     void setWeight(int row, float percent);
     void setMode(int row, PlayMode mode);
+    // REV: play this row's Loop-2 region backwards (RuleTarget::reverse). Publishes once on a change.
+    void setReverse(int row, bool on);
     void beginDrag(int row);
     void dragWeight(int row, float percent);
     void endDrag();
@@ -67,6 +70,7 @@ public:
     juce::String rowLabel(int row) const;
     float weightPercent(int row) const;
     PlayMode mode(int row) const;
+    bool reverse(int row) const; // false for rows that do not exist
     juce::String percentText(int row) const;
     float mix(int row) const; // 0.5 for rows that do not exist
     // "L1 | L2" at the centre, "L2 40 %" left of it (Loop-2 level), "L1 40 %" right of it, "L1 only" / "L2 only".

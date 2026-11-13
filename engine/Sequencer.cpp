@@ -32,6 +32,7 @@ Sequencer::Draw Sequencer::draw(int region1, const RuleSet& rules)
         d.region2 = target->region2;
         d.mode = target->mode;
         d.mix = target->mix;
+        d.reverse = target->reverse;
     }
     else
         d.type = Draw::Type::Silence;
@@ -60,6 +61,7 @@ Sequencer::Command Sequencer::apply(int region1, const Draw& d)
     c.region2 = activeRegion2;
     c.mode = activeMode;
     c.mix = d.mix;
+    c.reverse = d.reverse;
     c.region1 = region1;
     return c;
 }

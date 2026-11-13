@@ -2525,3 +2525,210 @@ TEST_CASE("Engine replay does not allocate", "[Engine][replay]")
     }
     REQUIRE(gAllocCount.load() == 0);
 }
+
+// --- Reverse ------------------------------------------------------------------------------------
+namespace {
+// Loop 2 in four quarter regions of 24000 frames; inside each region a ramp from 0.1 up to just
+// below 0.9, so the read position is visible in every sample (backwards = falling ramp).
+float rampAt(int i) { return 0.1f + 0.8f * static_cast<float>(i % 24000) / 24000.0f; }
+
+std::shared_ptr<dc::Model> rampModel(int region2, dc::PlayMode mode, bool reverse)
+{
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.75 }); // Loop-1 region 0 = 72000 frames, region 1 has no rule
+    m->loop2.data = makeData(kBar, rampAt);
+    m->loop2.regions = regions({ 0.25, 0.5, 0.75 });
+    dc::RuleTarget t { region2, 1.0f, mode };
+    t.reverse = reverse;
+    m->rules.setTargets(0, { t });
+    return m;
+}
+
+// Max |o[k] - rampAt(src(k))| over [from, to).
+float maxRampDev(const std::vector<float>& o, size_t from, size_t to, const std::function<int(size_t)>& src)
+{
+    float m = 0.0f;
+    for (size_t k = from; k < to; ++k)
+        m = std::max(m, std::abs(o[k] - rampAt(src(k))));
+    return m;
+}
+} // namespace
+
+TEST_CASE("Engine reverse: a reversed Gate plays its region backwards and loops backwards seamlessly", "[Engine][reverse]")
+{
+    constexpr int L = 24000;
+    dc::Engine fe, re;
+    prepared(fe);
+    prepared(re);
+    fe.setModel(rampModel(1, dc::PlayMode::Gate, false));
+    re.setModel(rampModel(1, dc::PlayMode::Gate, true));
+    const Out f = run(fe, 0.0, kBar);
+    const Out r = run(re, 0.0, kBar);
+    const size_t end1 = 72000; // Loop 1 leaves the triggering region: the Gate ends
+    // Forwards: x[lo + k mod L]. Backwards: the same region read from its end, x[hi - 1 - k mod L],
+    // three passes, each continuing seamlessly at the region end again.
+    CHECK(maxRampDev(f.l, kFade, end1, [](size_t k) { return L + static_cast<int>(k % L); }) < kTol);
+    CHECK(maxRampDev(r.l, kFade, end1, [](size_t k) { return 2 * L - 1 - static_cast<int>(k % L); }) < kTol);
+    // Sample-wise the time reversal of the forwards pass (within one region length).
+    for (size_t k = kFade; k < static_cast<size_t>(L) - kFade; k += 997)
+        REQUIRE(r.l[k] == Catch::Approx(f.l[L - 1 - k]).margin(kTol));
+    // Where the energy sits: the loud end of the ramp comes first backwards, last forwards.
+    CHECK(r.l[kFade] > 0.85f);
+    CHECK(f.l[kFade] < 0.15f);
+    CHECK(r.l[L - 1] < 0.15f);
+    CHECK(r.l[L + 1] > 0.85f); // the next backwards pass starts at the region end again
+    CHECK(r.l[0] == 0.0f);     // same fade-in
+    // Same stop as forwards: the end fade and silence afterwards.
+    CHECK(allZero(r.l, end1 + kFade, kBar));
+    CHECK(allZero(r.r, end1 + kFade, kBar));
+    // The stop fade has the same gain curve as forwards (output / ramp value read there).
+    for (size_t k = end1 + 7; k < end1 + kFade; k += 7)
+    {
+        const float gf = f.l[k] / rampAt(L + static_cast<int>(k % L));
+        const float gr = r.l[k] / rampAt(2 * L - 1 - static_cast<int>(k % L));
+        REQUIRE(gr == Catch::Approx(gf).margin(2e-3));
+        REQUIRE(gr < 1.0f);
+    }
+}
+
+TEST_CASE("Engine reverse: a reversed One-Shot plays from its region end to its start, then ends", "[Engine][reverse]")
+{
+    constexpr int L = 24000;
+    dc::Engine fe, re;
+    prepared(fe);
+    prepared(re);
+    fe.setModel(rampModel(1, dc::PlayMode::OneShot, false));
+    re.setModel(rampModel(1, dc::PlayMode::OneShot, true));
+    const Out f = run(fe, 0.0, 30000);
+    const Out r = run(re, 0.0, 30000);
+    // Starts at the region end (the first grain reads hi - 1), falls to the region start.
+    CHECK(maxRampDev(r.l, kFade, L - kFade, [](size_t k) { return 2 * L - 1 - static_cast<int>(k); }) < kTol);
+    CHECK(r.l[kFade] > 0.85f);
+    CHECK(r.l[L - kFade - 1] < 0.15f);
+    // The same end fade as forwards, in the same frames.
+    for (size_t k = L - kFade; k < static_cast<size_t>(L); ++k)
+    {
+        REQUIRE(std::abs(r.l[k]) <= std::abs(r.l[L - kFade - 1]) + kTol);
+        REQUIRE((r.l[k] == 0.0f) == (f.l[k] == 0.0f));
+    }
+    CHECK(allZero(r.l, L, r.l.size()));
+    CHECK(allZero(r.r, L, r.r.size()));
+    // The voice is idle afterwards: no Loop-2 playhead.
+    CHECK(re.playhead().region2 == -1);
+    CHECK(re.playhead().phase2 == -1.0f);
+}
+
+TEST_CASE("Engine reverse: below loop tempo a reversed One-Shot never reads its region end at its end", "[Engine][reverse]")
+{
+    // Mirror of the forwards overshoot test: Loop 2 at 120 bpm, host at 84 bpm. Region 1 = [24000,
+    // 48000): its end [42000, 48000) is 0.5, the rest 0.1, the region before it (the continuation
+    // backwards) 0.3.
+    dc::Engine e;
+    prepared(e);
+    auto m = baseModel();
+    m->loop1.regions = regions({ 0.75 });
+    m->loop2.data = makeData(kBar, [](int i) { return i < 24000 ? 0.3f : (i < 42000 ? 0.1f : (i < 48000 ? 0.5f : 0.0f)); });
+    m->loop2.regions = regions({ 0.25, 0.5, 0.75 });
+    dc::RuleTarget t { 1, 1.0f, dc::PlayMode::OneShot };
+    t.reverse = true;
+    m->rules.setTargets(0, { t });
+    e.setModel(m);
+    constexpr double adv = 0.7;
+    const Out o = run(e, 0.0, 40000, 512, 84.0);
+    CHECK(o.l[kFade + 100] == Catch::Approx(0.5f).margin(kTol)); // starts at the region end
+    const auto fadeStart = static_cast<size_t>((24000.0 - kFade * adv) / adv);
+    float hi = 0.0f, lo = 1.0f;
+    for (size_t i = fadeStart - 960; i < fadeStart; ++i)
+    {
+        hi = std::max(hi, o.l[i]);
+        lo = std::min(lo, o.l[i]);
+    }
+    CHECK(lo > 0.05f);
+    CHECK(hi < 0.3f + kTol); // nothing of the 0.5 end
+    CHECK(allZero(o.l, static_cast<size_t>(24000.0 / adv) + 2, o.l.size()));
+}
+
+TEST_CASE("Engine reverse: the Loop-2 playhead moves backwards and stays in 0..1", "[Engine][reverse][playhead]")
+{
+    dc::Engine e;
+    prepared(e);
+    e.setModel(rampModel(1, dc::PlayMode::Gate, true));
+    run(e, 0.0, 6144);
+    const auto a = e.playhead();
+    run(e, 6144.0 * kBpm / (60.0 * kRate), 6144);
+    const auto b = e.playhead();
+    REQUIRE(a.region2 == 1);
+    CHECK(a.phase2 == Catch::Approx((48000.0 - 1.0 - 6144.0) / kBar).margin(0.001));
+    CHECK(b.phase2 < a.phase2);
+    CHECK(b.phase2 >= 0.25f);
+    CHECK(a.phase2 <= 0.5f);
+
+    // Region 0 starts at the loop start: a reversed One-Shot ends there, the playhead never leaves 0..1.
+    dc::Engine e0;
+    prepared(e0);
+    e0.setModel(rampModel(0, dc::PlayMode::OneShot, true));
+    double ppq = 0.0;
+    for (int k = 0; k < 48; ++k)
+    {
+        run(e0, ppq, 512);
+        ppq += 512 * kBpm / (60.0 * kRate);
+        const auto h = e0.playhead();
+        if (h.region2 >= 0)
+        {
+            REQUIRE(h.phase2 >= 0.0f);
+            REQUIRE(h.phase2 <= 0.25f);
+        }
+    }
+}
+
+TEST_CASE("Engine reverse: the audition of a region stays forwards", "[Engine][reverse][preview]")
+{
+    dc::Engine e;
+    prepared(e);
+    e.setModel(rampModel(1, dc::PlayMode::Gate, true));
+    e.requestPreview(1, 1);
+    std::vector<float> l(4096, 0.0f), r(4096, 0.0f);
+    e.process(dc::TransportInfo { false, 0.0, kBpm, 4, 4 }, l.data(), r.data(), 4096);
+    CHECK(l[1000] == Catch::Approx(rampAt(24000 + 1000)).margin(kTol));
+}
+
+TEST_CASE("Engine replay: a replayed Start takes the reverse flag of the current rule target", "[Engine][replay][reverse]")
+{
+    auto m = replayModel();
+    m->loop2.data = makeData(kBar, rampAt);
+    m->rules = dc::RuleSet {};
+    dc::RuleTarget rev { 1, 1.0f, dc::PlayMode::Gate };
+    rev.reverse = true;
+    m->rules.setTargets(0, { rev });                             // Loop-1 region 0 -> Loop-2 region 1, reversed
+    m->rules.setTargets(2, { { 2, 1.0f, dc::PlayMode::Gate } }); // no target for Loop-2 region 1: forwards
+    m->passes[0].events = { { 0.0, false, 1, dc::PlayMode::Gate }, { 0.5, false, 1, dc::PlayMode::Gate } };
+    dc::Engine e;
+    replayEngine(e, m);
+    e.setReplay(2);
+    const Out o = run(e, 0.0, kBar);
+    REQUIRE(e.replaySlot() == 0);
+    CHECK(o.l[frac(0.1)] == Catch::Approx(rampAt(47999 - 9600)).margin(kTol)); // backwards
+    CHECK(o.l[frac(0.6)] == Catch::Approx(rampAt(24000 + 9600)).margin(kTol)); // forwards
+}
+
+TEST_CASE("Engine reverse does not allocate", "[Engine][reverse]")
+{
+    auto m = rampModel(1, dc::PlayMode::Gate, true);
+    dc::RuleTarget t { 2, 1.0f, dc::PlayMode::OneShot };
+    t.reverse = true;
+    m->rules.setTargets(1, { t });
+    dc::Engine e;
+    prepared(e);
+    e.setModel(m);
+    std::vector<float> l(512), r(512);
+    double ppq = 0.0;
+    gAllocCount = 0;
+    for (int b = 0; b < 600; ++b)
+    {
+        gCountAllocs = true;
+        e.process({ true, ppq, kBpm, 4, 4 }, l.data(), r.data(), 512);
+        gCountAllocs = false;
+        ppq += 512 * kStep;
+    }
+    REQUIRE(gAllocCount.load() == 0);
+}
