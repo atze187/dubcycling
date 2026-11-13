@@ -4,5 +4,5 @@
 #include "engine/Version.h"
 
 TEST_CASE("engine library links") {
-    REQUIRE(std::string(dc::version()) == "0.3.0");
+    REQUIRE(std::string(dc::version()) == "0.4.0");
 }
