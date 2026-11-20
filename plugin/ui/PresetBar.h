@@ -72,7 +72,7 @@ public:
     // Imports a zip as a new bank and selects it; the message names the bank or the error.
     void importBankFrom(const juce::File& zip);
 
-    // Last error or hint (German); empty after a successful load, save or bank creation.
+    // Last error or hint; empty after a successful load, save or bank creation.
     juce::String message() const { return message_; }
 
     // What the fields open: entries ticked for the selected bank / the active preset.

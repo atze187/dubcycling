@@ -30,11 +30,11 @@ struct Bank
     std::vector<Preset> presets;
 };
 
-// Empty = the name is fine, otherwise a German message. Problems: empty after sanitizing, longer
+// Empty = the name is fine, otherwise an English message. Problems: empty after sanitizing, longer
 // than kMaxPresetNameLength, already in the bank (case-insensitive).
 juce::String presetNameProblem(const juce::String& name, const Bank& bank);
 
-// Empty = fine, otherwise a German message. Problems: empty, longer than kMaxBankNameLength,
+// Empty = fine, otherwise an English message. Problems: empty, longer than kMaxBankNameLength,
 // characters not allowed in file names, ends with '.' or ' ', reserved Windows name (con, prn,
 // aux, nul, com1-9, lpt1-9, also with an extension), already in existingBanks (case-insensitive).
 juce::String bankNameProblem(const juce::String& name, const juce::StringArray& existingBanks);
