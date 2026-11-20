@@ -34,7 +34,7 @@ public:
     struct Result
     {
         Error error = Error::None;
-        juce::String message; // German, empty when ok
+        juce::String message; // English, empty when ok
         bool ok() const { return error == Error::None; }
     };
 
