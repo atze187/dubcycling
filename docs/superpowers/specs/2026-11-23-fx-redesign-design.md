@@ -88,6 +88,8 @@ dimension is not worth the complexity); fixed order (the user asked for reorderi
   length; the UI keeps showing the chosen note value. Without host tempo (or with the host stopped) the delay uses
   the last known tempo (the engine's existing fallback, 120 BPM before any), so the tail rings out with a stable
   time.
+- Accepted deviation (implementation): with Reverse on the recorder needs twice the block length of history, so the
+  reverse block is capped at about 15 s (2 bars of 4/4 below 32 BPM); forward mode still clamps at 30 s.
 
 - Presets saved at one tempo play at the current host tempo (the time is a note value, not seconds).
 
