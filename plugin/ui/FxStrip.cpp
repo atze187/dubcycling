@@ -19,6 +19,7 @@ juce::Colour fxInsertColour(FxInsert i)
         case FxInsert::Filter:   return juce::Colour(0xff5aa9e6); // blue
         case FxInsert::Flanger:  return juce::Colour(0xff7fe3a0); // green
         case FxInsert::Reverb:   return juce::Colour(0xffc58af0); // violet
+        case FxInsert::Delay:    return juce::Colour(0xffe86f8a); // rose
     }
     return panel::kDim;
 }
@@ -108,7 +109,8 @@ juce::Range<float> FxStrip::columnRange(int region, FxInsert insert) const
     const int k = static_cast<int>(insert);
     const auto m = markerBounds(region, insert);
     const float left = k == 0 ? xFor(lo) : m.getX() - kGap * 0.5f;
-    const float right = k == kFxInserts - 1 ? xFor(hi) : m.getRight() + kGap * 0.5f;
+    // the next column's left edge, computed the same way, so neighbours share it bit for bit
+    const float right = k == kFxInserts - 1 ? xFor(hi) : markerBounds(region, static_cast<FxInsert>(k + 1)).getX() - kGap * 0.5f;
     return { left, right };
 }
 

@@ -6,17 +6,18 @@
 namespace dc {
 
 // Chain order; bit (1 << int(insert)) in the per-region switch mask.
-enum class FxInsert { Bitcrush = 0, Filter = 1, Flanger = 2, Reverb = 3 };
-constexpr int kFxInserts = 4;
+enum class FxInsert { Bitcrush = 0, Filter = 1, Flanger = 2, Reverb = 3, Delay = 4 };
+constexpr int kFxInserts = 5;
 
 enum class FxParam
 {
     ReverbMix, ReverbSize, ReverbDamping,
     FilterType, FilterCutoff, FilterResonance,
     BitcrushBits, BitcrushRate, BitcrushMix,
-    FlangerRate, FlangerDepth, FlangerFeedback, FlangerMix
+    FlangerRate, FlangerDepth, FlangerFeedback, FlangerMix,
+    FlangerManual, DelayTime, DelayFeedback, DelayMix, DelayReverse
 };
-constexpr int kFxParamCount = 13;
+constexpr int kFxParamCount = 18;
 
 // steps: 0 = continuous, otherwise the number of discrete steps (FilterType: 0 LP, 1 HP, 2 BP).
 struct FxParamInfo
@@ -29,6 +30,16 @@ struct FxParamInfo
 };
 
 const FxParamInfo& fxParamInfo(FxParam p);
+
+// Delay time note values, ascending in length from 1/32 to 2 bars. Bar values scale with beatsPerBar.
+constexpr int kDelayTimeSteps = 15;
+double delayTimeBeats(int step, double beatsPerBar); // out-of-range steps are clamped
+const char* delayTimeName(int step);
+
+// Chain order: position -> insert. Always a permutation of all inserts.
+using FxOrder = std::array<FxInsert, kFxInserts>;
+FxOrder defaultFxOrder();
+FxOrder sanitizeFxOrder(const FxOrder& o); // a valid permutation passes, anything else -> default
 
 // NaN/infinity -> default, otherwise clamped to the range; FilterType rounded to 0, 1 or 2.
 float sanitizeFxParam(FxParam p, double value);
@@ -49,12 +60,13 @@ struct FxSettings
 {
     FxParams params;
     std::vector<std::uint8_t> switches; // mask per Loop-2 region index
+    FxOrder order = defaultFxOrder();
 
     std::uint8_t maskFor(int region) const; // 0 for missing/invalid indices
     void setSwitch(int region, FxInsert i, bool on); // grows; index < 0 or >= kMaxFxRegions is ignored
     bool switchOn(int region, FxInsert i) const;
     void trimTo(int regionCount); // drops surplus entries and trailing zeros
-    bool operator==(const FxSettings& o) const { return params == o.params && switches == o.switches; }
+    bool operator==(const FxSettings& o) const { return params == o.params && switches == o.switches && order == o.order; }
 };
 
 } // namespace dc

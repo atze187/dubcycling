@@ -100,3 +100,99 @@ TEST_CASE("FxSettings: every FxParamInfo id is unique and min <= def <= max", "[
     }
     CHECK(ids.size() == static_cast<size_t>(kFxParamCount));
 }
+
+TEST_CASE("FxSettings: default order is Bitcrush, Filter, Flanger, Delay, Reverb", "[FxSettings]")
+{
+    const FxOrder o = defaultFxOrder();
+    CHECK(o == FxOrder { FxInsert::Bitcrush, FxInsert::Filter, FxInsert::Flanger, FxInsert::Delay, FxInsert::Reverb });
+    CHECK(FxSettings {}.order == o);
+}
+
+TEST_CASE("FxSettings: sanitizeFxOrder keeps a valid permutation and replaces duplicates with the default", "[FxSettings]")
+{
+    const FxOrder valid { FxInsert::Reverb, FxInsert::Delay, FxInsert::Flanger, FxInsert::Filter, FxInsert::Bitcrush };
+    CHECK(sanitizeFxOrder(valid) == valid);
+    const FxOrder dup { FxInsert::Filter, FxInsert::Filter, FxInsert::Flanger, FxInsert::Delay, FxInsert::Reverb };
+    CHECK(sanitizeFxOrder(dup) == defaultFxOrder());
+    const FxOrder bad { FxInsert::Bitcrush, FxInsert::Filter, FxInsert::Flanger, FxInsert::Delay, static_cast<FxInsert>(9) };
+    CHECK(sanitizeFxOrder(bad) == defaultFxOrder());
+    const FxOrder neg { FxInsert::Bitcrush, FxInsert::Filter, FxInsert::Flanger, FxInsert::Delay, static_cast<FxInsert>(-1) };
+    CHECK(sanitizeFxOrder(neg) == defaultFxOrder());
+}
+
+TEST_CASE("FxSettings: Delay switch uses bit 4", "[FxSettings]")
+{
+    FxSettings s;
+    s.setSwitch(0, FxInsert::Delay, true);
+    CHECK(s.maskFor(0) == 16);
+    CHECK(s.switchOn(0, FxInsert::Delay));
+}
+
+TEST_CASE("FxSettings: flanger.rate range is 0..5 and default 0.3", "[FxSettings]")
+{
+    const auto& i = fxParamInfo(FxParam::FlangerRate);
+    CHECK(i.min == Approx(0.0));
+    CHECK(i.max == Approx(5.0));
+    CHECK(i.def == Approx(0.3));
+}
+
+TEST_CASE("FxSettings: delay time steps are ascending in length and contain the required values", "[FxSettings]")
+{
+    CHECK(kDelayTimeSteps > 0);
+    std::set<std::string> names;
+    for (int s = 0; s < kDelayTimeSteps; ++s)
+    {
+        names.insert(delayTimeName(s));
+        if (s > 0)
+            CHECK(delayTimeBeats(s, 4.0) > delayTimeBeats(s - 1, 4.0));
+    }
+    for (const char* n : { "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "1/8 dot", "1/8 trip" })
+        CHECK(names.count(n) == 1);
+    auto find = [](const char* n) {
+        for (int s = 0; s < kDelayTimeSteps; ++s)
+            if (std::string(delayTimeName(s)) == n) return s;
+        return -1;
+    };
+    CHECK(delayTimeBeats(find("2 bars"), 4.0) == Approx(8.0));
+    CHECK(delayTimeBeats(find("2 bars"), 6.0) == Approx(12.0));
+    CHECK(delayTimeBeats(find("1 bar"), 3.0) == Approx(3.0));
+    CHECK(delayTimeBeats(find("1/8 trip"), 4.0) == Approx(1.0 / 3.0));
+    CHECK(delayTimeBeats(find("1/8 dot"), 4.0) == Approx(0.75));
+    CHECK(delayTimeBeats(find("1/4"), 6.0) == Approx(1.0));
+    CHECK(delayTimeBeats(find("1/32"), 4.0) == Approx(0.125));
+}
+
+TEST_CASE("FxSettings: new params have their defaults and ranges", "[FxSettings]")
+{
+    FxParams p;
+    CHECK(p.get(FxParam::FlangerManual) == Approx(0.5f));
+    CHECK(p.get(FxParam::DelayFeedback) == Approx(0.4f));
+    CHECK(p.get(FxParam::DelayMix) == Approx(0.3f));
+    CHECK(p.get(FxParam::DelayReverse) == Approx(0.0f));
+    const int def = static_cast<int>(p.get(FxParam::DelayTime));
+    CHECK(std::string(delayTimeName(def)) == "1/8");
+    CHECK(kFxParamCount == 18);
+    CHECK(std::string(fxParamInfo(FxParam::FlangerManual).id) == "flanger.manual");
+    CHECK(std::string(fxParamInfo(FxParam::DelayTime).id) == "delay.time");
+    CHECK(std::string(fxParamInfo(FxParam::DelayFeedback).id) == "delay.feedback");
+    CHECK(std::string(fxParamInfo(FxParam::DelayMix).id) == "delay.mix");
+    CHECK(std::string(fxParamInfo(FxParam::DelayReverse).id) == "delay.reverse");
+    CHECK(fxParamInfo(FxParam::DelayTime).max == kDelayTimeSteps - 1);
+}
+
+TEST_CASE("FxSettings: delay.feedback is clamped to 0.9", "[FxSettings]")
+{
+    FxParams p;
+    p.set(FxParam::DelayFeedback, 5.0);
+    CHECK(p.get(FxParam::DelayFeedback) == Approx(0.9f));
+    p.set(FxParam::DelayReverse, 0.7);
+    CHECK(p.get(FxParam::DelayReverse) == Approx(1.0f));
+}
+
+TEST_CASE("FxSettings: equality compares the order", "[FxSettings]")
+{
+    FxSettings a, b;
+    CHECK(a == b);
+    b.order = { FxInsert::Reverb, FxInsert::Delay, FxInsert::Flanger, FxInsert::Filter, FxInsert::Bitcrush };
+    CHECK_FALSE(a == b);
+}

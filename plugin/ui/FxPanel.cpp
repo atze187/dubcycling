@@ -25,6 +25,7 @@ const char* insertTitle(FxInsert i)
         case FxInsert::Filter: return "FILTER";
         case FxInsert::Flanger: return "FLANGER";
         case FxInsert::Reverb: return "REVERB";
+        case FxInsert::Delay: return "DELAY";
     }
     return "";
 }
@@ -33,7 +34,7 @@ juce::String paramName(FxParam p)
 {
     switch (p)
     {
-        case FxParam::ReverbMix: case FxParam::BitcrushMix: case FxParam::FlangerMix: return "Mix";
+        case FxParam::ReverbMix: case FxParam::BitcrushMix: case FxParam::FlangerMix: case FxParam::DelayMix: return "Mix";
         case FxParam::ReverbSize: return "Size";
         case FxParam::ReverbDamping: return "Damping";
         case FxParam::FilterType: return "Type";
@@ -42,7 +43,10 @@ juce::String paramName(FxParam p)
         case FxParam::BitcrushBits: return "Bits";
         case FxParam::BitcrushRate: case FxParam::FlangerRate: return "Rate";
         case FxParam::FlangerDepth: return "Depth";
-        case FxParam::FlangerFeedback: return "Feedback";
+        case FxParam::FlangerFeedback: case FxParam::DelayFeedback: return "Feedback";
+        case FxParam::FlangerManual: return "Manual";
+        case FxParam::DelayTime: return "Time";
+        case FxParam::DelayReverse: return "Reverse";
     }
     return "";
 }
