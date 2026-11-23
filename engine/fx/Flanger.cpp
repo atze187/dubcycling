@@ -41,7 +41,8 @@ void Flanger::reset()
 
 void Flanger::setParams(const FxParams& p)
 {
-    rateTarget_ = std::clamp(p.get(FxParam::FlangerRate), 0.05f, 5.0f);
+    rateTarget_ = std::clamp(p.get(FxParam::FlangerRate), 0.0f, 5.0f);
+    manualTarget_ = std::clamp(p.get(FxParam::FlangerManual), 0.0f, 1.0f);
     depthTarget_ = std::clamp(p.get(FxParam::FlangerDepth), 0.0f, 1.0f);
     fbTarget_ = std::clamp(p.get(FxParam::FlangerFeedback), -0.9f, 0.9f);
     mixTarget_ = std::clamp(p.get(FxParam::FlangerMix), 0.0f, 1.0f);
@@ -51,6 +52,8 @@ void Flanger::setParams(const FxParams& p)
         depth_ = depthTarget_;
         fb_ = fbTarget_;
         mix_ = mixTarget_;
+        manual_ = manualTarget_;
+        blend_ = rateTarget_ > 0.0f ? 1.0f : 0.0f;
         first_ = false;
     }
 }
@@ -66,6 +69,8 @@ void Flanger::process(float* l, float* r, int n)
         approach(depth_, depthTarget_, smoothCoeff_);
         approach(fb_, fbTarget_, smoothCoeff_);
         approach(mix_, mixTarget_, smoothCoeff_);
+        approach(manual_, manualTarget_, smoothCoeff_);
+        approach(blend_, rateTarget_ > 0.0f ? 1.0f : 0.0f, smoothCoeff_); // 10 ms manual <-> LFO crossfade
         phase_ += rate_ / sampleRate_;
         if (phase_ >= 1.0) phase_ -= 1.0;
         // Level compensation for the feedback resonance: (1 - |fb|)^0.5, from the smoothed feedback
@@ -77,7 +82,8 @@ void Flanger::process(float* l, float* r, int n)
         {
             // Right channel runs a quarter cycle ahead for stereo width.
             const double ph = phase_ + (c == 1 ? 0.25 : 0.0);
-            const float lfo = 0.5f + 0.5f * static_cast<float>(std::sin(kTwoPi * ph));
+            const float sweep = 0.5f + 0.5f * static_cast<float>(std::sin(kTwoPi * ph));
+            const float lfo = blend_ >= 1.0f ? sweep : manual_ + blend_ * (sweep - manual_);
             const float delay = (kMinDelayMs + depth_ * kDepthMs * lfo) * 0.001f * sr;
             float rp = static_cast<float>(write_) - delay;
             if (rp < 0.0f) rp += static_cast<float>(size_);
