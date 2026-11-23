@@ -156,6 +156,32 @@ TEST_CASE("Delay: with reverse plays the echo block backwards", "[Delay]")
     CHECK(l == r);
 }
 
+TEST_CASE("Delay: with reverse and feedback every repeat plays reversed", "[Delay]")
+{
+    const int D = 24000; // 1/4 at 120 BPM
+    const float mix = 0.6f;
+    Delay d;
+    d.prepare(kSr);
+    d.setParams(delayParams(kStepQuarter, 0.5, mix, true));
+    std::vector<float> l(static_cast<size_t>(4 * D), 0.0f);
+    for (int i = 0; i < D; ++i) l[static_cast<size_t>(i)] = static_cast<float>(i + 1) / D; // ramp over one block
+    const auto in = l;
+    auto r = l;
+    run(d, l, r);
+
+    // Repeat k (k = 1, 2, 3) sounds in [k D, (k + 1) D), reversed, at mix * 0.5^(k - 1).
+    const int xf = static_cast<int>(0.020 * kSr);
+    for (int k = 1; k <= 3; ++k)
+    {
+        const float scale = mix * std::pow(0.5f, static_cast<float>(k - 1));
+        double err = 0;
+        for (int j = xf; j < D; ++j)
+            err = std::max(err, double(std::abs(l[static_cast<size_t>(k * D + j)] - scale * in[static_cast<size_t>(D - 1 - j)])));
+        INFO("repeat " << k);
+        CHECK(err < 1e-5);
+    }
+}
+
 TEST_CASE("Delay: reverse echo arrives one delay time after the input block", "[Delay]")
 {
     const int D = 24000;
