@@ -10,6 +10,7 @@ add_library(dc_engine STATIC
     FxSettings.h FxSettings.cpp
     fx/Bitcrush.h fx/Bitcrush.cpp fx/Filter.h fx/Filter.cpp
     fx/Flanger.h fx/Flanger.cpp fx/Reverb.h fx/Reverb.cpp
+    fx/Delay.h fx/Delay.cpp
     fx/FxChain.h fx/FxChain.cpp
     MidiTrigger.h MidiTrigger.cpp
     Pass.h Pass.cpp
