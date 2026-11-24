@@ -21,6 +21,7 @@ DubcyclingProcessor::~DubcyclingProcessor() {
 
 void DubcyclingProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     engine_.prepare(sampleRate, samplesPerBlock);
+    loadMeasurer_.reset(sampleRate, samplesPerBlock);
     trigger_.prepare(sampleRate); // clears held notes and any armed start/stop
 }
 
@@ -549,6 +550,7 @@ void DubcyclingProcessor::processBlockBypassed(juce::AudioBuffer<float>& buffer,
 
 void DubcyclingProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     juce::ScopedNoDenormals noDenormals;
+    juce::AudioProcessLoadMeasurer::ScopedTimer loadTimer(loadMeasurer_, buffer.getNumSamples());
     const int n = buffer.getNumSamples();
     if (buffer.getNumChannels() < 2) {
         buffer.clear();

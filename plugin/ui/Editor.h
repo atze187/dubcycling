@@ -5,6 +5,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/DubcyclingProcessor.h"
+#include "plugin/ui/CpuMeter.h"
 #include "plugin/ui/LoopLane.h"
 #include "plugin/presets/BankStore.h"
 #include "plugin/ui/FxPanel.h"
@@ -99,6 +100,8 @@ public:
     // Selected region of Loop 1 (for the rule panel).
     int selectedRegion1() const { return lanes_[0].selectedRegion(); }
     juce::String cycleText() const { return cycle_.getText(); }
+    juce::String cpuMeterText() const { return cpu_.getText(); }
+    bool cpuMeterVisible() const { return cpu_.isVisible(); }
     juce::String statusText(int slot) const { return status_[slot == 0 ? 0 : 1].getText(); }
     const LoopLane& lane(int slot) const { return lanes_[slot == 0 ? 0 : 1]; }
     LoopLane& lane(int slot) { return lanes_[slot == 0 ? 0 : 1]; }
@@ -185,6 +188,7 @@ private:
     juce::Label bpmCaption_;
     juce::Label bpm_;
     juce::Label cycle_;
+    CpuMeter cpu_;
     juce::TextButton mode_; // "Autoplay" / "MIDI": DubcyclingProcessor::setTriggerMode
     juce::Rectangle<int> stripBounds_[2];
     juce::Rectangle<float> ledBounds_[2];

@@ -1606,3 +1606,16 @@ TEST_CASE("Editor: snapshot of the pad bar with filled, playing, queued and arme
     passes.learnButton().onClick();
     f.proc.setPlayHead(nullptr);
 }
+
+TEST_CASE("editor shows the cpu meter in the top row and keeps it clear of the preset bar", "[editor]")
+{
+    EditorFixture f;
+    f.editor->setSize(1400, 900);
+    CHECK(f.editor->cpuMeterVisible());
+    CHECK(f.editor->cpuMeterText() == "CPU 0 %");
+    CHECK(f.proc.cpuLoad() >= 0.0);
+
+    f.editor->setSize(800, 600);
+    if (f.editor->cpuMeterVisible())
+        CHECK(f.editor->presetBar().getWidth() >= dc::ui::PresetBar::kPreferredWidth);
+}

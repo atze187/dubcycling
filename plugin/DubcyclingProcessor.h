@@ -89,6 +89,8 @@ public:
     // Saved with the project (getStateInformation), NOT with presets or banks.
     void setTriggerMode(TriggerMode m) { triggerMode_.store(m, std::memory_order_relaxed); }
     TriggerMode triggerMode() const { return triggerMode_.load(std::memory_order_relaxed); }
+    // Share of the real-time budget of one block that processBlock uses (smoothed, 1 = 100 %). Any thread.
+    double cpuLoad() const { return loadMeasurer_.getLoadAsProportion(); }
     double hostBpm() const { return hostBpm_.load(std::memory_order_relaxed); }
     // Numerator of the last time signature the host reported in processBlock (1..64); 4 before. Any thread.
     int hostBeatsPerBar() const { return hostBeatsPerBar_.load(std::memory_order_relaxed); }
@@ -171,6 +173,7 @@ private:
     mutable juce::CriticalSection stateLock_; // guards state_, slots_ and model_
     LoopLoader loader_;
     std::atomic<double> hostBpm_ { 0.0 };
+    juce::AudioProcessLoadMeasurer loadMeasurer_;
     std::atomic<int> hostBeatsPerBar_ { 4 };
     std::atomic<TriggerMode> triggerMode_ { TriggerMode::Autoplay };
     MidiTrigger trigger_; // audio thread only
