@@ -33,7 +33,7 @@ Binaries for Windows, macOS and Linux are on the [releases page](https://github.
 - Effect parameters are not exposed for host automation, Flanger rate has no tempo sync, and a performance view is not
   implemented.
 - Older plugin versions drop what they do not know (effects, mix, pass slots, REV) when they re-save a newer project,
-  and refuse banks saved with a newer bank format (currently `bank.json` version 5).
+  and refuse banks saved with a newer bank format (currently `bank.json` version 6).
 
 ## Build
 

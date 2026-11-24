@@ -1,6 +1,6 @@
 # Effects section redesign — design
 
-Date: 2026-11-23. Status: draft (awaiting approval).
+Date: 2026-11-23. Status: implemented.
 
 ## Intent
 
