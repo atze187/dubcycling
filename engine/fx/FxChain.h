@@ -30,7 +30,10 @@ public:
     // Sanitized; idle chain: applied at once; otherwise applied after a flush fade (see above).
     void setOrder(const FxOrder& order);
     const FxOrder& order() const { return order_; } // the order in effect
-    void setTempo(double bpm, double beatsPerBar);  // for the Delay
+    void setTempo(double bpm, double beatsPerBar);  // for the Delay and the Filter LFO
+    // Host position in beats of the first frame of the next process() call, for the Filter LFO. The Filter
+    // counts on from there by itself (also while it is skipped), so one call per process() slice is enough.
+    void setPosition(double ppq);
     void flush();
     void process(float* l, float* r, int n);
     bool isActive(FxInsert i) const;

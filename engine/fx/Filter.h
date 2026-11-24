@@ -21,6 +21,9 @@ public:
     // Host position in beats (quarter notes) of the next sample to render; non-finite is ignored. Without calls the
     // position advances by itself at the last tempo.
     void setPosition(double ppq);
+    // Moves the beat position on by n samples at the current tempo without rendering (the chain skips a
+    // sleeping Filter, its LFO clock still runs).
+    void advance(int n);
     void process(float* l, float* r, int n);
 
 private:

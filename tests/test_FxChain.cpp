@@ -805,3 +805,80 @@ TEST_CASE("FxChain: tempo change reaches the delay", "[FxChain][delay]")
     CHECK(peakAbs(l, 22000 - 2, 22000 + 3) > 0.5);
     CHECK(peakAbs(l, 33000, 35000) < 1e-6);
 }
+
+namespace chaintest {
+// 2880000 / 32768 BPM at 48 kHz: exactly 2^-15 beats per sample, so beat positions add up without
+// rounding and renders from positions a whole cycle apart are bit-identical. 1 beat = 32768 samples.
+constexpr double kExactBpm = 87.890625;
+constexpr int kBeat = 32768;
+
+FxParams lfoParams()
+{
+    FxParams p;
+    p.set(FxParam::FilterType, 0.0);
+    p.set(FxParam::FilterCutoff, 1000.0);
+    p.set(FxParam::FilterResonance, 0.0);
+    p.set(FxParam::FilterLfoRate, 8.0); // 1/4: one cycle per beat
+    p.set(FxParam::FilterLfoShape, 3.0); // Square: +1 for the first half of the cycle
+    p.set(FxParam::FilterLfoDepth, 1.0);
+    return p;
+}
+
+// Filter-only chain at the given tempo and start position, `frames` of noise in blocks of 512.
+std::vector<float> renderLfo(double bpm, double ppq, int frames)
+{
+    FxChain c;
+    openChain(c, kSr, 512, bit(FxInsert::Filter), lfoParams());
+    c.setTempo(bpm, 4.0);
+    c.setPosition(ppq);
+    auto l = noise(frames, 5), r = noise(frames, 6);
+    // One position per slice, as the Engine does: the Filter counts on from there by itself.
+    run(c, l, r, 0, l.size(), 512);
+    return l;
+}
+} // namespace chaintest
+
+TEST_CASE("FxChain: the Filter LFO follows setPosition and setTempo", "[FxChain][lfo]")
+{
+    const int frames = 2 * kBeat;
+    const auto a = renderLfo(kExactBpm, 0.0, frames);
+    const auto b = renderLfo(kExactBpm, 4.0, frames);  // four cycles later: same phase
+    const auto c = renderLfo(kExactBpm, 0.5, frames);  // half a cycle later: inverted square
+    CHECK(maxDev(a, b, 0, a.size()) == 0.0);
+    CHECK(maxDev(a, c, 0, a.size()) > 0.1);
+    // Double tempo: the first quarter beat is high in both, the second quarter is low only at the
+    // double tempo (its cycle is over after half a beat of the base tempo).
+    const auto d = renderLfo(2.0 * kExactBpm, 0.0, frames);
+    CHECK(maxDev(a, d, kBeat / 4, kBeat / 2) > 0.1);
+}
+
+TEST_CASE("FxChain: a Filter that wakes up inside a slice is on the beat position of that frame", "[FxChain][lfo]")
+{
+    // The Engine sets the position once per slice and may open the Filter at a frame inside it.
+    // 20000 samples = 0.61 cycle: a Filter that did not count while asleep would start high, not low.
+    const int asleep = 20000, frames = kBeat;
+    FxChain a;
+    openChain(a, kSr, 512, 0, lfoParams());
+    a.setTempo(kExactBpm, 4.0);
+    a.setPosition(0.0);
+    auto al = noise(asleep + frames, 5), ar = noise(asleep + frames, 6);
+    a.process(al.data(), ar.data(), asleep);
+    a.setMask(bit(FxInsert::Filter));
+    a.process(al.data() + asleep, ar.data() + asleep, frames);
+
+    FxChain b;
+    openChain(b, kSr, 512, 0, lfoParams());
+    b.setTempo(kExactBpm, 4.0);
+    b.setPosition(asleep / static_cast<double>(kBeat));
+    b.setMask(bit(FxInsert::Filter));
+    std::vector<float> bl(al.size()), br(ar.size());
+    auto nl = noise(asleep + frames, 5), nr = noise(asleep + frames, 6);
+    std::copy(nl.begin() + asleep, nl.end(), bl.begin());
+    std::copy(nr.begin() + asleep, nr.end(), br.begin());
+    b.process(bl.data(), br.data(), frames);
+
+    double dev = 0.0;
+    for (int i = 0; i < frames; ++i)
+        dev = std::max(dev, double(std::abs(al[static_cast<size_t>(asleep + i)] - bl[static_cast<size_t>(i)])));
+    CHECK(dev == 0.0);
+}

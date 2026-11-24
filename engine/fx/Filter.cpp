@@ -35,6 +35,11 @@ void Filter::setPosition(double ppq)
     if (std::isfinite(ppq)) beatPos_ = ppq;
 }
 
+void Filter::advance(int n)
+{
+    if (n > 0) beatPos_ += n * (bpm_ / (60.0 * sampleRate_));
+}
+
 void Filter::reset()
 {
     // beatPos_ is the musical clock, not filter state: it survives a reset.
