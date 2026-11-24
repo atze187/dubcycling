@@ -16,6 +16,9 @@ constexpr int kRowH = 34;     // one knob: name/value line and slider (or button
 constexpr int kMargin = 4;
 constexpr int kColGap = 8;    // between the two knob columns
 constexpr int kReverseW = 56;
+constexpr int kChoiceRowH = 16; // one row of mode / shape buttons
+constexpr int kChoiceGap = 1;   // between the two rows
+constexpr int kChoiceH = 14 + 2 * kChoiceRowH + kChoiceGap; // name line and two button rows
 
 juce::String utf8(const char* s) { return juce::String(juce::CharPointer_UTF8(s)); }
 
@@ -36,19 +39,33 @@ juce::String paramName(FxParam p)
         case FxParam::FlangerManual: return "Manual";
         case FxParam::DelayTime: return "Time";
         case FxParam::DelayReverse: return "Reverse";
+        case FxParam::FilterLfoRate: return "Rate";
+        case FxParam::FilterLfoDepth: return "Depth";
+        case FxParam::FilterLfoShape: return "Shape";
     }
     return "";
 }
+
+// Button knobs with one button per step: Filter Type (two rows of three) and LFO Shape (two of two).
+constexpr int kFilterTypes = 6;
+constexpr int kLfoShapes = 4;
+const char* const kTypeNames[kFilterTypes] = { "LP", "HP", "BP", "NOTCH", "PEAK", "LP24" };
+const char* const kTypeTips[kFilterTypes] = { "Low-pass, 12 dB/oct", "High-pass", "Band-pass", "Notch",
+                                              "Peak: boost around the cutoff", "Low-pass, 24 dB/oct" };
+const char* const kShapeNames[kLfoShapes] = { "SINE", "TRI", "SAW", "SQR" };
+const char* const kShapeTips[kLfoShapes] = { "Sine", "Triangle", "Saw down", "Square" };
+
+bool isChoice(FxParam p) { return p == FxParam::FilterType || p == FxParam::FilterLfoShape; }
+
+int choiceCount(FxParam p) { return p == FxParam::FilterType ? kFilterTypes : kLfoShapes; }
 
 juce::String valueText(FxParam p, double v)
 {
     switch (p)
     {
-        case FxParam::FilterType:
-        {
-            static const char* const names[] = { "LP", "HP", "BP" };
-            return names[juce::jlimit(0, 2, juce::roundToInt(v))];
-        }
+        case FxParam::FilterType: return kTypeNames[juce::jlimit(0, kFilterTypes - 1, juce::roundToInt(v))];
+        case FxParam::FilterLfoShape: return kShapeTips[juce::jlimit(0, kLfoShapes - 1, juce::roundToInt(v))];
+        case FxParam::FilterLfoRate: return delayTimeName(juce::roundToInt(v));
         case FxParam::FilterCutoff:
             return v >= 1000.0 ? juce::String(v / 1000.0, 1) + " kHz" : juce::String(juce::roundToInt(v)) + " Hz";
         case FxParam::BitcrushBits: return juce::String(juce::roundToInt(v));
@@ -72,15 +89,16 @@ double sliderInterval(FxParam p)
     return p == FxParam::FilterCutoff ? 0.0 : 0.01;
 }
 
-bool isButtons(FxParam p) { return p == FxParam::FilterType || p == FxParam::DelayReverse; }
-
-// Knobs of an insert in the order of the edit view (Mix last where there is one).
+// Knobs of an insert in the order of the edit view (Mix last where there is one). The Filter's
+// first three go into the left column, the LFO's three into the right one.
 std::vector<FxParam> editParams(FxInsert i)
 {
     switch (i)
     {
         case FxInsert::Bitcrush: return { FxParam::BitcrushBits, FxParam::BitcrushRate, FxParam::BitcrushMix };
-        case FxInsert::Filter: return { FxParam::FilterType, FxParam::FilterCutoff, FxParam::FilterResonance };
+        case FxInsert::Filter:
+            return { FxParam::FilterType, FxParam::FilterCutoff, FxParam::FilterResonance,
+                     FxParam::FilterLfoRate, FxParam::FilterLfoDepth, FxParam::FilterLfoShape };
         case FxInsert::Flanger:
             return { FxParam::FlangerRate, FxParam::FlangerDepth, FxParam::FlangerFeedback, FxParam::FlangerManual,
                      FxParam::FlangerMix };
@@ -96,19 +114,19 @@ struct FxPanel::Knob final
 {
     FxParam p {};
     juce::Label name, value;
-    juce::Slider slider;                         // not for FilterType / DelayReverse
-    std::array<juce::TextButton, 3> typeButtons; // FilterType only
-    juce::TextButton toggle;                     // DelayReverse only
+    juce::Slider slider;                                   // not for the choice knobs / DelayReverse
+    std::array<juce::TextButton, kFilterTypes> choices;    // FilterType (6), FilterLfoShape (first 4)
+    juce::TextButton toggle;                               // DelayReverse only
     bool updating = false;
     bool dimmed = false;
 
     void setVisible(bool v)
     {
         name.setVisible(v);
-        if (p == FxParam::FilterType)
+        if (isChoice(p))
         {
-            for (auto& b : typeButtons)
-                b.setVisible(v);
+            for (int b = 0; b < choiceCount(p); ++b)
+                choices[static_cast<std::size_t>(b)].setVisible(v);
         }
         else if (p == FxParam::DelayReverse)
         {
@@ -127,7 +145,7 @@ struct FxPanel::Knob final
         value.setBounds({});
         slider.setBounds({});
         toggle.setBounds({});
-        for (auto& b : typeButtons)
+        for (auto& b : choices)
             b.setBounds({});
     }
 };
@@ -153,6 +171,14 @@ FxPanel::FxPanel()
     editTitle_.setBorderSize(juce::BorderSize<int>(0, 8, 0, 0));
     editTitle_.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(editTitle_);
+
+    lfoTitle_.setText("LFO", juce::dontSendNotification);
+    lfoTitle_.setFont(mono(10.0f, true));
+    lfoTitle_.setColour(juce::Label::textColourId, fxInsertColour(FxInsert::Filter));
+    lfoTitle_.setBorderSize(juce::BorderSize<int>(0));
+    lfoTitle_.setJustificationType(juce::Justification::centredLeft);
+    lfoTitle_.setTooltip("Tempo-synced LFO on the cutoff");
+    addChildComponent(lfoTitle_);
 
     list_.onSelected = [this](FxInsert i) { selectInsert(i); };
     list_.onSwitched = [this](FxInsert i, bool on) {
@@ -183,16 +209,18 @@ FxPanel::FxPanel()
         k->name.setBorderSize(juce::BorderSize<int>(0));
         addAndMakeVisible(k->name);
 
-        if (p == FxParam::FilterType)
+        if (isChoice(p))
         {
-            for (int b = 0; b < 3; ++b)
+            const bool type = p == FxParam::FilterType;
+            for (int b = 0; b < choiceCount(p); ++b)
             {
-                auto& btn = k->typeButtons[static_cast<std::size_t>(b)];
-                btn.setButtonText(valueText(p, b));
+                auto& btn = k->choices[static_cast<std::size_t>(b)];
+                btn.setButtonText(type ? kTypeNames[b] : kShapeNames[b]);
+                btn.setTooltip(type ? kTypeTips[b] : juce::String("LFO shape: ") + kShapeTips[b]);
                 btn.setClickingTogglesState(false);
                 btn.setColour(juce::TextButton::buttonOnColourId, colour.darker(0.5f));
                 btn.setColour(juce::TextButton::textColourOnId, kText);
-                btn.onClick = [this, b] { setParam(FxParam::FilterType, b); };
+                btn.onClick = [this, p, b] { setParam(p, b); };
                 addAndMakeVisible(btn);
             }
         }
@@ -254,15 +282,26 @@ FxPanel::~FxPanel() = default;
 
 juce::Button& FxPanel::reverseButton() { return knob(FxParam::DelayReverse).toggle; }
 
+juce::Button& FxPanel::modeButton(int i)
+{
+    return knob(FxParam::FilterType).choices[static_cast<std::size_t>(juce::jlimit(0, kFilterTypes - 1, i))];
+}
+
+juce::Button& FxPanel::shapeButton(int i)
+{
+    return knob(FxParam::FilterLfoShape).choices[static_cast<std::size_t>(juce::jlimit(0, kLfoShapes - 1, i))];
+}
+
+juce::Slider& FxPanel::slider(FxParam p) { return knob(p).slider; }
+
 void FxPanel::show(FxParam p)
 {
     auto& k = knob(p);
     const double v = param(p);
-    if (p == FxParam::FilterType)
+    if (isChoice(p))
     {
-        for (int b = 0; b < 3; ++b)
-            k.typeButtons[static_cast<std::size_t>(b)].setToggleState(juce::roundToInt(v) == b,
-                                                                       juce::dontSendNotification);
+        for (int b = 0; b < choiceCount(p); ++b)
+            k.choices[static_cast<std::size_t>(b)].setToggleState(juce::roundToInt(v) == b, juce::dontSendNotification);
         return;
     }
     if (p == FxParam::DelayReverse)
@@ -377,6 +416,7 @@ void FxPanel::updateVisibility()
         auto& k = *knobs_[static_cast<std::size_t>(i)];
         k.setVisible(fxParamInfo(k.p).insert == selected_);
     }
+    lfoTitle_.setVisible(selected_ == FxInsert::Filter);
     editTitle_.setText(fxInsertName(selected_), juce::dontSendNotification);
     editTitle_.setColour(juce::Label::textColourId, fxInsertColour(selected_));
     resized();
@@ -421,8 +461,13 @@ juce::Rectangle<int> FxPanel::paramBounds(FxParam p) const
     const auto& k = knob(p);
     if (!k.name.isVisible())
         return {};
-    if (p == FxParam::FilterType)
-        return k.name.getBounds().getUnion(k.typeButtons[0].getBounds()).getUnion(k.typeButtons[2].getBounds());
+    if (isChoice(p))
+    {
+        auto r = k.name.getBounds();
+        for (int b = 0; b < choiceCount(p); ++b)
+            r = r.getUnion(k.choices[static_cast<std::size_t>(b)].getBounds());
+        return r;
+    }
     if (p == FxParam::DelayReverse)
         return k.name.getBounds().getUnion(k.toggle.getBounds());
     return k.name.getBounds().getUnion(k.value.getBounds()).getUnion(k.slider.getBounds());
@@ -442,6 +487,13 @@ void FxPanel::paint(juce::Graphics& g)
     g.fillRect(t.getX(), t.getY() + 3, 3, t.getHeight() - 6);
     g.setColour(kEdge);
     g.drawHorizontalLine(t.getBottom() + 1, static_cast<float>(t.getX()), static_cast<float>(t.getRight()));
+    // The LFO caption runs out in a thin line over its column.
+    if (lfoTitle_.isVisible() && !lfoTitle_.getBounds().isEmpty())
+    {
+        const auto c = lfoTitle_.getBounds();
+        const int textW = juce::GlyphArrangement::getStringWidthInt(lfoTitle_.getFont(), lfoTitle_.getText());
+        g.drawHorizontalLine(c.getCentreY(), static_cast<float>(c.getX() + textW + 6), static_cast<float>(c.getRight()));
+    }
 }
 
 void FxPanel::resized()
@@ -460,6 +512,13 @@ void FxPanel::resized()
     for (auto& k : knobs_)
         k->clearBounds();
 
+    lfoTitle_.setBounds({});
+    if (selected_ == FxInsert::Filter)
+    {
+        layoutFilter(area);
+        return;
+    }
+
     // One column while the knobs fit under each other, else two (Flanger at the minimum height).
     const auto params = editParams(selected_);
     const int n = static_cast<int>(params.size());
@@ -469,33 +528,65 @@ void FxPanel::resized()
     const int colW = (area.getWidth() - (cols - 1) * kColGap) / cols;
     for (int idx = 0; idx < n; ++idx)
     {
-        const auto p = params[static_cast<std::size_t>(idx)];
-        auto& k = knob(p);
         const int c = idx / rows, r = idx % rows;
-        auto row = juce::Rectangle<int>(area.getX() + c * (colW + kColGap), area.getY() + r * kRowH, colW, kRowH - 2);
-        auto line = row.removeFromTop(14);
-        if (p == FxParam::FilterType)
-        {
-            k.name.setBounds(line);
-            auto bt = row.removeFromTop(18);
-            const int bw = bt.getWidth() / 3;
-            for (auto& btn : k.typeButtons)
-                btn.setBounds(bt.removeFromLeft(bw).reduced(1, 0));
-            continue;
-        }
-        if (p == FxParam::DelayReverse)
-        {
-            k.name.setBounds(line);
-            k.toggle.setBounds(row.removeFromTop(18).removeFromLeft(std::min(kReverseW, row.getWidth())));
-            continue;
-        }
-        // The name gets the width of its text, the value the rest, right-aligned.
-        const int nameW = std::min(line.getWidth(),
-                                   juce::GlyphArrangement::getStringWidthInt(k.name.getFont(), k.name.getText()) + 3);
-        k.name.setBounds(line.removeFromLeft(nameW));
-        k.value.setBounds(line);
-        k.slider.setBounds(row.removeFromTop(14));
+        layoutKnob(params[static_cast<std::size_t>(idx)],
+                   { area.getX() + c * (colW + kColGap), area.getY() + r * kRowH, colW, kRowH - 2 });
     }
+}
+
+// Two columns: on the left the mode (two rows of buttons), Cutoff and Resonance; on the right, under
+// the "LFO" caption, Rate, Depth and the shape (two rows of buttons). The left column is a little wider
+// for "NOTCH"; Depth lines up with Cutoff, Shape with Resonance.
+void FxPanel::layoutFilter(juce::Rectangle<int> area)
+{
+    const int leftW = (area.getWidth() - kColGap) * 11 / 20;
+    auto left = area.withWidth(leftW);
+    auto right = area.withTrimmedLeft(leftW + kColGap);
+    const int blockH = kChoiceH + 3; // the mode block, and the caption plus Rate beside it
+
+    layoutKnob(FxParam::FilterType, left.withHeight(kChoiceH));
+    layoutKnob(FxParam::FilterCutoff, { left.getX(), left.getY() + blockH, leftW, kRowH - 2 });
+    layoutKnob(FxParam::FilterResonance, { left.getX(), left.getY() + blockH + kRowH, leftW, kRowH - 2 });
+
+    lfoTitle_.setBounds(right.withHeight(14));
+    layoutKnob(FxParam::FilterLfoRate, { right.getX(), right.getY() + blockH - kRowH, right.getWidth(), kRowH - 2 });
+    layoutKnob(FxParam::FilterLfoDepth, { right.getX(), right.getY() + blockH, right.getWidth(), kRowH - 2 });
+    layoutKnob(FxParam::FilterLfoShape,
+               { right.getX(), right.getY() + blockH + kRowH, right.getWidth(), kChoiceH });
+}
+
+// One knob in `row`: the name line (14 px) and below it the slider, the toggle or the button rows.
+void FxPanel::layoutKnob(FxParam p, juce::Rectangle<int> row)
+{
+    auto& k = knob(p);
+    auto line = row.removeFromTop(14);
+    if (isChoice(p))
+    {
+        k.name.setBounds(line);
+        const int n = choiceCount(p);
+        const int perRow = (n + 1) / 2;
+        for (int r = 0; r < 2; ++r)
+        {
+            row.removeFromTop(r == 0 ? 0 : kChoiceGap);
+            auto bt = row.removeFromTop(kChoiceRowH);
+            const int bw = bt.getWidth() / perRow;
+            for (int c = 0; c < perRow && r * perRow + c < n; ++c)
+                k.choices[static_cast<std::size_t>(r * perRow + c)].setBounds(bt.removeFromLeft(bw).reduced(1, 0));
+        }
+        return;
+    }
+    if (p == FxParam::DelayReverse)
+    {
+        k.name.setBounds(line);
+        k.toggle.setBounds(row.removeFromTop(18).removeFromLeft(std::min(kReverseW, row.getWidth())));
+        return;
+    }
+    // The name gets the width of its text, the value the rest, right-aligned.
+    const int nameW = std::min(line.getWidth(),
+                               juce::GlyphArrangement::getStringWidthInt(k.name.getFont(), k.name.getText()) + 3);
+    k.name.setBounds(line.removeFromLeft(nameW));
+    k.value.setBounds(line);
+    k.slider.setBounds(row.removeFromTop(14));
 }
 
 } // namespace dc::ui
