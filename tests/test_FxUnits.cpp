@@ -1025,3 +1025,88 @@ TEST_CASE("Bitcrush: a small DC input stays bounded", "[FxUnits]")
         }
     }
 }
+
+// ---- Flanger standing mode (rate 0 -> fixed position from Manual) ----
+
+namespace {
+FxParams flangerParamsManual(double rate, double manual)
+{
+    auto p = fxtest::flangerParams(rate, 1.0, 0.0, 1.0);
+    p.set(FxParam::FlangerManual, manual);
+    return p;
+}
+}
+
+TEST_CASE("Flanger: at rate 0 it is stationary, independent of the LFO phase", "[FxUnits]")
+{
+    Flanger a;
+    a.prepare(kSr);
+    a.setParams(flangerParamsManual(0.0, 0.5));
+    Flanger b;
+    b.prepare(kSr);
+    b.setParams(flangerParamsManual(1.0, 0.5));
+    std::vector<float> s1(17800, 0.0f), s2(17800, 0.0f);
+    b.process(s1.data(), s2.data(), 17800); // advance the LFO phase by an odd amount
+    b.setParams(flangerParamsManual(0.0, 0.5));
+    std::vector<float> s3(48000, 0.0f), s4(48000, 0.0f);
+    b.process(s3.data(), s4.data(), 48000); // let the rate settle at 0
+    b.reset();
+
+    auto la = noise(4800, 7), ra = noise(4800, 8);
+    auto lb = la, rb = ra;
+    a.process(la.data(), ra.data(), 4800);
+    b.process(lb.data(), rb.data(), 4800);
+    for (size_t i = 0; i < la.size(); ++i)
+    {
+        REQUIRE(std::abs(la[i] - lb[i]) < 1e-6f);
+        REQUIRE(std::abs(ra[i] - rb[i]) < 1e-6f);
+    }
+}
+
+TEST_CASE("Flanger: Manual 0 and 1 give different wet output at rate 0", "[FxUnits]")
+{
+    auto render = [](double manual) {
+        Flanger f;
+        f.prepare(kSr);
+        f.setParams(flangerParamsManual(0.0, manual));
+        auto l = noise(4800, 21), r = noise(4800, 22);
+        f.process(l.data(), r.data(), 4800);
+        return l;
+    };
+    const auto m0 = render(0.0), m1 = render(1.0);
+    double diff = 0;
+    for (size_t i = 0; i < m0.size(); ++i) diff += std::abs(m0[i] - m1[i]);
+    CHECK(diff > 10.0);
+}
+
+TEST_CASE("Flanger: with rate > 0 Manual is ignored", "[FxUnits]")
+{
+    Flanger a, b;
+    a.prepare(kSr);
+    b.prepare(kSr);
+    a.setParams(flangerParamsManual(0.5, 0.0));
+    b.setParams(flangerParamsManual(0.5, 1.0));
+    auto la = noise(9600, 5), ra = noise(9600, 6);
+    auto lb = la, rb = ra;
+    a.process(la.data(), ra.data(), 9600);
+    b.process(lb.data(), rb.data(), 9600);
+    CHECK(la == lb);
+    CHECK(ra == rb);
+}
+
+TEST_CASE("Flanger: rate 0 to 0.3 and back does not jump", "[FxUnits]")
+{
+    Flanger f;
+    f.prepare(kSr);
+    f.setParams(flangerParamsManual(0.0, 0.0));
+    auto l = sine(72000, 200.0, 0.5f), r = l;
+    for (int pos = 0; pos < 72000; pos += 128)
+    {
+        if (pos == 12032) f.setParams(flangerParamsManual(0.3, 0.0));
+        if (pos == 36096) f.setParams(flangerParamsManual(0.0, 0.0));
+        f.process(l.data() + pos, r.data() + pos, std::min(128, 72000 - pos));
+    }
+    double step = 0;
+    for (size_t i = 1; i < l.size(); ++i) step = std::max(step, double(std::abs(l[i] - l[i - 1])));
+    CHECK(step < 0.05); // the 200 Hz sine itself moves by up to 0.013 per sample
+}

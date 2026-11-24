@@ -160,6 +160,7 @@ private:
     // One insert switch of a Loop-2 region (strip click or panel switch), then applyEdit.
     void switchEdited(int region2, FxInsert insert, bool on);
     void paramsEdited(const FxParams& params);
+    void orderEdited(const FxOrder& order);
     void barsEdited(int slot);
     // confirmedState: serialized state (without passes) the user confirmed a replace for, or nullptr
     // (not asked yet). Pass slots may change meanwhile (MIDI Save, slot clear) without cancelling it.

@@ -759,7 +759,11 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
         gain1_ = 1.0f; // Loop 1 is silent here and restarts at full level
         mixPreview(l, r, bl, br, n);
         if (m != nullptr)
+        {
             chain_.setParams(m->fx.params);
+            chain_.setOrder(m->fx.order);
+        }
+        chain_.setTempo(lastBpm_, lastBeatsPerBar_); // the last known tempo, so tails keep their time
         finishSlice(l, r, n, useBus);
         publishPlayhead(-1.0f, -1.0f, -1);
         replaySlotOut_.store(replaySlot_, std::memory_order_relaxed);
@@ -987,6 +991,8 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
     expectedPpq_ = t.ppq + n * ppqStep;
     mixPreview(l, r, bl, br, n);
     chain_.setParams(m->fx.params);
+    chain_.setOrder(m->fx.order);
+    chain_.setTempo(lastBpm_, lastBeatsPerBar_);
     finishSlice(l, r, n, useBus);
 
     int teaser = kNoTeaser;

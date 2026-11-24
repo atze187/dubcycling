@@ -320,16 +320,16 @@ TEST_CASE("BankStore: a damaged or too-new bank.json is not overwritten")
         CHECK(f.bankJson("B").loadFileAsString() == text);
         CHECK(f.store.loadPreset("B", "P").result.error == Error::BankTooNew);
     }
-    SECTION("version 6 is too new, version 2 is saved as version 5")
+    SECTION("version 7 is too new, version 2 is saved as version 6")
     {
-        const juce::String text = "{\"version\": 6, \"presets\": []}";
+        const juce::String text = "{\"version\": 7, \"presets\": []}";
         REQUIRE(f.bankJson("B").replaceWithText(text));
         CHECK(f.store.savePreset("B", "P", StoreFixture::state(a, b), false).error == Error::BankTooNew);
         CHECK(f.bankJson("B").loadFileAsString() == text);
 
         REQUIRE(f.bankJson("B").replaceWithText("{\"version\": 2, \"presets\": []}"));
         CHECK(f.store.savePreset("B", "P", StoreFixture::state(a, b), false).ok());
-        CHECK(static_cast<int>(juce::JSON::parse(f.bankJson("B").loadFileAsString())["version"]) == 5);
+        CHECK(static_cast<int>(juce::JSON::parse(f.bankJson("B").loadFileAsString())["version"]) == 6);
     }
     SECTION("missing bank")
     {
@@ -656,4 +656,21 @@ TEST_CASE("BankStore: a saved preset keeps the effect settings and the pass slot
     REQUIRE(again.result.ok());
     CHECK(again.state.fx == s2.fx);
     CHECK(again.state.passes == s2.passes);
+}
+
+TEST_CASE("BankStore: a saved preset keeps the fx order", "[order]")
+{
+    StoreFixture f;
+    REQUIRE(f.store.createBank("B").ok());
+    const auto a = f.wav("a.wav", 0.01f);
+    const auto b = f.wav("b.wav", 0.02f);
+    auto s = stateWithFxAndPasses(a, b);
+    s.fx.order = FxOrder { FxInsert::Delay, FxInsert::Reverb, FxInsert::Bitcrush, FxInsert::Filter, FxInsert::Flanger };
+    s.fx.params.set(FxParam::DelayMix, 0.5);
+    REQUIRE(f.store.savePreset("B", "P", s, false).ok());
+    const auto loaded = f.store.loadPreset("B", "P");
+    REQUIRE(loaded.result.ok());
+    CHECK(loaded.state.fx.order == s.fx.order);
+    CHECK(loaded.state.fx == s.fx);
+    CHECK(loaded.state.fx.order != defaultFxOrder());
 }

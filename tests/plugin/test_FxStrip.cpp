@@ -32,7 +32,7 @@ struct StripFixture
 
 } // namespace
 
-TEST_CASE("FxStrip: every region gets four markers inside its own x range")
+TEST_CASE("FxStrip: every region gets five markers inside its own x range")
 {
     StripFixture f;
     const auto width = f.strip.getWidth();
@@ -180,4 +180,74 @@ TEST_CASE("FxStrip: a right-click does not report, a left-click does")
     CHECK(f.toggled.empty());
     f.strip.mouseDown(click(juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier)));
     CHECK(f.toggled.size() == 1);
+}
+
+TEST_CASE("FxStrip: markers follow the chain order")
+{
+    StripFixture f;
+    FxOrder rev = { FxInsert::Delay, FxInsert::Reverb, FxInsert::Flanger, FxInsert::Filter, FxInsert::Bitcrush };
+    f.strip.setOrder(rev);
+    CHECK(f.strip.markerBounds(1, FxInsert::Reverb).getX() < f.strip.markerBounds(1, FxInsert::Bitcrush).getX());
+    for (int c = 0; c + 1 < kFxInserts; ++c)
+        CHECK(f.strip.markerBounds(1, rev[static_cast<std::size_t>(c)]).getX()
+              < f.strip.markerBounds(1, rev[static_cast<std::size_t>(c + 1)]).getX());
+}
+
+TEST_CASE("FxStrip: a click toggles the effect under the marker, not the column index")
+{
+    StripFixture f;
+    f.strip.setOrder({ FxInsert::Delay, FxInsert::Reverb, FxInsert::Flanger, FxInsert::Filter, FxInsert::Bitcrush });
+    const auto b = f.strip.markerBounds(1, FxInsert::Reverb);
+    f.strip.toggleAt(b.getCentreX(), b.getCentreY());
+    REQUIRE(f.toggled.size() == 1);
+    CHECK(f.toggled[0].first == 1);
+    CHECK(f.toggled[0].second == FxInsert::Reverb);
+}
+
+TEST_CASE("FxStrip: five markers are distinct and non-overlapping in any order")
+{
+    StripFixture f;
+    f.strip.setOrder({ FxInsert::Filter, FxInsert::Delay, FxInsert::Bitcrush, FxInsert::Reverb, FxInsert::Flanger });
+    for (int a = 0; a < kFxInserts; ++a)
+        for (int b = a + 1; b < kFxInserts; ++b)
+        {
+            const auto ra = f.strip.markerBounds(1, static_cast<FxInsert>(a));
+            const auto rb = f.strip.markerBounds(1, static_cast<FxInsert>(b));
+            CHECK_FALSE(ra.intersects(rb));
+            const auto ca = f.strip.columnRange(1, static_cast<FxInsert>(a));
+            const auto cb = f.strip.columnRange(1, static_cast<FxInsert>(b));
+            CHECK((ca.getEnd() <= cb.getStart() || cb.getEnd() <= ca.getStart()));
+        }
+}
+
+TEST_CASE("FxStrip: colours of all five inserts are pairwise distinct")
+{
+    for (int a = 0; a < kFxInserts; ++a)
+        for (int b = a + 1; b < kFxInserts; ++b)
+        {
+            const auto ca = dc::ui::fxInsertColour(static_cast<FxInsert>(a));
+            const auto cb = dc::ui::fxInsertColour(static_cast<FxInsert>(b));
+            const int dr = ca.getRed() - cb.getRed(), dg = ca.getGreen() - cb.getGreen(), db = ca.getBlue() - cb.getBlue();
+            CHECK(dr * dr + dg * dg + db * db > 60 * 60);
+        }
+}
+
+TEST_CASE("FxStrip: switch bits stay with their effect after setOrder")
+{
+    StripFixture f;
+    f.strip.setSwitches({ static_cast<std::uint8_t>(1 << static_cast<int>(FxInsert::Delay)), 0, 0 });
+    CHECK(f.strip.markerOn(0, FxInsert::Delay));
+    f.strip.setOrder({ FxInsert::Delay, FxInsert::Reverb, FxInsert::Flanger, FxInsert::Filter, FxInsert::Bitcrush });
+    CHECK(f.strip.markerOn(0, FxInsert::Delay));
+    CHECK_FALSE(f.strip.markerOn(0, FxInsert::Bitcrush));
+}
+
+TEST_CASE("FxStrip: an invalid order falls back to the default")
+{
+    StripFixture f;
+    f.strip.setOrder({ FxInsert::Delay, FxInsert::Delay, FxInsert::Delay, FxInsert::Delay, FxInsert::Delay });
+    const auto d = defaultFxOrder();
+    for (int c = 0; c + 1 < kFxInserts; ++c)
+        CHECK(f.strip.markerBounds(1, d[static_cast<std::size_t>(c)]).getX()
+              < f.strip.markerBounds(1, d[static_cast<std::size_t>(c + 1)]).getX());
 }

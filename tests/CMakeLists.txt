@@ -7,6 +7,7 @@ add_executable(dc_tests
     test_MixGain.cpp
     test_FxSettings.cpp
     test_FxUnits.cpp
+    test_Delay.cpp
     test_FxChain.cpp
     test_TransientDetector.cpp
     test_Sequencer.cpp
@@ -26,6 +27,7 @@ target_sources(dc_plugin_tests PRIVATE
     plugin/test_FileRelink.cpp
     plugin/test_LoopLane.cpp
     plugin/test_FxStrip.cpp
+    plugin/test_FxList.cpp
     plugin/test_FxPanel.cpp
     plugin/test_Editor.cpp
     plugin/test_RulePanel.cpp

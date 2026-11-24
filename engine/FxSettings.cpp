@@ -16,11 +16,62 @@ const FxParamInfo kInfo[kFxParamCount] = {
     { "bitcrush.bits",      FxInsert::Bitcrush, 1.0,   16.0,    8.0,    false, 0 },
     { "bitcrush.rate",      FxInsert::Bitcrush, 1.0,   64.0,    4.0,    false, 0 },
     { "bitcrush.mix",       FxInsert::Bitcrush, 0.0,   1.0,     1.0,    false, 0 },
-    { "flanger.rate",       FxInsert::Flanger,  0.05,  5.0,     0.3,    false, 0 },
+    { "flanger.rate",       FxInsert::Flanger,  0.0,   5.0,     0.3,    false, 0 },
     { "flanger.depth",      FxInsert::Flanger,  0.0,   1.0,     0.5,    false, 0 },
     { "flanger.feedback",   FxInsert::Flanger,  -0.9,  0.9,     0.4,    false, 0 },
     { "flanger.mix",        FxInsert::Flanger,  0.0,   1.0,     0.5,    false, 0 },
+    { "flanger.manual",     FxInsert::Flanger,  0.0,   1.0,     0.5,    false, 0 },
+    { "delay.time",         FxInsert::Delay,    0.0,   kDelayTimeSteps - 1, 5.0, false, kDelayTimeSteps },
+    { "delay.feedback",     FxInsert::Delay,    0.0,   0.9,     0.4,    false, 0 },
+    { "delay.mix",          FxInsert::Delay,    0.0,   1.0,     0.3,    false, 0 },
+    { "delay.reverse",      FxInsert::Delay,    0.0,   1.0,     0.0,    false, 2 },
 };
+
+struct DelayTimeEntry { const char* name; double beats; bool bar; };
+// beats = quarter notes, or bars when bar is set.
+const DelayTimeEntry kDelayTimes[kDelayTimeSteps] = {
+    { "1/32",      0.125,       false },
+    { "1/16 trip", 1.0 / 6.0,   false },
+    { "1/16",      0.25,        false },
+    { "1/8 trip",  1.0 / 3.0,   false },
+    { "1/16 dot",  0.375,       false },
+    { "1/8",       0.5,         false },
+    { "1/4 trip",  2.0 / 3.0,   false },
+    { "1/8 dot",   0.75,        false },
+    { "1/4",       1.0,         false },
+    { "1/2 trip",  4.0 / 3.0,   false },
+    { "1/4 dot",   1.5,         false },
+    { "1/2",       2.0,         false },
+    { "1/2 dot",   3.0,         false },
+    { "1 bar",     1.0,         true },
+    { "2 bars",    2.0,         true },
+};
+}
+
+double delayTimeBeats(int step, double beatsPerBar)
+{
+    const auto& e = kDelayTimes[std::clamp(step, 0, kDelayTimeSteps - 1)];
+    return e.bar ? e.beats * beatsPerBar : e.beats;
+}
+
+const char* delayTimeName(int step) { return kDelayTimes[std::clamp(step, 0, kDelayTimeSteps - 1)].name; }
+
+FxOrder defaultFxOrder()
+{
+    return { FxInsert::Bitcrush, FxInsert::Filter, FxInsert::Flanger, FxInsert::Delay, FxInsert::Reverb };
+}
+
+FxOrder sanitizeFxOrder(const FxOrder& o)
+{
+    bool seen[kFxInserts] = {};
+    for (auto i : o)
+    {
+        const int k = static_cast<int>(i);
+        if (k < 0 || k >= kFxInserts || seen[k])
+            return defaultFxOrder();
+        seen[k] = true;
+    }
+    return o;
 }
 
 const FxParamInfo& fxParamInfo(FxParam p) { return kInfo[static_cast<size_t>(p)]; }

@@ -19,6 +19,7 @@ juce::Colour fxInsertColour(FxInsert i)
         case FxInsert::Filter:   return juce::Colour(0xff5aa9e6); // blue
         case FxInsert::Flanger:  return juce::Colour(0xff7fe3a0); // green
         case FxInsert::Reverb:   return juce::Colour(0xffc58af0); // violet
+        case FxInsert::Delay:    return juce::Colour(0xffe86f8a); // rose
     }
     return panel::kDim;
 }
@@ -30,6 +31,23 @@ void FxStrip::setRegions(const RegionMap& regions)
     regions_ = regions;
     selected_ = std::clamp(selected_, 0, std::max(0, regions_.regionCount() - 1));
     repaint();
+}
+
+void FxStrip::setOrder(const FxOrder& order)
+{
+    const auto o = sanitizeFxOrder(order);
+    if (o == order_)
+        return;
+    order_ = o;
+    repaint();
+}
+
+int FxStrip::columnOf(FxInsert insert) const
+{
+    for (int c = 0; c < kFxInserts; ++c)
+        if (order_[static_cast<std::size_t>(c)] == insert)
+            return c;
+    return 0;
 }
 
 void FxStrip::setLive(bool live)
@@ -87,7 +105,7 @@ juce::Rectangle<float> FxStrip::markerBounds(int region, FxInsert insert) const
         return {};
     const float mw = markerWidth(region);
     const float x0 = xFor(regions_.bounds(region).first) + kInset;
-    const int k = static_cast<int>(insert);
+    const int k = columnOf(insert);
     return { x0 + static_cast<float>(k) * (mw + kGap), kPadY, mw, static_cast<float>(getHeight()) - 2.0f * kPadY };
 }
 
@@ -105,10 +123,11 @@ juce::Range<float> FxStrip::columnRange(int region, FxInsert insert) const
 {
     // Contiguous columns: the marker widened to the middle of the gap (the region edge at the ends).
     const auto [lo, hi] = regions_.bounds(region);
-    const int k = static_cast<int>(insert);
+    const int k = columnOf(insert);
     const auto m = markerBounds(region, insert);
     const float left = k == 0 ? xFor(lo) : m.getX() - kGap * 0.5f;
-    const float right = k == kFxInserts - 1 ? xFor(hi) : m.getRight() + kGap * 0.5f;
+    // the next column's left edge, computed the same way, so neighbours share it bit for bit
+    const float right = k == kFxInserts - 1 ? xFor(hi) : markerBounds(region, order_[static_cast<std::size_t>(k + 1)]).getX() - kGap * 0.5f;
     return { left, right };
 }
 
@@ -122,11 +141,12 @@ bool FxStrip::markerAt(float x, float y, int& region, FxInsert& insert) const
             continue;
         for (int k = 0; k < kFxInserts; ++k)
         {
-            const auto col = columnRange(r, static_cast<FxInsert>(k));
+            const auto ins = order_[static_cast<std::size_t>(k)];
+            const auto col = columnRange(r, ins);
             if (x >= col.getStart() && x < col.getEnd())
             {
                 region = r;
-                insert = static_cast<FxInsert>(k);
+                insert = ins;
                 return true;
             }
         }
@@ -161,15 +181,15 @@ void FxStrip::paint(juce::Graphics& g)
         {
             int first = -1;
             for (int k = 0; k < kFxInserts && first < 0; ++k)
-                if (markerOn(r, static_cast<FxInsert>(k)))
+                if (markerOn(r, order_[static_cast<std::size_t>(k)]))
                     first = k;
-            g.setColour(first >= 0 ? fxInsertColour(static_cast<FxInsert>(first)) : panel::kEdge);
+            g.setColour(first >= 0 ? fxInsertColour(order_[static_cast<std::size_t>(first)]) : panel::kEdge);
             g.fillRect(collectiveBounds(r));
             continue;
         }
         for (int k = 0; k < kFxInserts; ++k)
         {
-            const auto insert = static_cast<FxInsert>(k);
+            const auto insert = order_[static_cast<std::size_t>(k)];
             const auto rect = markerBounds(r, insert);
             g.setColour(fxInsertColour(insert));
             if (markerOn(r, insert))

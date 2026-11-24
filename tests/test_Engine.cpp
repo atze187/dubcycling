@@ -1687,6 +1687,52 @@ TEST_CASE("Engine fx: extreme parameters stay finite", "[Engine][fx]")
     }
 }
 
+TEST_CASE("Engine fx: engine passes order and tempo to the chain", "[Engine][fx][order]")
+{
+    SECTION("order and the delay bit")
+    {
+        auto m = noiseModel();
+        setAll(m->fx, 1, 0x1f);
+        m->fx.params.set(dc::FxParam::FilterCutoff, 800.0);
+        m->fx.params.set(dc::FxParam::BitcrushBits, 4.0);
+        m->fx.params.set(dc::FxParam::DelayMix, 0.6);
+        auto rev = std::make_shared<dc::Model>(*m);
+        rev->fx.order = { dc::FxInsert::Reverb, dc::FxInsert::Delay, dc::FxInsert::Flanger, dc::FxInsert::Filter,
+                          dc::FxInsert::Bitcrush };
+        auto noDelay = std::make_shared<dc::Model>(*m);
+        setAll(noDelay->fx, 1, 0x0f);
+        const Out a = runEngine(m, kBar);
+        const Out b = runEngine(rev, kBar);
+        const Out c = runEngine(noDelay, kBar);
+        CHECK(allFinite(a));
+        CHECK(allFinite(b));
+        CHECK(maxDiff(a, b, 0, kBar) > 0.01f);
+        CHECK(maxDiff(a, c, 0, kBar) > 0.01f); // bit 4 switches the delay
+        CHECK(peakOf(b.l, 0, kBar) < 8.0f);
+    }
+    SECTION("tempo: the delay time follows the host bpm")
+    {
+        // Loop 2 = a short noise burst, then silence; the delay (1/4, no feedback) repeats it once.
+        auto m = baseModel();
+        m->loop2.data = makeMono(kBar, [](int i) { return i < 480 ? noiseAt(i) : 0.0f; });
+        m->rules.setTargets(0, { { 0, 1.0f, dc::PlayMode::Gate } });
+        m->fx.setSwitch(0, dc::FxInsert::Delay, true);
+        m->fx.params.set(dc::FxParam::DelayTime, 8.0);
+        m->fx.params.set(dc::FxParam::DelayMix, 1.0);
+        m->fx.params.set(dc::FxParam::DelayFeedback, 0.0);
+        dc::Engine e;
+        prepared(e);
+        e.setModel(m);
+        const Out o = run(e, 0.0, 60000, 512, 60.0); // 1/4 at 60 bpm = 48000 frames
+        CHECK(allFinite(o));
+        INFO("burst " << peakOf(o.l, 0, 2000) << ", at 120 bpm time " << peakOf(o.l, 23000, 27000)
+                      << ", at 60 bpm time " << peakOf(o.l, 47000, 51000));
+        REQUIRE(peakOf(o.l, 0, 2000) > 0.05f);
+        CHECK(peakOf(o.l, 4000, 46000) < 1e-4f);
+        CHECK(peakOf(o.l, 47000, 51000) > 0.02f);
+    }
+}
+
 // --- Mix between Loop 1 and the playing Loop-2 region --------------------------------------------
 
 namespace {

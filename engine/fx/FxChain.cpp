@@ -6,7 +6,7 @@ namespace dc::fx {
 namespace {
 constexpr float kGateSeconds = 0.005f;
 constexpr float kFlushSeconds = 0.050f;
-// Tail level (pre-Mix, pre wet scale) below which a closed Flanger/Reverb is put to sleep:
+// Tail level (pre-Mix, pre wet scale) below which a closed Flanger/Delay/Reverb is put to sleep:
 // -100 dB. With the reverb's wet gain (at most about 2.8) the output at that point is below 3e-5
 // (-90 dB) before the reset.
 constexpr float kSleepThreshold = 1e-5f;
@@ -26,6 +26,7 @@ void FxChain::prepare(double sampleRate, int maxBlock)
     filter_.prepare(sampleRate_);
     flanger_.prepare(sampleRate_);
     reverb_.prepare(sampleRate_);
+    delay_.prepare(sampleRate_);
     reset();
 }
 
@@ -38,6 +39,8 @@ void FxChain::reset()
     }
     flushing_ = false;
     fade_ = 1.0f;
+    if (hasPendingOrder_) order_ = pendingOrder_; // every state is cleared
+    hasPendingOrder_ = false;
 }
 
 void FxChain::setParams(const FxParams& p)
@@ -47,12 +50,32 @@ void FxChain::setParams(const FxParams& p)
     filter_.setParams(p);
     flanger_.setParams(p);
     reverb_.setParams(p);
+    delay_.setParams(p);
 }
 
 void FxChain::setMask(std::uint8_t mask)
 {
     for (int i = 0; i < kFxInserts; ++i) target_[i] = (mask >> i) & 1u ? 1.0f : 0.0f;
 }
+
+void FxChain::setOrder(const FxOrder& order)
+{
+    const FxOrder o = sanitizeFxOrder(order);
+    if (o == (hasPendingOrder_ ? pendingOrder_ : order_)) return; // called every slice: no-op when equal
+    if (!anyActive())
+    {
+        order_ = o; // nothing sounds, no state to move
+        return;
+    }
+    // Something sounds: fade the effect parts out, switch over once the states are cleared. A flush
+    // already running is joined; a pending order is replaced (also by the current one: the fade has
+    // begun and is not reversed, the order simply stays).
+    pendingOrder_ = o;
+    hasPendingOrder_ = true;
+    flushing_ = true;
+}
+
+void FxChain::setTempo(double bpm, double beatsPerBar) { delay_.setTempo(bpm, beatsPerBar); }
 
 void FxChain::flush()
 {
@@ -76,12 +99,13 @@ bool FxChain::anyActive() const
 
 void FxChain::sleep(int insert)
 {
-    switch (insert)
+    switch (static_cast<FxInsert>(insert))
     {
-        case 0: bitcrush_.reset(); bitcrush_.setParams(params_); break;
-        case 1: filter_.reset(); filter_.setParams(params_); break;
-        case 2: flanger_.reset(); flanger_.setParams(params_); break;
-        default: reverb_.reset(); reverb_.setParams(params_); break;
+        case FxInsert::Bitcrush: bitcrush_.reset(); bitcrush_.setParams(params_); break;
+        case FxInsert::Filter: filter_.reset(); filter_.setParams(params_); break;
+        case FxInsert::Flanger: flanger_.reset(); flanger_.setParams(params_); break;
+        case FxInsert::Reverb: reverb_.reset(); reverb_.setParams(params_); break;
+        case FxInsert::Delay: delay_.reset(); delay_.setParams(params_); break;
     }
     awake_[insert] = false;
 }
@@ -122,49 +146,48 @@ void FxChain::processChunk(float* l, float* r, int n)
     const float* g = gateBuf_.data();
     const float* f = fadeBuf_.data();
 
-    // Bitcrush and Filter: blend between the signal and the processed signal.
-    for (int k = idx(FxInsert::Bitcrush); k <= idx(FxInsert::Filter); ++k)
+    for (const FxInsert ins : order_)
     {
-        if (gate_[k] == 0.0f && target_[k] == 0.0f)
+        const int k = idx(ins);
+        if (ins == FxInsert::Bitcrush || ins == FxInsert::Filter)
         {
-            if (awake_[k]) sleep(k);
-            continue;
+            // Blend between the signal and the processed signal.
+            if (gate_[k] == 0.0f && target_[k] == 0.0f)
+            {
+                if (awake_[k]) sleep(k);
+                continue;
+            }
+            awake_[k] = true;
+            fillGate(k, n);
+            std::copy(l, l + n, tl);
+            std::copy(r, r + n, tr);
+            processUnit(k, tl, tr, n);
+            for (int i = 0; i < n; ++i)
+            {
+                const float w = g[i] * f[i];
+                l[i] += w * (tl[i] - l[i]);
+                r[i] += w * (tr[i] - r[i]);
+            }
         }
-        awake_[k] = true;
-        fillGate(k, n);
-        std::copy(l, l + n, tl);
-        std::copy(r, r + n, tr);
-        if (k == idx(FxInsert::Bitcrush)) bitcrush_.process(tl, tr, n);
-        else filter_.process(tl, tr, n);
-        for (int i = 0; i < n; ++i)
+        else
         {
-            const float w = g[i] * f[i];
-            l[i] += w * (tl[i] - l[i]);
-            r[i] += w * (tr[i] - r[i]);
+            // Flanger, Delay and Reverb: the gated signal feeds the unit, its wet output is added.
+            if (!awake_[k] && gate_[k] == 0.0f && target_[k] == 0.0f) continue;
+            awake_[k] = true;
+            fillGate(k, n);
+            for (int i = 0; i < n; ++i)
+            {
+                tl[i] = g[i] * l[i];
+                tr[i] = g[i] * r[i];
+            }
+            processUnit(k, tl, tr, n);
+            for (int i = 0; i < n; ++i)
+            {
+                l[i] += f[i] * tl[i];
+                r[i] += f[i] * tr[i];
+            }
+            if (gate_[k] == 0.0f && target_[k] == 0.0f && tailOf(k) <= kSleepThreshold) sleep(k);
         }
-    }
-
-    // Flanger and Reverb: the gated signal feeds the unit, its wet output is added.
-    for (int k = idx(FxInsert::Flanger); k <= idx(FxInsert::Reverb); ++k)
-    {
-        const bool flanger = k == idx(FxInsert::Flanger);
-        if (!awake_[k] && gate_[k] == 0.0f && target_[k] == 0.0f) continue;
-        awake_[k] = true;
-        fillGate(k, n);
-        for (int i = 0; i < n; ++i)
-        {
-            tl[i] = g[i] * l[i];
-            tr[i] = g[i] * r[i];
-        }
-        if (flanger) flanger_.process(tl, tr, n);
-        else reverb_.process(tl, tr, n);
-        for (int i = 0; i < n; ++i)
-        {
-            l[i] += f[i] * tl[i];
-            r[i] += f[i] * tr[i];
-        }
-        const float tail = flanger ? flanger_.tailLevel() : reverb_.tailLevel();
-        if (gate_[k] == 0.0f && target_[k] == 0.0f && tail <= kSleepThreshold) sleep(k);
     }
 
     if (flushing_ && fade_ == 0.0f)
@@ -175,15 +198,45 @@ void FxChain::processChunk(float* l, float* r, int n)
             sleep(k);
             gate_[k] = 0.0f;
         }
-        flushing_ = false;
-        fade_ = 1.0f;
+        endFlush();
     }
     else if (flushing_ && std::none_of(awake_, awake_ + kFxInserts, [](bool a) { return a; }))
     {
         // Every insert fell asleep before the fade ended (its state is already cleared): nothing is
         // left to fade, so the flush is over. A leftover fade would dim the next opened insert.
-        flushing_ = false;
-        fade_ = 1.0f;
+        endFlush();
+    }
+}
+
+void FxChain::endFlush()
+{
+    flushing_ = false;
+    fade_ = 1.0f;
+    // All states are cleared: a pending order takes over here, its inserts start from silence.
+    if (hasPendingOrder_) order_ = pendingOrder_;
+    hasPendingOrder_ = false;
+}
+
+void FxChain::processUnit(int insert, float* l, float* r, int n)
+{
+    switch (static_cast<FxInsert>(insert))
+    {
+        case FxInsert::Bitcrush: bitcrush_.process(l, r, n); break;
+        case FxInsert::Filter: filter_.process(l, r, n); break;
+        case FxInsert::Flanger: flanger_.process(l, r, n); break;
+        case FxInsert::Reverb: reverb_.process(l, r, n); break;
+        case FxInsert::Delay: delay_.process(l, r, n); break;
+    }
+}
+
+float FxChain::tailOf(int insert) const
+{
+    switch (static_cast<FxInsert>(insert))
+    {
+        case FxInsert::Flanger: return flanger_.tailLevel();
+        case FxInsert::Reverb: return reverb_.tailLevel();
+        case FxInsert::Delay: return delay_.tailLevel();
+        default: return 0.0f;
     }
 }
 
