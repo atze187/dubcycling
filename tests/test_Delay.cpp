@@ -262,6 +262,17 @@ TEST_CASE("Delay: at 20 BPM with 2 bars clamps to the buffer and stays finite", 
     }
 }
 
+TEST_CASE("Delay: a tiny positive bpm clamps to the buffer without overflow", "[Delay]")
+{
+    for (double bpm : { 1e-300, 1e-12 })
+    {
+        CAPTURE(bpm);
+        const auto out = impulseResponse(delayParams(kStepTwoBars, 0.0, 1.0, false), 31 * 48000, bpm, 4.0);
+        CHECK(allFinite(out));
+        CHECK(std::abs(argmaxAbs(out, 0, out.size()) - 30 * 48000) <= 1);
+    }
+}
+
 TEST_CASE("Delay: NaN, 0 or negative bpm keeps the last tempo", "[Delay]")
 {
     // Initial tempo is 120 BPM.

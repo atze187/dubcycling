@@ -99,13 +99,13 @@ bool FxChain::anyActive() const
 
 void FxChain::sleep(int insert)
 {
-    switch (insert)
+    switch (static_cast<FxInsert>(insert))
     {
-        case 0: bitcrush_.reset(); bitcrush_.setParams(params_); break;
-        case 1: filter_.reset(); filter_.setParams(params_); break;
-        case 2: flanger_.reset(); flanger_.setParams(params_); break;
-        case 3: reverb_.reset(); reverb_.setParams(params_); break;
-        default: delay_.reset(); delay_.setParams(params_); break;
+        case FxInsert::Bitcrush: bitcrush_.reset(); bitcrush_.setParams(params_); break;
+        case FxInsert::Filter: filter_.reset(); filter_.setParams(params_); break;
+        case FxInsert::Flanger: flanger_.reset(); flanger_.setParams(params_); break;
+        case FxInsert::Reverb: reverb_.reset(); reverb_.setParams(params_); break;
+        case FxInsert::Delay: delay_.reset(); delay_.setParams(params_); break;
     }
     awake_[insert] = false;
 }

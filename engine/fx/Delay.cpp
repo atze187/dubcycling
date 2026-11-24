@@ -71,8 +71,11 @@ void Delay::setTempo(double bpm, double beatsPerBar)
 
 void Delay::updateTarget()
 {
-    const double samples = delayTimeBeats(step_, beatsPerBar_) * 60.0 / bpm_ * sampleRate_;
-    tapTarget_ = static_cast<int>(std::clamp(std::llround(samples), 1LL, static_cast<long long>(std::max(1, maxTap_))));
+    const double maxSamples = static_cast<double>(std::max(1, maxTap_));
+    double samples = delayTimeBeats(step_, beatsPerBar_) * 60.0 / bpm_ * sampleRate_;
+    if (!std::isfinite(samples)) samples = maxSamples; // clamp as a double: llround of inf/huge is undefined
+    samples = std::clamp(samples, 1.0, maxSamples);
+    tapTarget_ = static_cast<int>(std::llround(samples));
     if (fresh_)
     {
         tapA_ = tapB_ = tapTarget_;

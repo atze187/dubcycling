@@ -84,7 +84,6 @@ private:
     bool dragActive_ = false; // the press became a drag
     float pressY_ = 0.0f, grabOffset_ = 0.0f, cursorY_ = 0.0f;
     int slot_ = -1;
-    int pressedRow_ = -1;    // body press: selects on release unless it became a drag
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FxList)
 };

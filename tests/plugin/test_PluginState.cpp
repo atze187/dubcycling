@@ -699,6 +699,38 @@ TEST_CASE("State: an old state without order or Delay params loads defaults and 
         CHECK(r->fx.params.get(p) == sanitizeFxParam(p, fxParamInfo(p).def));
 }
 
+TEST_CASE("State: the Delay switch is a separate attribute, the old mask stays 0..15", "[PluginState][fx][order]")
+{
+    auto s = sample();
+    s.loop2.boundaries = { 0.5 };
+    s.fx.setSwitch(0, FxInsert::Delay, true);                                                          // Delay only
+    s.fx.setSwitch(1, FxInsert::Delay, true);
+    s.fx.setSwitch(1, FxInsert::Reverb, true);                                                         // mask 24
+    const auto xml = serialize(s).toString();
+    CHECK_FALSE(xml.contains("mask=\"16\""));
+    CHECK_FALSE(xml.contains("mask=\"24\""));
+    CHECK(xml.contains("region=\"0\" mask=\"0\" delay=\"1\""));
+    CHECK(xml.contains("region=\"1\" mask=\"8\" delay=\"1\""));
+    const auto block = serialize(s);
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    CHECK(r->fx.maskFor(0) == 16);
+    CHECK(r->fx.maskFor(1) == 24);
+    CHECK(r->fx == s.fx);
+}
+
+TEST_CASE("State: a Switch node with only the delay attribute loads, old masks load unchanged", "[PluginState][fx][order]")
+{
+    const auto r = loadXml(fxDoc("<Fx><Switches><Switch region=\"0\" delay=\"1\"/><Switch region=\"1\" mask=\"9\" delay=\"1\"/>"
+                                 "<Switch region=\"2\" mask=\"9\"/><Switch region=\"3\" mask=\"24\"/></Switches></Fx>",
+                                 "<Loop2 bars=\"1\" boundaries=\"0.25,0.5,0.75\"/>"));
+    REQUIRE(r.has_value());
+    CHECK(r->fx.maskFor(0) == 16);
+    CHECK(r->fx.maskFor(1) == 25);
+    CHECK(r->fx.maskFor(2) == 9);
+    CHECK(r->fx.maskFor(3) == 24); // development-version state with bit 4 in the old attribute
+}
+
 TEST_CASE("sanitizeFx repairs the order and keeps mask bit 4", "[PluginState][fx][order]")
 {
     FxSettings f;

@@ -109,7 +109,12 @@ juce::ValueTree fxToTree(const FxSettings& fx)
         {
             juce::ValueTree n("Switch");
             n.setProperty("region", static_cast<int>(i), nullptr);
-            n.setProperty("mask", static_cast<int>(fx.switches[i]), nullptr);
+            // "mask" holds only bits 0..3 (Bitcrush..Reverb): older versions clamp it to 0..15, so
+            // bit 4 there would switch every effect on. The Delay switch is the separate optional
+            // attribute "delay"; older versions ignore it (a mask-0 node is harmless to them).
+            n.setProperty("mask", static_cast<int>(fx.switches[i] & 15u), nullptr);
+            if (fx.switches[i] & 16u)
+                n.setProperty("delay", 1, nullptr);
             switches.appendChild(n, nullptr);
         }
     if (switches.getNumChildren() > 0)
@@ -152,7 +157,10 @@ FxSettings fxFromTree(const juce::ValueTree& t)
             continue;
         if (fx.switches.size() <= static_cast<std::size_t>(region))
             fx.switches.resize(static_cast<std::size_t>(region) + 1, 0);
-        fx.switches[static_cast<std::size_t>(region)] = static_cast<std::uint8_t>(std::clamp(static_cast<int>(n.getProperty("mask", 0)), 0, 31));
+        int mask = std::clamp(static_cast<int>(n.getProperty("mask", 0)), 0, 31);
+        if (static_cast<int>(n.getProperty("delay", 0)) != 0)
+            mask |= 16;
+        fx.switches[static_cast<std::size_t>(region)] = static_cast<std::uint8_t>(mask);
     }
     return fx;
 }

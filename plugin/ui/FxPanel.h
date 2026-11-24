@@ -91,7 +91,6 @@ private:
 
     FxList list_;
     juce::Label listTitle_, regionTitle_, editTitle_;
-    juce::Rectangle<int> editArea_;
     std::array<std::unique_ptr<Knob>, kFxParamCount> knobs_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FxPanel)

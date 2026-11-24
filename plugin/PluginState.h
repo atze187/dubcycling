@@ -75,7 +75,7 @@ bool addRuleTarget(std::vector<RuleTarget>& targets, const RuleTarget& t);
 // result is empty and the source entry had no targets at all (hadTargets = false).
 std::optional<RuleEntry> sanitizeRuleEntry(int region1, std::vector<RuleTarget> targets, bool hadTargets);
 
-// Params through sanitizeFxParam, masks to 0..15, switches cut to loop2RegionCount regions.
+// Params through sanitizeFxParam, masks to 0..31, switches cut to loop2RegionCount regions.
 FxSettings sanitizeFx(FxSettings fx, int loop2RegionCount);
 
 juce::MemoryBlock serialize(const PluginState&);

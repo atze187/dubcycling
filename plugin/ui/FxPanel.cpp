@@ -456,7 +456,6 @@ void FxPanel::resized()
     area.removeFromLeft(2 * kMargin + 1); // separator in the middle
     editTitle_.setBounds(area.removeFromTop(kTitleH));
     area.removeFromTop(4);
-    editArea_ = area;
 
     for (auto& k : knobs_)
         k->clearBounds();

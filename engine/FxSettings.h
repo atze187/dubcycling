@@ -5,7 +5,7 @@
 
 namespace dc {
 
-// Chain order; bit (1 << int(insert)) in the per-region switch mask.
+// Effect ids; bit (1 << int(insert)) in the per-region switch mask. The chain order is FxSettings::order.
 enum class FxInsert { Bitcrush = 0, Filter = 1, Flanger = 2, Reverb = 3, Delay = 4 };
 constexpr int kFxInserts = 5;
 
@@ -31,7 +31,8 @@ struct FxParamInfo
 
 const FxParamInfo& fxParamInfo(FxParam p);
 
-// Delay time note values, ascending in length from 1/32 to 2 bars. Bar values scale with beatsPerBar.
+// Delay time note values, from 1/32 up to 2 bars, ascending for 4/4 and longer bars (for 2/4 and 3/4 the bar values are
+// shorter than some note values). Bar values scale with beatsPerBar.
 constexpr int kDelayTimeSteps = 15;
 double delayTimeBeats(int step, double beatsPerBar); // out-of-range steps are clamped
 const char* delayTimeName(int step);
