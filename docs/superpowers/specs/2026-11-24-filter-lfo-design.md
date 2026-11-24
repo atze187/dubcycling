@@ -1,6 +1,6 @@
 # Filter LFO and new filter modes — design
 
-Date: 2026-11-24. Status: draft, awaiting approval.
+Date: 2026-11-24. Status: implemented.
 
 ## Intent
 
