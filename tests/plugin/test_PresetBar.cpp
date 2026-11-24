@@ -785,3 +785,24 @@ TEST_CASE("PresetBar: a preset saved from the processor restores its effects and
     CHECK(other.getModel()->passes == saved.passes);
     CHECK(other.getModel()->fx == saved.fx);
 }
+
+TEST_CASE("PresetBar: a loaded preset applies its fx order", "[PresetBar][order]")
+{
+    BarFixture f;
+    LoopPair loops(f.proc);
+    auto s = f.proc.getPluginState();
+    s.fx.order = FxOrder { FxInsert::Delay, FxInsert::Reverb, FxInsert::Bitcrush, FxInsert::Filter, FxInsert::Flanger };
+    f.proc.applyEdit(s);
+    const auto saved = f.proc.getPluginState();
+    REQUIRE(saved.fx.order == s.fx.order);
+
+    BankStore store(f.root);
+    REQUIRE(store.createBank("A").ok());
+    REQUIRE(store.savePreset("A", "Eins", saved, false).ok());
+    DubcyclingProcessor other;
+    const auto loaded = store.loadPreset("A", "Eins");
+    REQUIRE(loaded.result.ok());
+    other.restoreState(loaded.state);
+    CHECK(other.getPluginState().fx.order == s.fx.order);
+    CHECK(other.getModel()->fx.order == s.fx.order);
+}

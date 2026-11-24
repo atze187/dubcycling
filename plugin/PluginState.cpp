@@ -90,6 +90,13 @@ double parseFxNumber(const juce::String& text)
 juce::ValueTree fxToTree(const FxSettings& fx)
 {
     juce::ValueTree t("Fx");
+    if (fx.order != defaultFxOrder())
+    {
+        juce::StringArray ids;
+        for (auto i : fx.order)
+            ids.add(juce::String(static_cast<int>(i)));
+        t.setProperty("order", ids.joinIntoString(","), nullptr);
+    }
     for (int p = 0; p < kFxParamCount; ++p)
     {
         const auto param = static_cast<FxParam>(p);
@@ -119,6 +126,22 @@ FxSettings fxFromTree(const juce::ValueTree& t)
         if (t.hasProperty(fxParamInfo(param).id))
             fx.params.set(param, parseFxNumber(t.getProperty(fxParamInfo(param).id).toString()));
     }
+    if (t.hasProperty("order"))
+    {
+        // Comma-separated insert ids; anything that is not exactly a permutation of all inserts -> default.
+        const auto parts = juce::StringArray::fromTokens(t.getProperty("order").toString(), ",", "");
+        FxOrder o = defaultFxOrder();
+        bool ok = parts.size() == kFxInserts;
+        for (int i = 0; ok && i < kFxInserts; ++i)
+        {
+            const double v = parseFxNumber(parts[i]);
+            if (!(v >= 0.0 && v < static_cast<double>(kFxInserts)) || v != std::floor(v))
+                ok = false;
+            else
+                o[static_cast<std::size_t>(i)] = static_cast<FxInsert>(static_cast<int>(v));
+        }
+        fx.order = ok ? sanitizeFxOrder(o) : defaultFxOrder();
+    }
     int kept = 0;
     for (auto n : t.getChildWithName("Switches"))
     {
@@ -129,7 +152,7 @@ FxSettings fxFromTree(const juce::ValueTree& t)
             continue;
         if (fx.switches.size() <= static_cast<std::size_t>(region))
             fx.switches.resize(static_cast<std::size_t>(region) + 1, 0);
-        fx.switches[static_cast<std::size_t>(region)] = static_cast<std::uint8_t>(std::clamp(static_cast<int>(n.getProperty("mask", 0)), 0, 15));
+        fx.switches[static_cast<std::size_t>(region)] = static_cast<std::uint8_t>(std::clamp(static_cast<int>(n.getProperty("mask", 0)), 0, 31));
     }
     return fx;
 }
@@ -268,7 +291,8 @@ FxSettings sanitizeFx(FxSettings fx, int loop2RegionCount)
     if (fx.switches.size() > static_cast<std::size_t>(kMaxFxRegions))
         fx.switches.resize(static_cast<std::size_t>(kMaxFxRegions));
     for (auto& m : fx.switches)
-        m &= 15;
+        m &= 31;
+    fx.order = sanitizeFxOrder(fx.order);
     fx.trimTo(loop2RegionCount);
     return fx;
 }

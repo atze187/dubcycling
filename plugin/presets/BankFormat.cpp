@@ -275,6 +275,13 @@ juce::var fxToVar(const FxSettings& fx)
     auto* o = new juce::DynamicObject();
     o->setProperty("params", juce::var(params));
     o->setProperty("switches", juce::var(switches));
+    if (fx.order != defaultFxOrder()) // version 6; absent = default order
+    {
+        juce::Array<juce::var> order;
+        for (auto i : fx.order)
+            order.add(static_cast<int>(i));
+        o->setProperty("order", juce::var(order));
+    }
     return juce::var(o);
 }
 
@@ -304,13 +311,29 @@ FxSettings fxFromVar(const juce::var& v, int loop2RegionCount)
             const int region = key.getIntValue();
             if (region >= kMaxFxRegions || !isNumber(e.value))
                 continue;
-            const auto mask = static_cast<std::uint8_t>(clampedNumber(e.value, 0.0, 15.0, 0.0));
+            const auto mask = static_cast<std::uint8_t>(clampedNumber(e.value, 0.0, 31.0, 0.0));
             if (mask == 0)
                 continue;
             if (fx.switches.size() <= static_cast<std::size_t>(region))
                 fx.switches.resize(static_cast<std::size_t>(region) + 1, 0);
             fx.switches[static_cast<std::size_t>(region)] = mask;
         }
+    }
+    if (auto* order = v["order"].getArray())
+    {
+        // Version 6. Exactly kFxInserts whole numbers forming a permutation; anything else -> default order.
+        FxOrder o = defaultFxOrder();
+        bool ok = order->size() == kFxInserts;
+        for (int i = 0; ok && i < kFxInserts; ++i)
+        {
+            const auto& e = order->getReference(i);
+            const double d = isNumber(e) ? static_cast<double>(e) : -1.0;
+            if (!(d >= 0.0 && d < static_cast<double>(kFxInserts)) || d != std::floor(d))
+                ok = false;
+            else
+                o[static_cast<std::size_t>(i)] = static_cast<FxInsert>(static_cast<int>(d));
+        }
+        fx.order = ok ? sanitizeFxOrder(o) : defaultFxOrder();
     }
     return sanitizeFx(std::move(fx), loop2RegionCount);
 }
@@ -532,7 +555,8 @@ juce::String presetFingerprint(const PluginState& state)
     // Compared by value, not with operator==: trailing zero masks (a switch turned on and off again) are no change.
     const auto& fx = state.fx;
     const bool anySwitch = std::any_of(fx.switches.begin(), fx.switches.end(), [](std::uint8_t m) { return m != 0; });
-    if (fx.params != FxSettings {}.params || anySwitch)
+    const bool customOrder = fx.order != defaultFxOrder();
+    if (fx.params != FxSettings {}.params || anySwitch || customOrder)
     {
         out << "F";
         for (int p = 0; p < kFxParamCount; ++p)
@@ -541,6 +565,12 @@ juce::String presetFingerprint(const PluginState& state)
         for (std::size_t i = 0; i < state.fx.switches.size(); ++i)
             if (state.fx.switches[i] != 0)
                 out << ',' << static_cast<int>(i) << '=' << static_cast<int>(state.fx.switches[i]);
+        if (customOrder) // only when changed: presets with the default order keep their fingerprint
+        {
+            out << "|O";
+            for (auto i : fx.order)
+                out << ',' << static_cast<int>(i);
+        }
         out << '\n';
     }
     // Pass slots: nothing at all when every slot is empty, so presets without passes keep their fingerprint.

@@ -346,7 +346,7 @@ TEST_CASE("State: fx numbers are sanitized", "[PluginState][fx][hardening]")
     CHECK(r->fx.params.get(FxParam::FilterCutoff) == 20000.0f);
     CHECK(r->fx.params.get(FxParam::BitcrushBits) == 8.0f);
     CHECK(r->fx.params.get(FxParam::FlangerRate) == 0.3f);
-    CHECK(r->fx.maskFor(1) == 15);
+    CHECK(r->fx.maskFor(1) == 31);
     CHECK(r->fx.switches.size() == 2);
 }
 
@@ -439,7 +439,7 @@ TEST_CASE("sanitizeFx clamps, masks and trims", "[PluginState][fx]")
     FxSettings f;
     f.switches = { 255, 0, 1, 0, 0, 7 };
     const auto out = sanitizeFx(f, 3);
-    CHECK(out.switches == std::vector<std::uint8_t> { 15, 0, 1 });
+    CHECK(out.switches == std::vector<std::uint8_t> { 31, 0, 1 });
 }
 
 namespace {
@@ -628,4 +628,83 @@ TEST_CASE("State: sanitizing a rule entry keeps the reverse flag", "[PluginState
     REQUIRE(e->targets.size() == 2);
     CHECK(e->targets[0].reverse);
     CHECK_FALSE(e->targets[1].reverse);
+}
+
+// --- FX order, Delay params, mask bit 4 ---------------------------------------------------------
+namespace {
+FxOrder reorderedFx()
+{
+    return FxOrder { FxInsert::Delay, FxInsert::Bitcrush, FxInsert::Reverb, FxInsert::Filter, FxInsert::Flanger };
+}
+}
+
+TEST_CASE("State: fx order, Delay params and mask bit 4 survive a round trip", "[PluginState][fx][order]")
+{
+    auto s = sample();
+    s.loop2.boundaries = { 0.5 };
+    s.fx.order = reorderedFx();
+    s.fx.params.set(FxParam::DelayTime, 9);
+    s.fx.params.set(FxParam::DelayFeedback, 0.55);
+    s.fx.params.set(FxParam::DelayMix, 0.35);
+    s.fx.params.set(FxParam::DelayReverse, 1);
+    s.fx.params.set(FxParam::FlangerManual, 0.2);
+    s.fx.params.set(FxParam::FlangerRate, 0.0);
+    s.fx.setSwitch(1, FxInsert::Delay, true);
+    const auto block = serialize(s);
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    CHECK(r->fx == s.fx);
+    CHECK(r->fx.order == reorderedFx());
+    CHECK(r->fx.maskFor(1) == 16);
+}
+
+TEST_CASE("State: the default fx order is not written", "[PluginState][fx][order]")
+{
+    auto s = sample();
+    s.fx.params.set(FxParam::ReverbMix, 0.9);
+    CHECK_FALSE(serialize(s).toString().contains("order"));
+    s.fx.order = reorderedFx();
+    CHECK(serialize(s).toString().contains("order=\"4,0,3,1,2\""));
+    // Only a changed order, nothing else: the Fx element is still written.
+    auto t = sample();
+    t.fx.order = reorderedFx();
+    CHECK(serialize(t).toString().contains("<Fx"));
+}
+
+TEST_CASE("State: a garbage fx order loads as the default order", "[PluginState][fx][order][hardening]")
+{
+    for (const char* bad : { "0,0,1,2,3", "0,1,2,3", "0,1,2,3,4,5", "0,1,2,3,9", "0,1,2,3,-1", "a,b,c,d,e", "0,1,2,3,", ",,,,", "",
+                             "0 1 2 3 4", "0,1,2,3,4x", "0,1,2,3,1e99", "0,1,2,3,99999999999999999999", "garbage" })
+    {
+        CAPTURE(bad);
+        const auto r = loadXml(fxDoc("<Fx order=\"" + juce::String(bad) + "\"/>"));
+        REQUIRE(r.has_value());
+        CHECK(r->fx.order == defaultFxOrder());
+    }
+    const auto ok = loadXml(fxDoc("<Fx order=\" 4, 3,2 ,1,0\"/>"));
+    REQUIRE(ok.has_value());
+    CHECK(ok->fx.order == FxOrder { FxInsert::Delay, FxInsert::Reverb, FxInsert::Flanger, FxInsert::Filter, FxInsert::Bitcrush });
+}
+
+TEST_CASE("State: an old state without order or Delay params loads defaults and old masks", "[PluginState][fx][order]")
+{
+    const auto r = loadXml(fxDoc("<Fx reverb.mix=\"0.5\" flanger.rate=\"2.5\"><Switches><Switch region=\"0\" mask=\"15\"/></Switches></Fx>",
+                                 "<Loop2 bars=\"1\" boundaries=\"0.5\"/>"));
+    REQUIRE(r.has_value());
+    CHECK(r->fx.order == defaultFxOrder());
+    CHECK(r->fx.maskFor(0) == 15);
+    CHECK(r->fx.params.get(FxParam::FlangerRate) == 2.5f);
+    CHECK(r->fx.params.get(FxParam::ReverbMix) == 0.5f);
+    for (auto p : { FxParam::DelayTime, FxParam::DelayFeedback, FxParam::DelayMix, FxParam::DelayReverse, FxParam::FlangerManual })
+        CHECK(r->fx.params.get(p) == sanitizeFxParam(p, fxParamInfo(p).def));
+}
+
+TEST_CASE("sanitizeFx repairs the order and keeps mask bit 4", "[PluginState][fx][order]")
+{
+    FxSettings f;
+    f.order = FxOrder { FxInsert::Delay, FxInsert::Delay, FxInsert::Filter, FxInsert::Reverb, FxInsert::Flanger };
+    f.switches = { 16, 63 };
+    const auto out = sanitizeFx(f, 2);
+    CHECK(out.order == defaultFxOrder());
+    CHECK(out.switches == std::vector<std::uint8_t> { 16, 31 });
 }

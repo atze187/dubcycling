@@ -145,7 +145,7 @@ TEST_CASE("BankFormat: json carries version and a presets list")
 {
     const auto v = juce::JSON::parse(bankToJson(sampleBank()));
     REQUIRE(v.isObject());
-    CHECK(static_cast<int>(v["version"]) == 5);
+    CHECK(static_cast<int>(v["version"]) == 6);
     REQUIRE(v["presets"].isArray());
     CHECK(v["presets"].size() == 2);
 }
@@ -186,7 +186,7 @@ TEST_CASE("BankFormat: json nested deeper than kMaxJsonDepth gives no bank witho
 
 TEST_CASE("BankFormat: a newer version is flagged tooNew")
 {
-    const auto r = bankFromJson("{\"version\": 6, \"presets\": []}");
+    const auto r = bankFromJson("{\"version\": 7, \"presets\": []}");
     CHECK_FALSE(r.bank.has_value());
     CHECK(r.tooNew);
 }
@@ -303,13 +303,13 @@ BankParseResult parseOnePreset(const juce::String& fxJson, const juce::String& l
 }
 }
 
-TEST_CASE("Bank: bankToJson writes version 5")
+TEST_CASE("Bank: bankToJson writes version 6")
 {
-    CHECK(kBankVersion == 5);
+    CHECK(kBankVersion == 6);
     Bank b;
     b.presets.push_back(makePreset("A", "a.wav"));
     const auto v = juce::JSON::parse(bankToJson(b));
-    CHECK(static_cast<int>(v["version"]) == 5);
+    CHECK(static_cast<int>(v["version"]) == 6);
     CHECK(v["presets"][0]["fx"].isObject()); // written even for default fx
     CHECK(v["presets"][0]["fx"]["params"].isObject());
     CHECK(v["presets"][0]["fx"]["switches"].isObject());
@@ -367,7 +367,7 @@ TEST_CASE("Bank: invalid fx numbers are sanitized")
         "{\"switches\":{\"-3\":5,\"abc\":5,\"100000\":5,\"0\":256,\"1\":-1,\"2\":\"x\"}}", "{\"boundaries\":[0.25,0.5]}");
     REQUIRE(s.bank.has_value());
     const auto& sw = s.bank->presets[0].state.fx;
-    CHECK(sw.maskFor(0) == 15);
+    CHECK(sw.maskFor(0) == 31);
     CHECK(sw.maskFor(1) == 0);
     CHECK(sw.maskFor(2) == 0);
     CHECK(sw.switches.size() == 1);
@@ -414,13 +414,13 @@ TEST_CASE("Bank: a changed switch or knob changes the fingerprint, a default fx 
     CHECK(presetFingerprint(sw2) != presetFingerprint(sw));
 }
 
-TEST_CASE("Bank: saving a loaded version 1 or 2 bank writes version 5")
+TEST_CASE("Bank: saving a loaded version 1 or 2 bank writes version 6")
 {
     for (const char* v : { "1", "2" })
     {
         const auto r = bankFromJson("{\"version\":" + juce::String(v) + ",\"presets\":[{\"name\":\"Old\"}]}");
         REQUIRE(r.bank.has_value());
-        CHECK(static_cast<int>(juce::JSON::parse(bankToJson(*r.bank))["version"]) == 5);
+        CHECK(static_cast<int>(juce::JSON::parse(bankToJson(*r.bank))["version"]) == 6);
     }
 }
 
@@ -516,12 +516,12 @@ Preset passPreset()
 
 TEST_CASE("Bank: version 4 round trips the passes exactly", "[passes]")
 {
-    CHECK(kBankVersion == 5);
+    CHECK(kBankVersion == 6);
     Bank bank;
     bank.presets.push_back(passPreset());
     const auto json = bankToJson(bank);
     const auto v = juce::JSON::parse(json);
-    CHECK(static_cast<int>(v["version"]) == 5);
+    CHECK(static_cast<int>(v["version"]) == 6);
     REQUIRE(v["presets"][0]["passes"].size() == 8);
     CHECK(v["presets"][0]["passes"][0][0]["mode"].toString() == "oneshot");
     CHECK(static_cast<bool>(v["presets"][0]["passes"][0][1]["stop"]));
@@ -545,9 +545,9 @@ TEST_CASE("Bank: version 1 to 3 files load with empty passes", "[passes]")
     }
 }
 
-TEST_CASE("Bank: a version 6 file is refused as too new", "[passes]")
+TEST_CASE("Bank: a version 7 file is refused as too new", "[passes]")
 {
-    const auto r = bankFromJson("{\"version\":6,\"presets\":[{\"name\":\"X\"}]}");
+    const auto r = bankFromJson("{\"version\":7,\"presets\":[{\"name\":\"X\"}]}");
     CHECK(r.tooNew);
     CHECK_FALSE(r.bank.has_value());
 }
@@ -632,7 +632,7 @@ TEST_CASE("Bank: version 5 round trips the reverse flag of a target", "[reverse]
     bank.presets.push_back(reversePreset());
     const auto json = bankToJson(bank);
     const auto v = juce::JSON::parse(json);
-    CHECK(static_cast<int>(v["version"]) == 5);
+    CHECK(static_cast<int>(v["version"]) == 6);
     const auto& t0 = v["presets"][0]["rules"][0]["targets"];
     CHECK_FALSE(t0[0].hasProperty("reverse")); // forwards is not written
     CHECK(t0[1]["reverse"].isBool());
@@ -692,4 +692,111 @@ TEST_CASE("Bank: the fingerprint is unchanged without reverse and changes with i
     rev2.rules[0].targets[1].reverse = true;
     CHECK(presetFingerprint(rev2) != old);
     CHECK(presetFingerprint(rev2) != presetFingerprint(rev));
+}
+
+// --- FX order, Delay and Flanger params (version 6) ----------------------------------------------
+namespace {
+FxOrder swappedOrder()
+{
+    auto o = defaultFxOrder();
+    std::swap(o[3], o[4]);
+    return o;
+}
+}
+
+TEST_CASE("Bank: version 6 round trips the fx order, the new params and mask bit 4", "[fx][order]")
+{
+    Bank bank;
+    auto p = makePreset("O", "a.wav");
+    p.state.loop2.boundaries = { 0.5 };
+    p.state.fx.order = swappedOrder();
+    p.state.fx.params.set(FxParam::DelayTime, 7);
+    p.state.fx.params.set(FxParam::DelayFeedback, 0.6);
+    p.state.fx.params.set(FxParam::DelayMix, 0.4);
+    p.state.fx.params.set(FxParam::DelayReverse, 1);
+    p.state.fx.params.set(FxParam::FlangerManual, 0.8);
+    p.state.fx.params.set(FxParam::FlangerRate, 0.0);
+    p.state.fx.setSwitch(1, FxInsert::Delay, true);
+    bank.presets.push_back(p);
+    const auto json = bankToJson(bank);
+    const auto v = juce::JSON::parse(json);
+    REQUIRE(v["presets"][0]["fx"]["order"].isArray());
+    CHECK(v["presets"][0]["fx"]["order"].size() == kFxInserts);
+    const auto r = bankFromJson(json);
+    REQUIRE(r.bank.has_value());
+    const auto& fx = r.bank->presets[0].state.fx;
+    CHECK(fx == p.state.fx);
+    CHECK(fx.order == swappedOrder());
+    CHECK(fx.maskFor(1) == 16);
+    CHECK(presetFingerprint(r.bank->presets[0].state) == presetFingerprint(p.state));
+}
+
+TEST_CASE("Bank: the default fx order is not written", "[fx][order]")
+{
+    Bank bank;
+    bank.presets.push_back(makePreset("D", "a.wav"));
+    const auto v = juce::JSON::parse(bankToJson(bank));
+    CHECK_FALSE(v["presets"][0]["fx"].getDynamicObject()->hasProperty("order"));
+}
+
+TEST_CASE("Bank: a version 5 file loads with the default order and Delay defaults", "[fx][order]")
+{
+    const auto r = bankFromJson("{\"version\":5,\"presets\":[{\"name\":\"Old\",\"loop2\":{\"boundaries\":[0.5]},"
+                                "\"fx\":{\"params\":{\"flanger.rate\":2.5},\"switches\":{\"1\":15}}}]}");
+    REQUIRE(r.bank.has_value());
+    CHECK_FALSE(r.tooNew);
+    const auto& fx = r.bank->presets[0].state.fx;
+    CHECK(fx.order == defaultFxOrder());
+    CHECK(fx.maskFor(1) == 15);
+    CHECK(fx.params.get(FxParam::FlangerRate) == 2.5f);
+    for (auto p : { FxParam::DelayTime, FxParam::DelayFeedback, FxParam::DelayMix, FxParam::DelayReverse, FxParam::FlangerManual })
+        CHECK(fx.params.get(p) == sanitizeFxParam(p, fxParamInfo(p).def));
+}
+
+TEST_CASE("Bank: invalid fx orders load as the default order", "[fx][order][hardening]")
+{
+    for (const char* bad : { "[0,0,1,2,3]", "[0,1,2,3]", "[0,1,2,3,4,5]", "[0,1,2,3,9]", "[0,1,2,3,-1]", "[\"a\",1,2,3,4]",
+                             "[0,1,2,3,null]", "[]", "5", "\"0,1,2,3,4\"", "{}", "[0.5,1,2,3,4]", "[1e99,1,2,3,4]" })
+    {
+        CAPTURE(bad);
+        const auto r = parseOnePreset("{\"params\":{},\"switches\":{},\"order\":" + juce::String(bad) + "}");
+        REQUIRE(r.bank.has_value());
+        CHECK(r.bank->presets[0].state.fx.order == defaultFxOrder());
+    }
+    const auto ok = parseOnePreset("{\"order\":[4,3,2,1,0]}");
+    REQUIRE(ok.bank.has_value());
+    CHECK(ok.bank->presets[0].state.fx.order == FxOrder { FxInsert::Delay, FxInsert::Reverb, FxInsert::Flanger, FxInsert::Filter, FxInsert::Bitcrush });
+}
+
+TEST_CASE("Bank: masks up to 31 are kept, larger ones are clamped", "[fx][order]")
+{
+    const auto r = parseOnePreset("{\"switches\":{\"0\":16,\"1\":31,\"2\":255}}", "{\"boundaries\":[0.25,0.5]}");
+    REQUIRE(r.bank.has_value());
+    const auto& fx = r.bank->presets[0].state.fx;
+    CHECK(fx.maskFor(0) == 16);
+    CHECK(fx.maskFor(1) == 31);
+    CHECK(fx.maskFor(2) == 31);
+}
+
+TEST_CASE("Bank: the fingerprint changes with a non-default order only", "[fx][order]")
+{
+    auto base = makePreset("A", "a.wav").state;
+    auto def = base;
+    def.fx.order = defaultFxOrder();
+    CHECK(presetFingerprint(def) == presetFingerprint(base));
+    CHECK_FALSE(presetFingerprint(base).contains("F|"));
+    CHECK_FALSE(presetFingerprint(base).contains("O|"));
+    auto swapped = base;
+    swapped.fx.order = swappedOrder();
+    CHECK(presetFingerprint(swapped) != presetFingerprint(base));
+    auto other = base;
+    other.fx.order = defaultFxOrder();
+    std::swap(other.fx.order[0], other.fx.order[1]);
+    CHECK(presetFingerprint(other) != presetFingerprint(swapped));
+    // A default-valued state with default order keeps the exact old text when fx params are set.
+    auto knob = base;
+    knob.fx.params.set(FxParam::ReverbMix, 0.9);
+    auto knobSwapped = knob;
+    knobSwapped.fx.order = swappedOrder();
+    CHECK(presetFingerprint(knobSwapped) != presetFingerprint(knob));
 }
