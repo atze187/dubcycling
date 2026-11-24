@@ -18,9 +18,11 @@ constexpr int kLogoW = 88;
 constexpr int kCycleW = 130;
 constexpr int kModeW = 72;
 constexpr int kFxStripH = 17;     // incl. the 1 px bottom border of the Loop-2 box
-constexpr int kFxPanelMinW = 440; // four modules
-constexpr int kFxPanelMaxW = 600;
-constexpr int kBottomMinH = 190;  // FxPanel: title, switch and four knob rows
+// FxPanel: the 130 px effect list plus one effect's edit view; at the minimum the Flanger's five knobs
+// in two columns of about 100 px (the longest line, "Feedback -90 %", fits). The rule panel gets the rest.
+constexpr int kFxPanelMinW = 360;
+constexpr int kFxPanelMaxW = 460;
+constexpr int kBottomMinH = 190;  // FxPanel: title and four knob rows (Flanger's five go into two columns)
 constexpr int kMinW = 800;
 constexpr int kMinH = 600;
 constexpr int kResizerSize = 18; // JUCE's resize corner (AudioProcessorEditor::editorResized)
@@ -280,6 +282,7 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
     };
     fxPanel_.onSwitchChanged = [this](int region, FxInsert insert, bool on) { switchEdited(region, insert, on); };
     fxPanel_.onParamsChanged = [this](const FxParams& params) { paramsEdited(params); };
+    fxPanel_.onOrderChanged = [this](const FxOrder& order) { orderEdited(order); };
     addAndMakeVisible(fxStrip_);
     addAndMakeVisible(fxPanel_);
     addAndMakeVisible(passes_);
@@ -443,6 +446,15 @@ void Editor::paramsEdited(const FxParams& params)
     PluginState st = proc_.getPluginState();
     st.fx.params = params;
     proc_.applyEdit(st);
+}
+
+void Editor::orderEdited(const FxOrder& order)
+{
+    // Stored here, synchronously: the next poll reads the new order back instead of the old one.
+    PluginState st = proc_.getPluginState();
+    st.fx.order = sanitizeFxOrder(order);
+    proc_.applyEdit(st);
+    updateFx(proc_.getPluginState()); // the strip follows the list at once
 }
 
 void Editor::labelEdited(int slot, int region, const juce::String& text)
@@ -785,7 +797,8 @@ void Editor::resized()
         }
         area.removeFromTop(kGap);
     }
-    const int fxW = std::clamp(area.getWidth() / 2, kFxPanelMinW, kFxPanelMaxW);
+    // The FX panel takes about a third of the row (within its limits), the rule panel the rest.
+    const int fxW = std::clamp(area.getWidth() / 3, kFxPanelMinW, kFxPanelMaxW);
     fxPanel_.setBounds(area.removeFromRight(fxW));
     area.removeFromRight(kGap);
     rules_.setBounds(area);

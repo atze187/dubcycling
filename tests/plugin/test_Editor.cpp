@@ -1,8 +1,10 @@
 // Editor: relink vs replace, data-loss protection, bars validation.
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <typeinfo>
 #include <functional>
 #include <map>
 #include <memory>
@@ -1113,12 +1115,170 @@ TEST_CASE("Editor: strip, panels and lanes fit in the window without overlap", "
         CHECK(strip.getY() - lane1.getBottom() <= 2);
         CHECK(strip.getHeight() >= 14);
         CHECK(strip.getHeight() <= 18);
-        // Room for the four modules; the rule panel stays usable next to it.
-        CHECK(panel.getWidth() >= 440);
+        // Room for the list and one effect's knobs; the rule panel stays usable next to it.
+        CHECK(panel.getWidth() >= 360);
         CHECK(panel.getHeight() >= 190);
         CHECK(f.editor->rulePanel().getWidth() >= 300);
         CHECK(f.editor->rulePanel().getHeight() >= 190);
     }
+}
+
+namespace {
+// x order of the strip's marker columns in region 0, as inserts.
+FxOrder stripOrder(const dc::ui::FxStrip& strip)
+{
+    FxOrder o = defaultFxOrder();
+    std::sort(o.begin(), o.end(), [&](FxInsert a, FxInsert b) {
+        return strip.markerBounds(0, a).getX() < strip.markerBounds(0, b).getX();
+    });
+    return o;
+}
+
+// Every visible descendant lies fully inside its parent (nothing is clipped), and the text of every
+// visible label / text button fits its width.
+void checkAllInside(juce::Component& c, const juce::String& path)
+{
+    for (auto* child : c.getChildren())
+    {
+        if (!child->isVisible() || child->getBounds().isEmpty())
+            continue;
+        const auto name = path + "/" + juce::String(typeid(*child).name()) + " " + child->getName();
+        CAPTURE(name, child->getBounds().toString(), c.getLocalBounds().toString());
+        CHECK(c.getLocalBounds().contains(child->getBounds()));
+        if (auto* label = dynamic_cast<juce::Label*>(child); label != nullptr && label->getText().isNotEmpty())
+        {
+            const auto border = label->getBorderSize();
+            const int textW = juce::GlyphArrangement::getStringWidthInt(label->getFont(), label->getText());
+            CAPTURE(label->getText(), textW);
+            CHECK(textW <= label->getWidth() - border.getLeftAndRight());
+        }
+        if (auto* button = dynamic_cast<juce::TextButton*>(child); button != nullptr && button->getButtonText().isNotEmpty())
+        {
+            const auto font = button->getLookAndFeel().getTextButtonFont(*button, button->getHeight());
+            const int textW = juce::GlyphArrangement::getStringWidthInt(font, button->getButtonText());
+            CAPTURE(button->getButtonText(), textW);
+            CHECK(textW + 4 <= button->getWidth());
+        }
+        checkAllInside(*child, name);
+    }
+}
+} // namespace
+
+TEST_CASE("Editor: dragging in the list changes the order in the plugin state", "[editor][fx][order]")
+{
+    EditorFixture f;
+    bothLoaded(f);
+    auto s = f.proc.getPluginState();
+    s.fx.switches = { 1, 0b10110, 0b01000 };
+    f.proc.applyEdit(s);
+    f.editor->refresh();
+    auto& panel = f.editor->fxPanel();
+    panel.selectInsert(FxInsert::Delay);
+    REQUIRE(stripOrder(f.editor->fxStrip()) == defaultFxOrder());
+
+    panel.list().dragRow(0, 4); // Bitcrush to the end
+    const FxOrder moved { FxInsert::Filter, FxInsert::Flanger, FxInsert::Delay, FxInsert::Reverb, FxInsert::Bitcrush };
+    // Stored at once, in the handler: the next poll must not bring the old order back.
+    auto st = f.proc.getPluginState();
+    CHECK(st.fx.order == moved);
+    CHECK(st.fx.switches == Masks { 1, 0b10110, 0b01000 });
+    REQUIRE(f.proc.getModel() != nullptr);
+    CHECK(f.proc.getModel()->fx.order == moved);
+
+    f.editor->refresh(); // what the timer calls
+    CHECK(panel.list().order() == moved);
+    CHECK(stripOrder(f.editor->fxStrip()) == moved);
+    CHECK(f.proc.getPluginState().fx.order == moved);
+    // The selection is the panel's UI state: the poll leaves it alone.
+    CHECK(panel.selectedInsert() == FxInsert::Delay);
+    CHECK(panel.list().selected() == FxInsert::Delay);
+}
+
+TEST_CASE("Editor: loading a preset with a non-default order shows it in list and strip", "[editor][fx][order]")
+{
+    EditorFixture f;
+    bothLoaded(f);
+    auto& panel = f.editor->fxPanel();
+    panel.selectInsert(FxInsert::Filter);
+    auto s = f.proc.getPluginState();
+    const FxOrder reversed { FxInsert::Reverb, FxInsert::Delay, FxInsert::Flanger, FxInsert::Filter, FxInsert::Bitcrush };
+    s.fx.order = reversed;
+    f.proc.restoreState(s);
+    f.proc.waitForLoads();
+    f.editor->refresh();
+
+    CHECK(panel.list().order() == reversed);
+    CHECK(stripOrder(f.editor->fxStrip()) == reversed);
+    CHECK(panel.selectedInsert() == FxInsert::Filter); // a preset load does not move the selection
+}
+
+TEST_CASE("Editor: at 800x600 every edit view and the rule rows fit inside their panels", "[editor][fx][layout]")
+{
+    EditorFixture f;
+    bothLoaded(f, { 0.25, 0.5, 0.75, 0.985 }); // five Loop-2 regions: five rule rows
+    auto s = f.proc.getPluginState();
+    s.loop1.boundaries = { 0.5 };
+    s.rules = { RuleEntry { 0, { RuleTarget { 0, 0.5f }, RuleTarget { 1, 0.25f } } } };
+    s.loop2.labels = { "Intro" };
+    s.fx.params.set(FxParam::FlangerFeedback, -0.9);
+    s.fx.params.set(FxParam::FilterCutoff, 12000.0);
+    s.fx.params.set(FxParam::DelayTime, 99.0);
+    f.proc.applyEdit(s);
+    f.editor->lane(1).setSelectedRegion(1);
+    f.editor->refresh();
+    for (const auto size : { juce::Point<int> { 800, 600 }, juce::Point<int> { 900, 660 }, juce::Point<int> { 1400, 900 } })
+    {
+        f.editor->setSize(size.x, size.y);
+        CAPTURE(size.x, size.y);
+        auto& panel = f.editor->fxPanel();
+        auto& rules = f.editor->rulePanel();
+        REQUIRE(rules.rowCount() == 5);
+        checkAllInside(rules, "rules");
+        for (int i = 0; i < dc::kFxInserts; ++i)
+        {
+            const auto insert = static_cast<FxInsert>(i);
+            CAPTURE(i);
+            panel.selectInsert(insert);
+            // Look at it: DC_SNAPSHOT_DIR=<dir> writes editor_edit<insert>_<w>x<h>.png.
+            if (const auto dir = juce::SystemStats::getEnvironmentVariable("DC_SNAPSHOT_DIR", {}); dir.isNotEmpty())
+            {
+                const auto img = f.editor->createComponentSnapshot(f.editor->getLocalBounds());
+                auto png = juce::File(dir).getChildFile("editor_edit" + juce::String(i) + "_" + juce::String(size.x) + "x"
+                                                        + juce::String(size.y) + ".png");
+                png.deleteFile();
+                if (auto out = png.createOutputStream())
+                    juce::PNGImageFormat().writeImageToStream(img, *out);
+            }
+            checkAllInside(panel, "fx");
+            // Every knob of the effect is shown, none overlaps another.
+            std::vector<juce::Rectangle<int>> shown;
+            for (int p = 0; p < dc::kFxParamCount; ++p)
+            {
+                if (fxParamInfo(static_cast<FxParam>(p)).insert != insert)
+                    continue;
+                const auto b = panel.paramBounds(static_cast<FxParam>(p));
+                CAPTURE(p, b.toString());
+                CHECK(!b.isEmpty());
+                CHECK(panel.getLocalBounds().contains(b));
+                for (const auto& o : shown)
+                    CHECK_FALSE(o.intersects(b));
+                shown.push_back(b);
+            }
+        }
+    }
+}
+
+TEST_CASE("Editor: the rule panel gets the width the narrower FX panel gives up", "[editor][fx][layout]")
+{
+    EditorFixture f;
+    REQUIRE(f.editor->getWidth() == 900);
+    // Before the list/edit panel the FX panel took half of the 884 px row (442), the rules 436.
+    CHECK(f.editor->rulePanel().getWidth() >= 500);
+    CHECK(f.editor->fxPanel().getWidth() >= 360);
+    CHECK(f.editor->fxPanel().getWidth() <= 460);
+    f.editor->setSize(1400, 900);
+    CHECK(f.editor->fxPanel().getWidth() <= 460);
+    CHECK(f.editor->rulePanel().getWidth() > 1400 / 2);
 }
 
 TEST_CASE("Editor: the pass panel follows the processor on refresh", "[editor][passes]")
