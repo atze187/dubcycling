@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <random>
 #include <set>
@@ -1109,4 +1110,65 @@ TEST_CASE("Flanger: rate 0 to 0.3 and back does not jump", "[FxUnits]")
     double step = 0;
     for (size_t i = 1; i < l.size(); ++i) step = std::max(step, double(std::abs(l[i] - l[i - 1])));
     CHECK(step < 0.05); // the 200 Hz sine itself moves by up to 0.013 per sample
+}
+
+// ---- Filter modes Notch, Peak, LP 24 --------------------------------------------------------------
+
+namespace fxtest {
+// Platform-independent noise (std::uniform_real_distribution differs between standard libraries):
+// a 32-bit LCG, top 24 bits mapped exactly to [-0.5, 0.5).
+inline std::vector<float> lcgNoise(int n, uint32_t seed)
+{
+    std::vector<float> v(static_cast<size_t>(n));
+    uint32_t s = seed;
+    for (auto& x : v)
+    {
+        s = s * 1664525u + 1013904223u;
+        x = static_cast<float>(s >> 8) * (1.0f / 16777216.0f) - 0.5f;
+    }
+    return v;
+}
+
+// Reference render for the bit-identity test: 64 frames of LCG noise through one filter type.
+inline std::vector<float> filterReferenceRender(int type)
+{
+    Filter f;
+    f.prepare(kSr);
+    f.setParams(filterParams(type, 3000.0, 0.5));
+    auto l = lcgNoise(64, 12345u), r = lcgNoise(64, 678u);
+    f.process(l.data(), r.data(), 64);
+    return l;
+}
+} // namespace fxtest
+
+TEST_CASE("Filter: types 0..2 are bit-identical to a stored reference render", "[FxUnits]")
+{
+    // Captured with filterReferenceRender() from the Filter before Notch, Peak and LP 24 existed
+    // (printed with %.9g, which round-trips a float exactly).
+    static constexpr float kRef[3][16] = {
+        {-0.0163889695f, -0.0764880776f, -0.161809355f, -0.216542944f, -0.205788836f, -0.149712428f,
+         -0.0972434282f, -0.0540736392f, -0.00588434702f, 0.0511703975f, 0.0965063274f, 0.105957553f,
+         0.115850657f, 0.133485094f, 0.122872047f, 0.0953484029f},
+        {-0.414216995f, -0.27630192f, 0.329352796f, 0.390673757f, 0.544444382f, -0.334080577f,
+         0.0325424522f, 0.0339658931f, 0.0263893511f, 0.137321994f, -0.597216249f, 0.15015538f,
+         0.30807361f, -0.570646882f, 0.119289614f, -0.0953329653f},
+        {-0.0489913523f, -0.130662203f, -0.124387637f, -0.0392267928f, 0.0713739246f, 0.0962546319f,
+         0.060590338f, 0.0684565902f, 0.0755950883f, 0.094957985f, 0.0405641794f, -0.0123117622f,
+         0.0418850854f, 0.0108293351f, -0.0425547659f, -0.0397213101f},
+    };
+#if defined(_MSC_VER)
+    constexpr float kTol = 0.0f; // the platform the constants were captured on: exact
+#else
+    constexpr float kTol = 1e-6f; // other libm (tan/exp/pow) may differ in the last bit
+#endif
+    for (int type = 0; type < 3; ++type)
+    {
+        INFO("type " << type);
+        const auto out = filterReferenceRender(type);
+        for (int i = 0; i < 16; ++i)
+        {
+            INFO("sample " << i);
+            CHECK(std::abs(out[size_t(i)] - kRef[type][i]) <= kTol);
+        }
+    }
 }
