@@ -424,6 +424,7 @@ void Editor::updateFx(const PluginState& st)
     const bool loop2 = proc_.getSlotStatus(1) == DubcyclingProcessor::SlotStatus::Loaded;
     fxStrip_.setRegions(regions);
     fxStrip_.setSwitches(st.fx.switches);
+    fxStrip_.setOrder(st.fx.order);
     fxStrip_.setSelectedRegion(selected);
     fxStrip_.setLive(loop2);
     fxPanel_.setContext(selected, loop2 ? regions.regionCount() : 0, st.loop2.labels, st.fx);

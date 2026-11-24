@@ -11,8 +11,8 @@ namespace dc::ui {
 // One colour per insert, clearly distinguishable on the dark panel (also used by the effects panel).
 juce::Colour fxInsertColour(FxInsert i);
 
-// Strip under the Loop-2 lane: per region four markers (one per insert, filled = on, outline = off),
-// laid out over the same x range as the region in the lane above. A region too narrow for four
+// Strip under the Loop-2 lane: per region five markers (one per insert, filled = on, outline = off),
+// laid out over the same x range as the region in the lane above. A region too narrow for five
 // markers shows one collective marker instead; clicking that reports nothing (switch in the panel).
 // A click only reports (onToggled); the caller decides the new state. Mouse input goes through
 // toggleAt (local pixels), which the tests call directly.
@@ -25,6 +25,8 @@ public:
     void setSwitches(const std::vector<std::uint8_t>& masks);
     void setSelectedRegion(int region);
     // Not live (no Loop-2 data): no markers, no selection, clicks report nothing.
+    // Columns follow the effect chain order: column c shows insert order[c]. Invalid -> default order.
+    void setOrder(const FxOrder& order);
     void setLive(bool live);
     bool isLive() const { return live_; }
 
@@ -54,6 +56,7 @@ public:
 private:
     float xFor(double phase) const { return static_cast<float>(phase * getWidth()); }
     float markerWidth(int region) const;
+    int columnOf(FxInsert insert) const;
     std::uint8_t maskOf(int region) const;
     int count() const { return live_ ? regions_.regionCount() : 0; } // regions with markers
 
@@ -61,6 +64,7 @@ private:
     bool live_ = true;
     std::vector<std::uint8_t> switches_;
     int selected_ = 0;
+    FxOrder order_ = defaultFxOrder();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FxStrip)
 };
