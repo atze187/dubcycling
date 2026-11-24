@@ -1172,3 +1172,77 @@ TEST_CASE("Filter: types 0..2 are bit-identical to a stored reference render", "
         }
     }
 }
+
+TEST_CASE("Filter: notch removes a sine at the cutoff by at least 20 dB and passes 100 Hz and 10 kHz within 1.5 dB", "[FxUnits]")
+{
+    const auto p = filterParams(3, 2000.0, 0.2);
+    CHECK(filterGainDb(p, 2000.0) < -20.0);
+    CHECK(std::abs(filterGainDb(p, 100.0)) < 1.5);
+    CHECK(std::abs(filterGainDb(p, 10000.0)) < 1.5);
+}
+
+TEST_CASE("Filter: peak lifts a sine at the cutoff above the same sine far away", "[FxUnits]")
+{
+    const auto p = filterParams(4, 1000.0, 1.0);
+    const double atCutoff = filterGainDb(p, 1000.0);
+    CHECK(atCutoff > filterGainDb(p, 100.0) + 3.0);
+    CHECK(atCutoff > filterGainDb(p, 10000.0) + 3.0);
+}
+
+TEST_CASE("Filter: LP24 attenuates 8 kHz at least 30 dB more than LP at the same cutoff, passes 100 Hz within 1 dB", "[FxUnits]")
+{
+    const auto lp = filterParams(0, 1000.0, 0.2), lp24 = filterParams(5, 1000.0, 0.2);
+    CHECK(filterGainDb(lp24, 8000.0) < filterGainDb(lp, 8000.0) - 30.0);
+    CHECK(std::abs(filterGainDb(lp24, 100.0)) < 1.0);
+}
+
+TEST_CASE("Filter: notch, peak and LP24 stay finite and below 4x the input peak at resonance 1 and 44.1, 96, 192 kHz", "[FxUnits]")
+{
+    for (double sr : {44100.0, 96000.0, 192000.0})
+        for (int type = 3; type < 6; ++type)
+            for (double cutoff : {100.0, 1000.0, 20000.0})
+            {
+                INFO("sr " << sr << " type " << type << " cutoff " << cutoff);
+                Filter f;
+                f.prepare(sr);
+                f.setParams(filterParams(type, cutoff, 1.0));
+                const int n = static_cast<int>(sr);
+                auto l = lcgNoise(n, 21u), r = lcgNoise(n, 22u);
+                for (auto* v : {&l, &r})
+                    for (auto& x : *v) x *= 2.0f; // peak 1
+                double inPeak = std::max(peakAbs(l, 0, l.size()), peakAbs(r, 0, r.size()));
+                processBlocks(f, l, r, 512);
+                for (size_t i = 0; i < l.size(); ++i)
+                {
+                    REQUIRE(std::isfinite(l[i]));
+                    REQUIRE(std::isfinite(r[i]));
+                }
+                CHECK(std::max(peakAbs(l, 0, l.size()), peakAbs(r, 0, r.size())) < 4.0 * inPeak);
+                // A sine at the cutoff (the resonance peak) stays below 4x as well.
+                Filter g;
+                g.prepare(sr);
+                g.setParams(filterParams(type, cutoff, 1.0));
+                const double hz = std::min(cutoff, 0.45 * sr);
+                auto sl = sine(n, hz, 1.0f, sr), sr2 = sl;
+                processBlocks(g, sl, sr2, 512);
+                CHECK(peakAbs(sl, 0, sl.size()) < 4.0);
+            }
+}
+
+TEST_CASE("Filter: switching the type while sounding does not jump by more than 0.5 between samples", "[FxUnits]")
+{
+    // Cutoff at the sine frequency: LP and HP are in antiphase there, an abrupt switch jumps by up to 1.
+    Filter f;
+    f.prepare(kSr);
+    f.setParams(filterParams(0, 100.0, 0.2));
+    const int n = 12 * 1000 + 2000;
+    auto l = sine(n, 100.0, 0.5f), r = l;
+    for (int pos = 0, type = 0; pos < n; pos += 1000, type = (type + 1) % 6)
+    {
+        f.setParams(filterParams(type, 100.0, 0.2));
+        f.process(l.data() + pos, r.data() + pos, std::min(1000, n - pos));
+    }
+    double step = 0;
+    for (size_t i = 1; i < l.size(); ++i) step = std::max(step, double(std::abs(l[i] - l[i - 1])));
+    CHECK(step < 0.5);
+}
