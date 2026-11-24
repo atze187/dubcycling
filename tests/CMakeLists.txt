@@ -8,6 +8,7 @@ add_executable(dc_tests
     test_FxSettings.cpp
     test_FxUnits.cpp
     test_Delay.cpp
+    test_Lfo.cpp
     test_FxChain.cpp
     test_TransientDetector.cpp
     test_Sequencer.cpp

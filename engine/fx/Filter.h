@@ -1,11 +1,13 @@
 #pragma once
 #include "engine/FxSettings.h"
+#include "engine/fx/Lfo.h"
 
 namespace dc::fx {
 
 // Stereo state variable filter (TPT). Types: 0 low pass, 1 high pass, 2 band pass, 3 notch
 // (low + high), 4 peak (low - high), 5 LP 24 (the low pass followed by a second, Butterworth stage).
-// A type change while running crossfades the outputs over about 5 ms.
+// A type change while running crossfades the outputs over about 5 ms. A tempo-synced LFO moves the cutoff in the log
+// domain; at depth 0 it is skipped entirely (output identical to the filter without LFO).
 class Filter
 {
 public:
@@ -14,11 +16,25 @@ public:
     void prepare(double sampleRate);
     void reset();
     void setParams(const FxParams& p);
+    // Non-finite or <= 0 values keep the last valid ones (initially 120 BPM, 4 beats per bar).
+    void setTempo(double bpm, double beatsPerBar);
+    // Host position in beats (quarter notes) of the next sample to render; non-finite is ignored. Without calls the
+    // position advances by itself at the last tempo.
+    void setPosition(double ppq);
     void process(float* l, float* r, int n);
 
 private:
     double sampleRate_ = 48000.0;
     float smoothCoeff_ = 0.0f;
+    // LFO on the cutoff, in octaves around it (depth 1 = +/-2 octaves), synced to the beat position.
+    float slewCoeff_ = 0.0f;                          // one-pole slew of the LFO value (1 ms)
+    double bpm_ = 120.0, beatsPerBar_ = 4.0;
+    double beatPos_ = 0.0;                            // beat position of the next sample
+    int lfoRate_ = 8;                                 // delay time step: cycle length
+    LfoShape lfoShape_ = LfoShape::Sine;
+    float depthTarget_ = 0.0f, depth_ = 0.0f;         // depth_ smoothed
+    float lfoSlewed_ = 0.0f;
+    bool modulated_ = false;                          // the coefficients were last computed with the LFO
     float fadeStep_ = 0.0f; // per-sample weight change of the type crossfade
     bool first_ = true;
     int type_ = 0;
