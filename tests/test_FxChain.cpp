@@ -432,3 +432,376 @@ TEST_CASE("FxChain: sleeping reverb and flanger wake up without a click while a 
     CHECK(maxStep(tr, 0, tr.size()) < 0.05);
     CHECK(peakAbs(tl, 24000, tl.size()) > 0.6); // the effects are audible on top of the dry 0.5
 }
+
+// --- Chain order, Delay, tempo ---------------------------------------------------------------------
+
+namespace chaintest {
+
+// The separate units of a chain, set up exactly as FxChain::prepare + setParams does it.
+struct Units
+{
+    Bitcrush bitcrush;
+    Filter filter;
+    Flanger flanger;
+    Reverb reverb;
+    Delay delay;
+
+    Units(double sr, const FxParams& p)
+    {
+        bitcrush.prepare(sr);
+        filter.prepare(sr);
+        flanger.prepare(sr);
+        reverb.prepare(sr);
+        delay.prepare(sr);
+        const FxParams def;
+        bitcrush.reset(); bitcrush.setParams(def); bitcrush.setParams(p);
+        filter.reset(); filter.setParams(def); filter.setParams(p);
+        flanger.reset(); flanger.setParams(def); flanger.setParams(p);
+        reverb.reset(); reverb.setParams(def); reverb.setParams(p);
+        delay.reset(); delay.setParams(def); delay.setParams(p);
+    }
+
+    void unit(FxInsert i, float* l, float* r, int n)
+    {
+        switch (i)
+        {
+            case FxInsert::Bitcrush: bitcrush.process(l, r, n); break;
+            case FxInsert::Filter: filter.process(l, r, n); break;
+            case FxInsert::Flanger: flanger.process(l, r, n); break;
+            case FxInsert::Reverb: reverb.process(l, r, n); break;
+            case FxInsert::Delay: delay.process(l, r, n); break;
+        }
+    }
+
+    // The chain's arithmetic with every gate fully open and no flush (gain 1 * fade 1), inserts in
+    // the given sequence: Bitcrush/Filter blend, the others add their wet output.
+    void compose(const std::vector<FxInsert>& seq, std::vector<float>& l, std::vector<float>& r, int block)
+    {
+        std::vector<float> tl(static_cast<size_t>(block)), tr = tl;
+        const float g = 1.0f, f = 1.0f;
+        for (size_t pos = 0; pos < l.size(); pos += static_cast<size_t>(block))
+        {
+            const int n = static_cast<int>(std::min<size_t>(static_cast<size_t>(block), l.size() - pos));
+            float* bl = l.data() + pos;
+            float* br = r.data() + pos;
+            for (FxInsert ins : seq)
+            {
+                const bool blend = ins == FxInsert::Bitcrush || ins == FxInsert::Filter;
+                for (int i = 0; i < n; ++i)
+                {
+                    tl[size_t(i)] = blend ? bl[i] : g * bl[i];
+                    tr[size_t(i)] = blend ? br[i] : g * br[i];
+                }
+                unit(ins, tl.data(), tr.data(), n);
+                for (int i = 0; i < n; ++i)
+                {
+                    if (blend)
+                    {
+                        const float w = g * f;
+                        bl[i] += w * (tl[size_t(i)] - bl[i]);
+                        br[i] += w * (tr[size_t(i)] - br[i]);
+                    }
+                    else
+                    {
+                        bl[i] += f * tl[size_t(i)];
+                        br[i] += f * tr[size_t(i)];
+                    }
+                }
+            }
+        }
+    }
+};
+
+// A chain whose gates for `mask` are fully open from the first sample (the mask is set before
+// prepare, whose reset() jumps the gates to their targets).
+void openChain(FxChain& c, double sr, int block, std::uint8_t mask, const FxParams& p)
+{
+    c.setMask(mask);
+    c.prepare(sr, block);
+    c.setParams(p);
+}
+
+FxParams orderParams()
+{
+    FxParams p = reverbParams(0.5, 0.6, 0.4);
+    p.set(FxParam::FilterType, 0);
+    p.set(FxParam::FilterCutoff, 800.0);
+    p.set(FxParam::FilterResonance, 0.6);
+    p.set(FxParam::BitcrushBits, 4.0);
+    p.set(FxParam::BitcrushRate, 6.0);
+    p.set(FxParam::FlangerMix, 0.7);
+    p.set(FxParam::DelayTime, 2.0); // 1/16
+    p.set(FxParam::DelayMix, 0.6);
+    p.set(FxParam::DelayFeedback, 0.5);
+    return p;
+}
+
+const FxOrder kReversed = {FxInsert::Reverb, FxInsert::Delay, FxInsert::Flanger, FxInsert::Filter, FxInsert::Bitcrush};
+
+std::vector<FxInsert> seqOf(const FxOrder& o) { return {o.begin(), o.end()}; }
+
+double maxDev(const std::vector<float>& a, const std::vector<float>& b, size_t from, size_t to)
+{
+    double m = 0;
+    for (size_t i = from; i < to && i < a.size() && i < b.size(); ++i) m = std::max(m, double(std::abs(a[i] - b[i])));
+    return m;
+}
+
+} // namespace chaintest
+
+TEST_CASE("FxChain: default order with delay off is bit-identical to the pre-change chain", "[FxChain][order]")
+{
+    // The pre-change chain: Bitcrush -> Filter (blend), then Flanger -> Reverb (additive).
+    for (int block : {1, 64, 512})
+    {
+        INFO("block " << block);
+        FxParams p; // defaults, with every effect audible
+        p.set(FxParam::ReverbMix, 0.6);
+        FxChain c;
+        openChain(c, kSr, block, 0x0F, p);
+        CHECK(c.order() == defaultFxOrder());
+        auto l = noise(48000, 21, 0.5f), r = noise(48000, 22, 0.5f);
+        auto el = l, er = r;
+        run(c, l, r, 0, l.size(), block);
+        Units u(kSr, p);
+        u.compose({FxInsert::Bitcrush, FxInsert::Filter, FxInsert::Flanger, FxInsert::Reverb}, el, er, block);
+        CHECK(l == el);
+        CHECK(r == er);
+    }
+}
+
+TEST_CASE("FxChain: chain applies effects in the chosen order", "[FxChain][order]")
+{
+    const FxParams p = orderParams();
+    SECTION("Filter then Bitcrush differs from Bitcrush then Filter")
+    {
+        const std::uint8_t mask = bit(FxInsert::Bitcrush) | bit(FxInsert::Filter);
+        FxChain a, b;
+        openChain(a, kSr, 256, mask, p);
+        openChain(b, kSr, 256, mask, p);
+        b.setOrder({FxInsert::Filter, FxInsert::Bitcrush, FxInsert::Flanger, FxInsert::Delay, FxInsert::Reverb});
+        auto al = noise(24000, 23, 0.5f), ar = noise(24000, 24, 0.5f);
+        auto bl = al, br = ar;
+        run(a, al, ar, 0, al.size(), 256);
+        run(b, bl, br, 0, bl.size(), 256);
+        CHECK(maxDev(al, bl, 0, al.size()) > 0.01);
+    }
+    SECTION("Reverb, Delay, Flanger, Filter, Bitcrush equals the manual composition")
+    {
+        FxChain c;
+        c.prepare(kSr, 256);
+        c.setOrder(kReversed); // idle: at once
+        c.setMask(0x1F);
+        c.reset(); // gates jump open
+        c.setParams(p);
+        CHECK(c.order() == kReversed);
+        auto l = noise(48000, 25, 0.5f), r = noise(48000, 26, 0.5f);
+        auto el = l, er = r;
+        run(c, l, r, 0, l.size(), 256);
+        Units u(kSr, p);
+        u.compose(seqOf(kReversed), el, er, 256);
+        CHECK(l == el);
+        CHECK(r == er);
+    }
+}
+
+TEST_CASE("FxChain: reorder while idle applies immediately", "[FxChain][order]")
+{
+    FxChain c;
+    c.prepare(kSr, 128);
+    c.setParams(orderParams());
+    REQUIRE_FALSE(c.anyActive());
+    c.setOrder(kReversed);
+    CHECK(c.order() == kReversed);
+    CHECK_FALSE(c.anyActive()); // no flush started
+    // An invalid order (a duplicate) becomes the default order.
+    FxOrder bad = kReversed;
+    bad[1] = FxInsert::Reverb;
+    c.setOrder(bad);
+    CHECK(c.order() == defaultFxOrder());
+    // The idle chain still passes the signal bit-exactly.
+    auto l = noise(4800, 27), r = noise(4800, 28);
+    const auto l0 = l, r0 = r;
+    run(c, l, r, 0, l.size(), 128);
+    CHECK(l == l0);
+    CHECK(r == r0);
+}
+
+TEST_CASE("FxChain: reorder while an effect is active fades and then applies", "[FxChain][order]")
+{
+    FxParams p = orderParams();
+    p.set(FxParam::BitcrushBits, 12.0); // small quantisation steps of its own
+    p.set(FxParam::BitcrushRate, 1.0);
+    const std::uint8_t mask = bit(FxInsert::Filter) | bit(FxInsert::Bitcrush) | bit(FxInsert::Reverb) | bit(FxInsert::Delay);
+    for (int block : {1, 64, 4096})
+    {
+        INFO("block " << block);
+        FxChain c;
+        c.prepare(kSr, 4096);
+        c.setParams(p);
+        c.setMask(mask);
+        auto l = sine(3 * 48000, 220.0, 0.5f), r = l;
+        const size_t at = 48000 + 77;
+        run(c, l, r, 0, at, block);
+        REQUIRE(c.anyActive());
+        c.setOrder(kReversed);
+        CHECK(c.order() == defaultFxOrder()); // not yet: the fade runs first
+        c.setOrder(kReversed);                // repeated calls (every engine slice) change nothing
+        const size_t ms40 = 40 * 48;
+        run(c, l, r, at, at + ms40, block == 4096 ? 64 : block);
+        CHECK(c.order() == defaultFxOrder());
+        const size_t ms60 = 60 * 48;
+        run(c, l, r, at + ms40, at + ms60, block == 4096 ? 64 : block);
+        CHECK(c.order() == kReversed);
+        run(c, l, r, at + ms60, l.size(), block);
+        CHECK(c.order() == kReversed);
+        CHECK(c.isActive(FxInsert::Reverb));
+        for (size_t i = 0; i < l.size(); ++i) REQUIRE(std::isfinite(l[i]));
+        // No click: around the reorder (fade out to the dry signal, clear, ramp in) the steps stay
+        // within those of the steady signal in the old order before it, in the new order well after
+        // it, and of the dry sine the fade passes through (0.0144; the effects here smooth it).
+        const double drySlope = 2.0 * kPi * 220.0 / kSr * 0.5;
+        const double before = maxStep(l, 24000, at);
+        const double after = maxStep(l, at + 48000, l.size());
+        const double around = maxStep(l, at, at + 120 * 48);
+        INFO("steady old " << before << ", steady new " << after << ", around reorder " << around);
+        CHECK(around <= 1.2 * std::max({before, after, drySlope}));
+
+        // The measure does see a click: a hard switch (states dropped at once) exceeds the bound.
+        FxChain hard;
+        hard.prepare(kSr, 4096);
+        hard.setParams(p);
+        hard.setMask(mask);
+        auto hl = sine(3 * 48000, 220.0, 0.5f), hr = hl;
+        run(hard, hl, hr, 0, at, block);
+        hard.setOrder(kReversed); // pending (the inserts are open) ...
+        hard.reset();             // ... and applied by the reset, which drops every state at once
+        REQUIRE(hard.order() == kReversed);
+        run(hard, hl, hr, at, hl.size(), block);
+        INFO("hard switch " << maxStep(hl, at - 1, at + 120 * 48));
+        CHECK(maxStep(hl, at - 1, at + 120 * 48) > 1.2 * std::max({before, after, drySlope}));
+    }
+}
+
+TEST_CASE("FxChain: delay mask bit 4 gates the delay and its tail rings out", "[FxChain][delay]")
+{
+    FxParams p;
+    p.set(FxParam::DelayTime, 8.0); // 1/4 = 24000 samples at 120 bpm
+    p.set(FxParam::DelayMix, 1.0);
+    p.set(FxParam::DelayFeedback, 0.5);
+    SECTION("bit 4 off: the delay does nothing")
+    {
+        FxChain c;
+        c.prepare(kSr, 256);
+        c.setParams(p);
+        c.setMask(0);
+        auto l = noise(48000, 29), r = noise(48000, 30);
+        const auto l0 = l;
+        run(c, l, r, 0, l.size(), 256);
+        CHECK(l == l0);
+        CHECK_FALSE(c.isActive(FxInsert::Delay));
+    }
+    SECTION("bit 4 on: echoes, then off: the tail rings out and the delay sleeps")
+    {
+        FxChain c;
+        c.prepare(kSr, 256);
+        c.setParams(p);
+        c.setMask(bit(FxInsert::Delay));
+        CHECK(c.isActive(FxInsert::Delay));
+        std::vector<float> l(24000, 0.0f), r = l;
+        for (size_t i = 1000; i < 1100; ++i) l[i] = r[i] = 0.5f; // a burst after the 5 ms gate ramp
+        const auto l0 = l;
+        run(c, l, r, 0, l.size(), 256);
+        CHECK(l == l0); // no echo before one delay time
+        c.setMask(0);   // the gate closes before the first echo
+        std::vector<float> sl(10 * 48000, 0.0f), sr = sl;
+        run(c, sl, sr, 0, 48000, 256);
+        // First echo 24000 after the burst = 1000 into the silence, the second one 24000 later.
+        CHECK(peakAbs(sl, 900, 1200) > 0.4);
+        CHECK(peakAbs(sl, 24900, 25200) > 0.2);
+        CHECK(peakAbs(sl, 2000, 24000) < 1e-6);
+        CHECK(c.isActive(FxInsert::Delay));
+        run(c, sl, sr, 48000, sl.size(), 256);
+        CHECK_FALSE(c.isActive(FxInsert::Delay)); // asleep after the echoes fell below -120 dB
+        CHECK_FALSE(c.anyActive());
+        std::vector<float> ql(48000, 0.0f), qr = ql;
+        run(c, ql, qr, 0, ql.size(), 256);
+        CHECK(peakAbs(ql, 0, ql.size()) == 0.0);
+        CHECK(peakAbs(qr, 0, qr.size()) == 0.0);
+    }
+}
+
+TEST_CASE("FxChain: chain sleeps all five inserts when masks are 0 and tails are gone", "[FxChain][delay]")
+{
+    FxChain c;
+    c.prepare(kSr, 512);
+    FxParams p = orderParams();
+    p.set(FxParam::DelayTime, 14.0); // 2 bars, feedback 0.5
+    c.setParams(p);
+    c.setMask(0x1F);
+    auto l = noise(48000, 31, 0.5f), r = noise(48000, 32, 0.5f);
+    run(c, l, r, 0, l.size(), 512);
+    for (int i = 0; i < kFxInserts; ++i) CHECK(c.isActive(static_cast<FxInsert>(i)));
+    c.setMask(0);
+    std::vector<float> ql(48000, 0.0f), qr = ql;
+    int seconds = 0;
+    for (; seconds < 600 && c.anyActive(); ++seconds)
+    {
+        std::fill(ql.begin(), ql.end(), 0.0f);
+        std::fill(qr.begin(), qr.end(), 0.0f);
+        run(c, ql, qr, 0, ql.size(), 512);
+    }
+    INFO("asleep after " << seconds << " s");
+    CHECK(seconds > 4); // the delay's 4 s echoes kept it awake for a while
+    CHECK_FALSE(c.anyActive());
+    for (int i = 0; i < kFxInserts; ++i) CHECK_FALSE(c.isActive(static_cast<FxInsert>(i)));
+    std::fill(ql.begin(), ql.end(), 0.0f);
+    std::fill(qr.begin(), qr.end(), 0.0f);
+    run(c, ql, qr, 0, ql.size(), 512);
+    CHECK(peakAbs(ql, 0, ql.size()) == 0.0);
+    CHECK(peakAbs(qr, 0, qr.size()) == 0.0);
+}
+
+TEST_CASE("FxChain: tempo change reaches the delay", "[FxChain][delay]")
+{
+    // Position of the first echo of an impulse at frame 1000 (after the gate ramp).
+    const auto echoAt = [](double bpm, double bpb, double step) {
+        FxParams q;
+        q.set(FxParam::DelayTime, step);
+        q.set(FxParam::DelayMix, 1.0);
+        q.set(FxParam::DelayFeedback, 0.0);
+        FxChain c;
+        c.prepare(kSr, 256);
+        c.setTempo(bpm, bpb);
+        c.setParams(q);
+        c.setMask(bit(FxInsert::Delay));
+        std::vector<float> l(5 * 48000, 0.0f), r = l;
+        l[1000] = r[1000] = 1.0f;
+        run(c, l, r, 0, l.size(), 256);
+        for (size_t i = 1001; i < l.size(); ++i)
+            if (std::abs(l[i]) > 0.5f) return static_cast<long>(i) - 1000;
+        return -1L;
+    };
+    CHECK(echoAt(120.0, 4.0, 8.0) == 24000);
+    CHECK(echoAt(60.0, 4.0, 8.0) == 48000);
+    CHECK(echoAt(120.0, 3.0, 13.0) == 72000); // 1 bar of 3/4
+    CHECK(echoAt(120.0, 4.0, 13.0) == 96000);
+
+    // A tempo change on a running chain retimes the delay too.
+    FxParams p;
+    p.set(FxParam::DelayTime, 8.0);
+    p.set(FxParam::DelayMix, 1.0);
+    p.set(FxParam::DelayFeedback, 0.0);
+    FxChain c;
+    c.prepare(kSr, 256);
+    c.setParams(p);
+    c.setMask(bit(FxInsert::Delay));
+    std::vector<float> w(4800, 0.0f), wr = w;
+    run(c, w, wr, 0, w.size(), 256);
+    c.setTempo(240.0, 4.0); // 1/4 = 12000
+    std::vector<float> l(60000, 0.0f), r = l;
+    l[10000] = r[10000] = 1.0f; // long after the 30 ms retime crossfade
+    run(c, l, r, 0, l.size(), 256);
+    CHECK(peakAbs(l, 22000 - 2, 22000 + 3) > 0.5);
+    CHECK(peakAbs(l, 33000, 35000) < 1e-6);
+}
