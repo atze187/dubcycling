@@ -19,7 +19,7 @@ public:
     // Non-finite or <= 0 values keep the last valid ones (initially 120 BPM, 4 beats per bar).
     void setTempo(double bpm, double beatsPerBar);
     // Host position in beats (quarter notes) of the next sample to render; non-finite is ignored. Without calls the
-    // position advances by itself at the last tempo.
+    // position advances by itself at the last tempo, but only while samples pass through (process/advance).
     void setPosition(double ppq);
     // Moves the beat position on by n samples at the current tempo without rendering (the chain skips a
     // sleeping Filter, its LFO clock still runs).

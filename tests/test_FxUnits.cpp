@@ -1189,6 +1189,14 @@ TEST_CASE("Filter: peak lifts a sine at the cutoff above the same sine far away"
     CHECK(atCutoff > filterGainDb(p, 10000.0) + 3.0);
 }
 
+TEST_CASE("Filter: peak is unity far from the cutoff at resonance 0.2", "[FxUnits]")
+{
+    const auto p = filterParams(4, 1000.0, 0.2);
+    CHECK(std::abs(filterGainDb(p, 100.0)) < 1.5);
+    CHECK(std::abs(filterGainDb(p, 10000.0)) < 1.5);
+    CHECK(filterGainDb(p, 1000.0) > 3.0);
+}
+
 TEST_CASE("Filter: LP24 attenuates 8 kHz at least 30 dB more than LP at the same cutoff, passes 100 Hz within 1 dB", "[FxUnits]")
 {
     const auto lp = filterParams(0, 1000.0, 0.2), lp24 = filterParams(5, 1000.0, 0.2);
@@ -1229,7 +1237,7 @@ TEST_CASE("Filter: notch, peak and LP24 stay finite and below 4x the input peak 
             }
 }
 
-TEST_CASE("Filter: switching the type while sounding does not jump by more than 0.5 between samples", "[FxUnits]")
+TEST_CASE("Filter: switching the type while sounding does not jump by more than 0.05 between samples", "[FxUnits]")
 {
     // Cutoff at the sine frequency: LP and HP are in antiphase there, an abrupt switch jumps by up to 1.
     Filter f;
@@ -1244,7 +1252,7 @@ TEST_CASE("Filter: switching the type while sounding does not jump by more than 
     }
     double step = 0;
     for (size_t i = 1; i < l.size(); ++i) step = std::max(step, double(std::abs(l[i] - l[i - 1])));
-    CHECK(step < 0.5);
+    CHECK(step < 0.05);
 }
 
 // ---- Filter LFO ------------------------------------------------------------------------------------

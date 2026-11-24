@@ -32,7 +32,8 @@ public:
     const FxOrder& order() const { return order_; } // the order in effect
     void setTempo(double bpm, double beatsPerBar);  // for the Delay and the Filter LFO
     // Host position in beats of the first frame of the next process() call, for the Filter LFO. The Filter
-    // counts on from there by itself (also while it is skipped), so one call per process() slice is enough.
+    // counts on from there by itself while the chain runs (also while it is skipped), so one call per process()
+    // slice is enough. An idle chain passes nothing through the Filter, so its clock pauses.
     void setPosition(double ppq);
     void flush();
     void process(float* l, float* r, int n);

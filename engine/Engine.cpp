@@ -764,7 +764,7 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
             chain_.setOrder(m->fx.order);
         }
         // The last known tempo, so tails keep their time. No position: a stopped host's ppq is not a
-        // musical clock, the Filter LFO runs on from where it was.
+        // musical clock, the Filter LFO clock keeps its place (it runs only while the chain runs).
         chain_.setTempo(lastBpm_, lastBeatsPerBar_);
         finishSlice(l, r, n, useBus);
         publishPlayhead(-1.0f, -1.0f, -1);
