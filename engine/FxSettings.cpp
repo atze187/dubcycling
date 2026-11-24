@@ -10,7 +10,7 @@ const FxParamInfo kInfo[kFxParamCount] = {
     { "reverb.mix",         FxInsert::Reverb,   0.0,   1.0,     0.3,    false, 0 },
     { "reverb.size",        FxInsert::Reverb,   0.0,   1.0,     0.5,    false, 0 },
     { "reverb.damping",     FxInsert::Reverb,   0.0,   1.0,     0.5,    false, 0 },
-    { "filter.type",        FxInsert::Filter,   0.0,   2.0,     0.0,    false, 3 },
+    { "filter.type",        FxInsert::Filter,   0.0,   5.0,     0.0,    false, 6 },
     { "filter.cutoff",      FxInsert::Filter,   20.0,  20000.0, 2000.0, true,  0 },
     { "filter.resonance",   FxInsert::Filter,   0.0,   1.0,     0.2,    false, 0 },
     { "bitcrush.bits",      FxInsert::Bitcrush, 1.0,   16.0,    8.0,    false, 0 },
@@ -25,6 +25,9 @@ const FxParamInfo kInfo[kFxParamCount] = {
     { "delay.feedback",     FxInsert::Delay,    0.0,   0.9,     0.4,    false, 0 },
     { "delay.mix",          FxInsert::Delay,    0.0,   1.0,     0.3,    false, 0 },
     { "delay.reverse",      FxInsert::Delay,    0.0,   1.0,     0.0,    false, 2 },
+    { "filter.lfoRate",     FxInsert::Filter,   0.0,   kDelayTimeSteps - 1, 8.0, false, kDelayTimeSteps },
+    { "filter.lfoDepth",    FxInsert::Filter,   0.0,   1.0,     0.0,    false, 0 },
+    { "filter.lfoShape",    FxInsert::Filter,   0.0,   3.0,     0.0,    false, 4 },
 };
 
 struct DelayTimeEntry { const char* name; double beats; bool bar; };

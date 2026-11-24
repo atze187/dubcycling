@@ -145,7 +145,7 @@ TEST_CASE("BankFormat: json carries version and a presets list")
 {
     const auto v = juce::JSON::parse(bankToJson(sampleBank()));
     REQUIRE(v.isObject());
-    CHECK(static_cast<int>(v["version"]) == 6);
+    CHECK(static_cast<int>(v["version"]) == 7);
     REQUIRE(v["presets"].isArray());
     CHECK(v["presets"].size() == 2);
 }
@@ -186,7 +186,7 @@ TEST_CASE("BankFormat: json nested deeper than kMaxJsonDepth gives no bank witho
 
 TEST_CASE("BankFormat: a newer version is flagged tooNew")
 {
-    const auto r = bankFromJson("{\"version\": 7, \"presets\": []}");
+    const auto r = bankFromJson("{\"version\": 8, \"presets\": []}");
     CHECK_FALSE(r.bank.has_value());
     CHECK(r.tooNew);
 }
@@ -303,13 +303,13 @@ BankParseResult parseOnePreset(const juce::String& fxJson, const juce::String& l
 }
 }
 
-TEST_CASE("Bank: bankToJson writes version 6")
+TEST_CASE("Bank: bankToJson writes version 7")
 {
-    CHECK(kBankVersion == 6);
+    CHECK(kBankVersion == 7);
     Bank b;
     b.presets.push_back(makePreset("A", "a.wav"));
     const auto v = juce::JSON::parse(bankToJson(b));
-    CHECK(static_cast<int>(v["version"]) == 6);
+    CHECK(static_cast<int>(v["version"]) == 7);
     CHECK(v["presets"][0]["fx"].isObject()); // written even for default fx
     CHECK(v["presets"][0]["fx"]["params"].isObject());
     CHECK(v["presets"][0]["fx"]["switches"].isObject());
@@ -414,13 +414,13 @@ TEST_CASE("Bank: a changed switch or knob changes the fingerprint, a default fx 
     CHECK(presetFingerprint(sw2) != presetFingerprint(sw));
 }
 
-TEST_CASE("Bank: saving a loaded version 1 or 2 bank writes version 6")
+TEST_CASE("Bank: saving a loaded version 1 or 2 bank writes version 7")
 {
     for (const char* v : { "1", "2" })
     {
         const auto r = bankFromJson("{\"version\":" + juce::String(v) + ",\"presets\":[{\"name\":\"Old\"}]}");
         REQUIRE(r.bank.has_value());
-        CHECK(static_cast<int>(juce::JSON::parse(bankToJson(*r.bank))["version"]) == 6);
+        CHECK(static_cast<int>(juce::JSON::parse(bankToJson(*r.bank))["version"]) == 7);
     }
 }
 
@@ -516,12 +516,12 @@ Preset passPreset()
 
 TEST_CASE("Bank: version 4 round trips the passes exactly", "[passes]")
 {
-    CHECK(kBankVersion == 6);
+    CHECK(kBankVersion == 7);
     Bank bank;
     bank.presets.push_back(passPreset());
     const auto json = bankToJson(bank);
     const auto v = juce::JSON::parse(json);
-    CHECK(static_cast<int>(v["version"]) == 6);
+    CHECK(static_cast<int>(v["version"]) == 7);
     REQUIRE(v["presets"][0]["passes"].size() == 8);
     CHECK(v["presets"][0]["passes"][0][0]["mode"].toString() == "oneshot");
     CHECK(static_cast<bool>(v["presets"][0]["passes"][0][1]["stop"]));
@@ -545,9 +545,9 @@ TEST_CASE("Bank: version 1 to 3 files load with empty passes", "[passes]")
     }
 }
 
-TEST_CASE("Bank: a version 7 file is refused as too new", "[passes]")
+TEST_CASE("Bank: a version 8 file is refused as too new", "[passes]")
 {
-    const auto r = bankFromJson("{\"version\":7,\"presets\":[{\"name\":\"X\"}]}");
+    const auto r = bankFromJson("{\"version\":8,\"presets\":[{\"name\":\"X\"}]}");
     CHECK(r.tooNew);
     CHECK_FALSE(r.bank.has_value());
 }
@@ -632,7 +632,7 @@ TEST_CASE("Bank: version 5 round trips the reverse flag of a target", "[reverse]
     bank.presets.push_back(reversePreset());
     const auto json = bankToJson(bank);
     const auto v = juce::JSON::parse(json);
-    CHECK(static_cast<int>(v["version"]) == 6);
+    CHECK(static_cast<int>(v["version"]) == 7);
     const auto& t0 = v["presets"][0]["rules"][0]["targets"];
     CHECK_FALSE(t0[0].hasProperty("reverse")); // forwards is not written
     CHECK(t0[1]["reverse"].isBool());
@@ -799,4 +799,56 @@ TEST_CASE("Bank: the fingerprint changes with a non-default order only", "[fx][o
     auto knobSwapped = knob;
     knobSwapped.fx.order = swappedOrder();
     CHECK(presetFingerprint(knobSwapped) != presetFingerprint(knob));
+}
+
+// --- Filter LFO and six filter types (version 7) --------------------------------------------------
+
+TEST_CASE("Bank: version 6 files load with LFO defaults, version 8 is tooNew", "[fx][lfo]")
+{
+    const auto r = bankFromJson("{\"version\":6,\"presets\":[{\"name\":\"Old\",\"loop2\":{\"boundaries\":[0.5]},"
+                                "\"fx\":{\"params\":{\"filter.type\":1,\"filter.cutoff\":800},\"switches\":{\"1\":2}}}]}");
+    REQUIRE(r.bank.has_value());
+    CHECK_FALSE(r.tooNew);
+    const auto& fx = r.bank->presets[0].state.fx;
+    CHECK(fx.params.get(FxParam::FilterType) == 1.0f);
+    CHECK(fx.params.get(FxParam::FilterLfoRate) == 8.0f);
+    CHECK(fx.params.get(FxParam::FilterLfoDepth) == 0.0f);
+    CHECK(fx.params.get(FxParam::FilterLfoShape) == 0.0f);
+
+    const auto tooNew = bankFromJson("{\"version\":8,\"presets\":[]}");
+    CHECK(tooNew.tooNew);
+    CHECK_FALSE(tooNew.bank.has_value());
+}
+
+TEST_CASE("Bank: filter LFO params round trip and change the fingerprint only when non-default", "[fx][lfo]")
+{
+    Bank bank;
+    auto p = makePreset("L", "a.wav");
+    p.state.loop2.boundaries = { 0.5 };
+    const auto baseFp = presetFingerprint(p.state);
+    p.state.fx.params.set(FxParam::FilterType, 5);
+    p.state.fx.params.set(FxParam::FilterLfoRate, 3);
+    p.state.fx.params.set(FxParam::FilterLfoDepth, 0.75);
+    p.state.fx.params.set(FxParam::FilterLfoShape, 2);
+    bank.presets.push_back(p);
+    const auto json = bankToJson(bank);
+    const auto v = juce::JSON::parse(json);
+    CHECK(static_cast<double>(v["presets"][0]["fx"]["params"]["filter.lfoDepth"]) == Catch::Approx(0.75));
+    const auto r = bankFromJson(json);
+    REQUIRE(r.bank.has_value());
+    const auto& fx = r.bank->presets[0].state.fx;
+    CHECK(fx == p.state.fx);
+    CHECK(fx.params.get(FxParam::FilterType) == 5.0f);
+    CHECK(fx.params.get(FxParam::FilterLfoRate) == 3.0f);
+    CHECK(fx.params.get(FxParam::FilterLfoShape) == 2.0f);
+    CHECK(presetFingerprint(r.bank->presets[0].state) == presetFingerprint(p.state));
+    CHECK(presetFingerprint(p.state) != baseFp);
+
+    // Setting the LFO params to their defaults leaves the fingerprint as before.
+    auto d = makePreset("L", "a.wav").state;
+    d.loop2.boundaries = { 0.5 };
+    d.fx.params.set(FxParam::FilterLfoRate, 8);
+    d.fx.params.set(FxParam::FilterLfoDepth, 0);
+    d.fx.params.set(FxParam::FilterLfoShape, 0);
+    CHECK(presetFingerprint(d) == baseFp);
 }

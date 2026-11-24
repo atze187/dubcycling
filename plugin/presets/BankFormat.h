@@ -10,9 +10,10 @@ namespace dc {
 // array (8 slots, each a list of events), 5 the optional per-target "reverse" (true = the Loop-2
 // region plays backwards, only written when true), 6 the optional per-preset fx "order" (array of the
 // insert ids, only written when not the default order) and the Delay and Flanger-manual params in
-// "fx.params"; version 1 to 5 files are still read (default fx, mix 0.5, empty pass slots, every
-// target forwards, default fx order and Delay/Flanger-manual defaults).
-constexpr int kBankVersion = 6;
+// "fx.params", 7 the filter LFO params and filter types 3..5 in "fx.params"; version 1 to 6 files are
+// still read (default fx, mix 0.5, empty pass slots, every target forwards, default fx order, and
+// Delay/Flanger-manual/filter LFO defaults).
+constexpr int kBankVersion = 7;
 constexpr int kMaxPresetNameLength = 32;
 constexpr int kMaxBankNameLength = 64;
 constexpr int kMaxPresetsPerBank = 1024;
