@@ -17,6 +17,7 @@ constexpr int kMargin = 8;
 constexpr int kLogoW = 88;
 constexpr int kCycleW = 130;
 constexpr int kModeW = 72;
+constexpr int kCpuW = 76;
 constexpr int kFxStripH = 17;     // incl. the 1 px bottom border of the Loop-2 box
 // FxPanel: the 130 px effect list plus one effect's edit view; at the minimum the Flanger's five knobs
 // in two columns of about 100 px (the longest line, "Feedback -90 %", fits). The rule panel gets the rest.
@@ -207,6 +208,8 @@ Editor::Editor(DubcyclingProcessor& proc, juce::File presetsRoot)
     addAndMakeVisible(bpmCaption_);
     styleLcd(bpm_, kGreen);
     addAndMakeVisible(bpm_);
+    cpu_.setSource([this] { return proc_.cpuLoad(); });
+    addAndMakeVisible(cpu_);
 
     for (int i = 0; i < 2; ++i)
     {
@@ -737,7 +740,8 @@ void Editor::resized()
     auto area = window.reduced(kMargin);
 
     // Top row: logo, preset bar, BPM on the right. The cycle readout sits left of BPM only when the
-    // preset bar keeps its full width; otherwise it is hidden (cycleText() still has the text).
+    // preset bar keeps its full width; otherwise it is hidden (cycleText() still has the text). The CPU
+    // readout sits left of the mode button, shown under the same condition and taking precedence over the cycle.
     auto top = area.removeFromTop(kTopH);
     logo_.setBounds(top.removeFromLeft(kLogoW));
     top.removeFromLeft(kGap * 2);
@@ -747,6 +751,13 @@ void Editor::resized()
     top.removeFromRight(kGap * 2);
     mode_.setBounds(top.removeFromRight(kModeW));
     top.removeFromRight(kGap * 2);
+    const bool cpuFits = top.getWidth() >= PresetBar::kPreferredWidth + kGap * 2 + kCpuW;
+    cpu_.setVisible(cpuFits);
+    if (cpuFits)
+    {
+        cpu_.setBounds(top.removeFromRight(kCpuW));
+        top.removeFromRight(kGap * 2);
+    }
     const bool cycleFits = top.getWidth() >= PresetBar::kPreferredWidth + kGap * 2 + kCycleW;
     cycle_.setVisible(cycleFits);
     if (cycleFits)

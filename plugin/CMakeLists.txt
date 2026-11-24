@@ -35,6 +35,8 @@ target_sources(dc_plugin_ui INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/DubcyclingProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PanelLook.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/PanelLook.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/CpuMeter.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/CpuMeter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/LoopLane.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/LoopLane.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/FxStrip.h
