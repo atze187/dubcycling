@@ -763,7 +763,9 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
             chain_.setParams(m->fx.params);
             chain_.setOrder(m->fx.order);
         }
-        chain_.setTempo(lastBpm_, lastBeatsPerBar_); // the last known tempo, so tails keep their time
+        // The last known tempo, so tails keep their time. No position: a stopped host's ppq is not a
+        // musical clock, the Filter LFO clock keeps its place (it runs only while the chain runs).
+        chain_.setTempo(lastBpm_, lastBeatsPerBar_);
         finishSlice(l, r, n, useBus);
         publishPlayhead(-1.0f, -1.0f, -1);
         replaySlotOut_.store(replaySlot_, std::memory_order_relaxed);
@@ -993,6 +995,9 @@ void Engine::processSlice(const TransportInfo& t, float* l, float* r, int n)
     chain_.setParams(m->fx.params);
     chain_.setOrder(m->fx.order);
     chain_.setTempo(lastBpm_, lastBeatsPerBar_);
+    // t.ppq is this slice's first frame (expectedPpq_ above is its end). Set every slice, also while the
+    // Filter sleeps, so after a wake-up or a host jump the LFO is on the host's beat again.
+    chain_.setPosition(t.ppq);
     finishSlice(l, r, n, useBus);
 
     int teaser = kNoTeaser;

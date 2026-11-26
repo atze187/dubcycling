@@ -15,11 +15,12 @@ enum class FxParam
     FilterType, FilterCutoff, FilterResonance,
     BitcrushBits, BitcrushRate, BitcrushMix,
     FlangerRate, FlangerDepth, FlangerFeedback, FlangerMix,
-    FlangerManual, DelayTime, DelayFeedback, DelayMix, DelayReverse
+    FlangerManual, DelayTime, DelayFeedback, DelayMix, DelayReverse,
+    FilterLfoRate, FilterLfoDepth, FilterLfoShape
 };
-constexpr int kFxParamCount = 18;
+constexpr int kFxParamCount = 21;
 
-// steps: 0 = continuous, otherwise the number of discrete steps (FilterType: 0 LP, 1 HP, 2 BP).
+// steps: 0 = continuous, otherwise the number of discrete steps (FilterType: 0 LP, 1 HP, 2 BP, 3 Notch, 4 Peak, 5 LP24).
 struct FxParamInfo
 {
     const char* id;
@@ -42,7 +43,7 @@ using FxOrder = std::array<FxInsert, kFxInserts>;
 FxOrder defaultFxOrder();
 FxOrder sanitizeFxOrder(const FxOrder& o); // a valid permutation passes, anything else -> default
 
-// NaN/infinity -> default, otherwise clamped to the range; FilterType rounded to 0, 1 or 2.
+// NaN/infinity -> default, otherwise clamped to the range; FilterType rounded to 0..5, stepped params to their steps.
 float sanitizeFxParam(FxParam p, double value);
 
 struct FxParams

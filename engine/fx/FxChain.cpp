@@ -75,7 +75,13 @@ void FxChain::setOrder(const FxOrder& order)
     flushing_ = true;
 }
 
-void FxChain::setTempo(double bpm, double beatsPerBar) { delay_.setTempo(bpm, beatsPerBar); }
+void FxChain::setTempo(double bpm, double beatsPerBar)
+{
+    delay_.setTempo(bpm, beatsPerBar);
+    filter_.setTempo(bpm, beatsPerBar);
+}
+
+void FxChain::setPosition(double ppq) { filter_.setPosition(ppq); }
 
 void FxChain::flush()
 {
@@ -155,6 +161,8 @@ void FxChain::processChunk(float* l, float* r, int n)
             if (gate_[k] == 0.0f && target_[k] == 0.0f)
             {
                 if (awake_[k]) sleep(k);
+                // The LFO clock runs on: a Filter opened later in the same slice is on that frame's beat.
+                if (ins == FxInsert::Filter) filter_.advance(n);
                 continue;
             }
             awake_[k] = true;

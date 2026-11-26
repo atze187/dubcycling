@@ -1,6 +1,7 @@
 // FxPanel: effect list (chain order, per-region switches) and the edit view of the selected effect;
 // one publish per change.
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 #include <vector>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "plugin/ui/FxList.h"
@@ -233,6 +234,182 @@ TEST_CASE("FxPanel: Reverse toggle publishes params once", "[FxPanel]")
     CHECK(f.paramCalls == 2);
 }
 
+TEST_CASE("FxPanel: Filter shows six mode buttons and no mode slider", "[FxPanel]")
+{
+    PanelFixture f(360, 190);
+    f.panel.setContext(0, 1, {}, FxSettings {});
+    f.panel.selectInsert(FxInsert::Filter);
+    const char* const texts[] = { "LP", "HP", "BP", "NOTCH", "PEAK", "LP24" };
+    for (int b = 0; b < 6; ++b)
+    {
+        CAPTURE(b);
+        auto& btn = f.panel.modeButton(b);
+        CHECK(btn.isVisible());
+        CHECK(btn.getButtonText() == texts[b]);
+        CHECK(f.panel.paramBounds(FxParam::FilterType).contains(btn.getBounds()));
+    }
+    // Two rows of three: LP HP BP above NOTCH PEAK LP24, left to right.
+    for (int b = 0; b < 3; ++b)
+    {
+        CAPTURE(b);
+        CHECK(f.panel.modeButton(b).getY() == f.panel.modeButton(0).getY());
+        CHECK(f.panel.modeButton(b + 3).getY() == f.panel.modeButton(3).getY());
+        CHECK(f.panel.modeButton(b + 3).getX() == f.panel.modeButton(b).getX());
+    }
+    CHECK(f.panel.modeButton(3).getY() >= f.panel.modeButton(0).getBottom());
+    CHECK(f.panel.modeButton(1).getX() >= f.panel.modeButton(0).getRight());
+    // Sliders only for Cutoff, Resonance, LFO Rate and LFO Depth: the mode and the shape are buttons.
+    int sliders = 0;
+    for (auto* c : f.panel.getChildren())
+        if (dynamic_cast<juce::Slider*>(c) != nullptr && c->isVisible())
+            ++sliders;
+    CHECK(sliders == 4);
+    for (int k = 0; k < 6; ++k)
+    {
+        f.panel.setParam(FxParam::FilterType, k);
+        CHECK(f.panel.paramText(FxParam::FilterType) == texts[k]);
+        for (int b = 0; b < 6; ++b)
+            CHECK(f.panel.modeButton(b).getToggleState() == (b == k));
+    }
+    // Another effect hides them.
+    f.panel.selectInsert(FxInsert::Delay);
+    for (int b = 0; b < 6; ++b)
+        CHECK_FALSE(f.panel.modeButton(b).isVisible());
+}
+
+TEST_CASE("FxPanel: clicking Notch, Peak and LP24 publishes FilterType 3, 4, 5 once each", "[FxPanel]")
+{
+    PanelFixture f;
+    FxSettings fx;
+    fx.params.set(FxParam::FlangerMix, 0.7);
+    f.panel.setContext(0, 1, {}, fx);
+    f.panel.selectInsert(FxInsert::Filter);
+    for (int b = 3; b < 6; ++b)
+    {
+        CAPTURE(b);
+        f.panel.modeButton(b).setToggleState(true, juce::sendNotification); // like a click
+        CHECK(f.paramCalls == b - 2);
+        CHECK(f.last.get(FxParam::FilterType) == static_cast<float>(b));
+        CHECK(f.last.get(FxParam::FlangerMix) == 0.7f); // the whole set
+        CHECK(f.panel.param(FxParam::FilterType) == static_cast<double>(b));
+        CHECK(f.panel.modeButton(b).getToggleState());
+        CHECK_FALSE(f.panel.modeButton(0).getToggleState());
+    }
+    // The poll shows the mode without publishing.
+    fx.params.set(FxParam::FilterType, 4);
+    f.panel.setContext(0, 1, {}, fx);
+    CHECK(f.panel.modeButton(4).getToggleState());
+    CHECK_FALSE(f.panel.modeButton(5).getToggleState());
+    CHECK(f.paramCalls == 3);
+}
+
+TEST_CASE("FxPanel: LFO Rate shows note names and spans 15 steps", "[FxPanel]")
+{
+    PanelFixture f(360, 190);
+    f.panel.setContext(0, 1, {}, FxSettings {});
+    f.panel.selectInsert(FxInsert::Filter);
+    CHECK(f.panel.paramText(FxParam::FilterLfoRate) == "1/4"); // default step 8
+    auto& s = f.panel.slider(FxParam::FilterLfoRate);
+    CHECK(s.isVisible());
+    CHECK(s.getMinimum() == 0.0);
+    CHECK(s.getMaximum() == 14.0);
+    CHECK(s.getInterval() == 1.0);
+    for (int k = 0; k < 15; ++k)
+    {
+        CAPTURE(k);
+        f.panel.setParam(FxParam::FilterLfoRate, k);
+        CHECK(f.panel.param(FxParam::FilterLfoRate) == static_cast<double>(k));
+        CHECK(f.panel.paramText(FxParam::FilterLfoRate) == juce::String(delayTimeName(k)));
+    }
+    CHECK(f.paramCalls == 15);
+    f.panel.setParam(FxParam::FilterLfoRate, 99.0);
+    CHECK(f.panel.paramText(FxParam::FilterLfoRate) == "2 bars");
+    f.panel.beginDrag(FxParam::FilterLfoRate);
+    f.panel.dragParam(FxParam::FilterLfoRate, 7.6);
+    f.panel.endDrag();
+    CHECK(f.last.get(FxParam::FilterLfoRate) == 8.0f);
+}
+
+TEST_CASE("FxPanel: LFO Shape buttons publish 0..3 once and reflect setContext", "[FxPanel]")
+{
+    PanelFixture f(360, 190);
+    f.panel.setContext(0, 1, {}, FxSettings {});
+    f.panel.selectInsert(FxInsert::Filter);
+    const char* const texts[] = { "SINE", "TRI", "SAW", "SQR" };
+    for (int b = 0; b < 4; ++b)
+    {
+        CAPTURE(b);
+        CHECK(f.panel.shapeButton(b).getButtonText() == texts[b]);
+        CHECK(f.panel.shapeButton(b).isVisible());
+        CHECK(f.panel.paramBounds(FxParam::FilterLfoShape).contains(f.panel.shapeButton(b).getBounds()));
+    }
+    CHECK(f.panel.shapeButton(0).getToggleState()); // default Sine
+    int calls = 0;
+    for (const int b : { 3, 1, 2, 0 })
+    {
+        CAPTURE(b);
+        f.panel.shapeButton(b).setToggleState(true, juce::sendNotification); // like a click
+        CHECK(f.paramCalls == ++calls);
+        CHECK(f.last.get(FxParam::FilterLfoShape) == static_cast<float>(b));
+        for (int o = 0; o < 4; ++o)
+            CHECK(f.panel.shapeButton(o).getToggleState() == (o == b));
+    }
+    FxSettings fx;
+    fx.params.set(FxParam::FilterLfoShape, 2);
+    f.panel.setContext(0, 1, {}, fx);
+    CHECK(f.panel.shapeButton(2).getToggleState());
+    CHECK_FALSE(f.panel.shapeButton(0).getToggleState());
+    CHECK(f.paramCalls == calls);
+}
+
+TEST_CASE("FxPanel: LFO Depth shows percent and resets to 0 on double-click", "[FxPanel]")
+{
+    PanelFixture f(360, 190);
+    f.panel.setContext(0, 1, {}, FxSettings {});
+    f.panel.selectInsert(FxInsert::Filter);
+    CHECK(f.panel.paramText(FxParam::FilterLfoDepth) == "0 %");
+    f.panel.setParam(FxParam::FilterLfoDepth, 0.45);
+    CHECK(f.panel.paramText(FxParam::FilterLfoDepth) == "45 %");
+    CHECK(f.paramCalls == 1);
+    auto& s = f.panel.slider(FxParam::FilterLfoDepth);
+    CHECK(s.isVisible());
+    CHECK(s.isDoubleClickReturnEnabled());
+    CHECK(s.getDoubleClickReturnValue() == 0.0);
+    CHECK(std::abs(s.getValue() - 0.45) < 1e-6);
+    s.setValue(s.getDoubleClickReturnValue(), juce::sendNotificationSync); // what a double-click does
+    CHECK(f.paramCalls == 2);
+    CHECK(f.last.get(FxParam::FilterLfoDepth) == 0.0f);
+    CHECK(f.panel.paramText(FxParam::FilterLfoDepth) == "0 %");
+}
+
+TEST_CASE("FxPanel: Filter edit view is two columns with the LFO on the right", "[FxPanel]")
+{
+    for (const int w : { 360, 410, 460 })
+    {
+        PanelFixture f(w, 190);
+        f.panel.setContext(0, 1, {}, FxSettings {});
+        f.panel.selectInsert(FxInsert::Filter);
+        CAPTURE(w);
+        const auto type = f.panel.paramBounds(FxParam::FilterType);
+        const auto cutoff = f.panel.paramBounds(FxParam::FilterCutoff);
+        const auto res = f.panel.paramBounds(FxParam::FilterResonance);
+        const auto rate = f.panel.paramBounds(FxParam::FilterLfoRate);
+        const auto depth = f.panel.paramBounds(FxParam::FilterLfoDepth);
+        const auto shape = f.panel.paramBounds(FxParam::FilterLfoShape);
+        // Left: Type, Cutoff, Resonance under each other; right: Rate, Depth, Shape.
+        CHECK(type.getX() == cutoff.getX());
+        CHECK(cutoff.getX() == res.getX());
+        CHECK(type.getBottom() <= cutoff.getY());
+        CHECK(cutoff.getBottom() <= res.getY());
+        CHECK(rate.getX() == depth.getX());
+        CHECK(depth.getX() == shape.getX());
+        CHECK(rate.getBottom() <= depth.getY());
+        CHECK(depth.getBottom() <= shape.getY());
+        CHECK(rate.getX() > type.getRight());
+        CHECK(depth.getY() == cutoff.getY()); // rows line up
+    }
+}
+
 TEST_CASE("FxPanel: Flanger Manual is editable and publishes", "[FxPanel]")
 {
     PanelFixture f;
@@ -398,6 +575,55 @@ TEST_CASE("FxPanel: controls do not overlap at the minimum size", "[FxPanel]")
                 areas.push_back(f.panel.paramBounds(p));
             if (ins == FxInsert::Delay)
                 CHECK(f.panel.paramBounds(FxParam::DelayReverse).contains(f.panel.reverseButton().getBounds()));
+            if (ins == FxInsert::Filter)
+            {
+                // Every mode and shape button inside its knob, none overlapping another; from the
+                // editor's minimum width (360) on, every button text and label text fits unclipped.
+                std::vector<juce::Button*> buttons;
+                for (int b = 0; b < 6; ++b)
+                    buttons.push_back(&f.panel.modeButton(b));
+                for (int b = 0; b < 4; ++b)
+                    buttons.push_back(&f.panel.shapeButton(b));
+                for (std::size_t a = 0; a < buttons.size(); ++a)
+                {
+                    CAPTURE(a);
+                    CHECK(buttons[a]->isVisible());
+                    CHECK_FALSE(buttons[a]->getBounds().isEmpty());
+                    CHECK(f.panel.paramBounds(a < 6 ? FxParam::FilterType : FxParam::FilterLfoShape)
+                              .contains(buttons[a]->getBounds()));
+                    for (std::size_t b = a + 1; b < buttons.size(); ++b)
+                        CHECK_FALSE(buttons[a]->getBounds().intersects(buttons[b]->getBounds()));
+                }
+                // The longest value texts.
+                f.panel.setParam(FxParam::FilterLfoRate, 1.0);      // "1/16 trip"
+                f.panel.setParam(FxParam::FilterCutoff, 12000.0);   // "12.0 kHz"
+                f.panel.setParam(FxParam::FilterResonance, 1.0);    // "100 %"
+                f.panel.setParam(FxParam::FilterLfoDepth, 1.0);     // "100 %"
+                dc::ui::PanelLook look;
+                f.panel.setLookAndFeel(&look);
+                for (auto* c : f.panel.getChildren())
+                {
+                    if (!c->isVisible() || c->getBounds().isEmpty())
+                        continue;
+                    CAPTURE(c->getBounds().toString());
+                    CHECK(f.panel.getLocalBounds().contains(c->getBounds()));
+                    if (size.x < 360)
+                        continue;
+                    if (auto* label = dynamic_cast<juce::Label*>(c); label != nullptr && label->getText().isNotEmpty())
+                    {
+                        CAPTURE(label->getText());
+                        CHECK(juce::GlyphArrangement::getStringWidthInt(label->getFont(), label->getText())
+                              <= label->getWidth() - label->getBorderSize().getLeftAndRight());
+                    }
+                    if (auto* tb = dynamic_cast<juce::TextButton*>(c); tb != nullptr && tb->getButtonText().isNotEmpty())
+                    {
+                        CAPTURE(tb->getButtonText());
+                        const auto font = look.getTextButtonFont(*tb, tb->getHeight());
+                        CHECK(juce::GlyphArrangement::getStringWidthInt(font, tb->getButtonText()) + 4 <= tb->getWidth());
+                    }
+                }
+                f.panel.setLookAndFeel(nullptr);
+            }
             const auto listArea = f.panel.list().getBounds();
             CHECK(listArea.getWidth() >= 120);
             CHECK(listArea.getWidth() <= 150);

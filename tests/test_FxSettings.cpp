@@ -37,7 +37,7 @@ TEST_CASE("FxSettings: sanitize clamps, rounds the filter type and replaces NaN 
     CHECK(sanitizeFxParam(FxParam::FlangerFeedback, -5.0) == Approx(-0.9f));
     CHECK(sanitizeFxParam(FxParam::FilterType, 1.4) == Approx(1.0f));
     CHECK(sanitizeFxParam(FxParam::FilterType, 1.6) == Approx(2.0f));
-    CHECK(sanitizeFxParam(FxParam::FilterType, 7.0) == Approx(2.0f));
+    CHECK(sanitizeFxParam(FxParam::FilterType, 7.0) == Approx(5.0f));
     CHECK(sanitizeFxParam(FxParam::FilterType, -3.0) == Approx(0.0f));
     CHECK(sanitizeFxParam(FxParam::FilterCutoff, std::nan("")) == Approx(2000.0f));
     CHECK(sanitizeFxParam(FxParam::BitcrushBits, inf) == Approx(8.0f));
@@ -171,7 +171,7 @@ TEST_CASE("FxSettings: new params have their defaults and ranges", "[FxSettings]
     CHECK(p.get(FxParam::DelayReverse) == Approx(0.0f));
     const int def = static_cast<int>(p.get(FxParam::DelayTime));
     CHECK(std::string(delayTimeName(def)) == "1/8");
-    CHECK(kFxParamCount == 18);
+    CHECK(kFxParamCount == 21);
     CHECK(std::string(fxParamInfo(FxParam::FlangerManual).id) == "flanger.manual");
     CHECK(std::string(fxParamInfo(FxParam::DelayTime).id) == "delay.time");
     CHECK(std::string(fxParamInfo(FxParam::DelayFeedback).id) == "delay.feedback");
@@ -195,4 +195,36 @@ TEST_CASE("FxSettings: equality compares the order", "[FxSettings]")
     CHECK(a == b);
     b.order = { FxInsert::Reverb, FxInsert::Delay, FxInsert::Flanger, FxInsert::Filter, FxInsert::Bitcrush };
     CHECK_FALSE(a == b);
+}
+
+TEST_CASE("FxSettings: filter LFO defaults and ranges", "[FxSettings]")
+{
+    FxParams p;
+    CHECK(p.get(FxParam::FilterLfoRate) == Approx(8.0f));
+    CHECK(p.get(FxParam::FilterLfoDepth) == Approx(0.0f));
+    CHECK(p.get(FxParam::FilterLfoShape) == Approx(0.0f));
+    CHECK(fxParamInfo(FxParam::FilterType).max == 5);
+    CHECK(fxParamInfo(FxParam::FilterType).steps == 6);
+    CHECK(std::string(fxParamInfo(FxParam::FilterLfoRate).id) == "filter.lfoRate");
+    CHECK(std::string(fxParamInfo(FxParam::FilterLfoDepth).id) == "filter.lfoDepth");
+    CHECK(std::string(fxParamInfo(FxParam::FilterLfoShape).id) == "filter.lfoShape");
+    CHECK(fxParamInfo(FxParam::FilterLfoRate).max == kDelayTimeSteps - 1);
+    CHECK(fxParamInfo(FxParam::FilterLfoRate).steps == kDelayTimeSteps);
+    CHECK(fxParamInfo(FxParam::FilterLfoDepth).steps == 0);
+    CHECK(fxParamInfo(FxParam::FilterLfoShape).max == 3);
+    CHECK(fxParamInfo(FxParam::FilterLfoShape).steps == 4);
+    CHECK(fxParamInfo(FxParam::FilterLfoRate).insert == FxInsert::Filter);
+}
+
+TEST_CASE("sanitizeFxParam: FilterType rounds into 0..5, LFO steps round, depth clamps", "[FxSettings]")
+{
+    CHECK(sanitizeFxParam(FxParam::FilterType, 9.0) == Approx(5.0f));
+    CHECK(sanitizeFxParam(FxParam::FilterType, 4.4) == Approx(4.0f));
+    CHECK(sanitizeFxParam(FxParam::FilterType, -1.0) == Approx(0.0f));
+    CHECK(sanitizeFxParam(FxParam::FilterLfoRate, 99.0) == Approx(14.0f));
+    CHECK(sanitizeFxParam(FxParam::FilterLfoShape, 3.6) == Approx(3.0f));
+    CHECK(sanitizeFxParam(FxParam::FilterLfoDepth, 2.0) == Approx(1.0f));
+    CHECK(sanitizeFxParam(FxParam::FilterLfoRate, std::nan("")) == Approx(8.0f));
+    CHECK(sanitizeFxParam(FxParam::FilterLfoDepth, std::nan("")) == Approx(0.0f));
+    CHECK(sanitizeFxParam(FxParam::FilterLfoShape, std::nan("")) == Approx(0.0f));
 }

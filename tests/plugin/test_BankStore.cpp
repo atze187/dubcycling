@@ -320,16 +320,16 @@ TEST_CASE("BankStore: a damaged or too-new bank.json is not overwritten")
         CHECK(f.bankJson("B").loadFileAsString() == text);
         CHECK(f.store.loadPreset("B", "P").result.error == Error::BankTooNew);
     }
-    SECTION("version 7 is too new, version 2 is saved as version 6")
+    SECTION("version 8 is too new, version 2 is saved as version 7")
     {
-        const juce::String text = "{\"version\": 7, \"presets\": []}";
+        const juce::String text = "{\"version\": 8, \"presets\": []}";
         REQUIRE(f.bankJson("B").replaceWithText(text));
         CHECK(f.store.savePreset("B", "P", StoreFixture::state(a, b), false).error == Error::BankTooNew);
         CHECK(f.bankJson("B").loadFileAsString() == text);
 
         REQUIRE(f.bankJson("B").replaceWithText("{\"version\": 2, \"presets\": []}"));
         CHECK(f.store.savePreset("B", "P", StoreFixture::state(a, b), false).ok());
-        CHECK(static_cast<int>(juce::JSON::parse(f.bankJson("B").loadFileAsString())["version"]) == 6);
+        CHECK(static_cast<int>(juce::JSON::parse(f.bankJson("B").loadFileAsString())["version"]) == 7);
     }
     SECTION("missing bank")
     {

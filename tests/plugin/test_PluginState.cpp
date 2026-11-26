@@ -740,3 +740,28 @@ TEST_CASE("sanitizeFx repairs the order and keeps mask bit 4", "[PluginState][fx
     CHECK(out.order == defaultFxOrder());
     CHECK(out.switches == std::vector<std::uint8_t> { 16, 31 });
 }
+
+TEST_CASE("State: filter LFO params and a new filter type round trip", "[PluginState][fx]")
+{
+    auto s = sample();
+    s.fx.params.set(FxParam::FilterType, 5);
+    s.fx.params.set(FxParam::FilterLfoRate, 11);
+    s.fx.params.set(FxParam::FilterLfoDepth, 0.6);
+    s.fx.params.set(FxParam::FilterLfoShape, 3);
+    const auto block = serialize(s);
+    const auto r = deserialize(block.getData(), block.getSize());
+    REQUIRE(r.has_value());
+    CHECK(r->fx == s.fx);
+    CHECK(r->fx.params.get(FxParam::FilterType) == 5.0f);
+    CHECK(r->fx.params.get(FxParam::FilterLfoRate) == 11.0f);
+    CHECK(r->fx.params.get(FxParam::FilterLfoShape) == 3.0f);
+}
+
+TEST_CASE("State: a project without LFO attributes loads the LFO defaults", "[PluginState][fx]")
+{
+    const auto r = loadXml(fxDoc("<Fx filter.type=\"1\" filter.cutoff=\"500\"/>"));
+    REQUIRE(r.has_value());
+    CHECK(r->fx.params.get(FxParam::FilterType) == 1.0f);
+    for (auto p : { FxParam::FilterLfoRate, FxParam::FilterLfoDepth, FxParam::FilterLfoShape })
+        CHECK(r->fx.params.get(p) == sanitizeFxParam(p, fxParamInfo(p).def));
+}

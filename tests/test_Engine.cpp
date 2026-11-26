@@ -1733,6 +1733,87 @@ TEST_CASE("Engine fx: engine passes order and tempo to the chain", "[Engine][fx]
     }
 }
 
+namespace {
+// Slices of half a beat at 120 bpm: a position taken from the slice end instead of its first frame
+// would be half an LFO cycle off.
+constexpr int kHalfBeat = 12000;
+
+// noiseModel() with the Filter on in its region: low pass 1 kHz, LFO 1/4 (one cycle per beat), Square,
+// depth 1. The cutoff is 4 kHz in the first half of each beat and 250 Hz in the second.
+std::shared_ptr<dc::Model> lfoModel()
+{
+    auto m = noiseModel();
+    setAll(m->fx, 1, fxBit(dc::FxInsert::Filter));
+    m->fx.params.set(dc::FxParam::FilterType, 0.0);
+    m->fx.params.set(dc::FxParam::FilterCutoff, 1000.0);
+    m->fx.params.set(dc::FxParam::FilterResonance, 0.0);
+    m->fx.params.set(dc::FxParam::FilterLfoRate, 8.0);
+    m->fx.params.set(dc::FxParam::FilterLfoShape, 3.0);
+    m->fx.params.set(dc::FxParam::FilterLfoDepth, 1.0);
+    return m;
+}
+
+dc::Engine& preparedHalfBeat(dc::Engine& e)
+{
+    e.prepare(kRate, kHalfBeat);
+    e.setRandom([] { return 0.5f; });
+    return e;
+}
+
+// Level difference in dB of the energy above 2 kHz between two windows of `o`.
+double hfDb(const Out& o, size_t from1, size_t to1, size_t from2, size_t to2)
+{
+    return 10.0 * std::log10(hfEnergy(o.l, from1, to1) / hfEnergy(o.l, from2, to2));
+}
+} // namespace
+
+TEST_CASE("Engine: the Filter LFO stays on the beat across a host jump", "[Engine][fx][lfo]")
+{
+    dc::Engine e;
+    preparedHalfBeat(e);
+    e.setModel(lfoModel());
+    run(e, 0.0, 6 * kHalfBeat, kHalfBeat); // to beat 3
+    // Back by one cycle plus half a cycle: from beat 3.0 to 1.5, the second (low) half of a cycle.
+    const Out o = run(e, 1.5, 4 * kHalfBeat, kHalfBeat);
+    CHECK(allFinite(o));
+    INFO("low 1 vs high " << hfDb(o, 2400, 10800, 14400, 22800) << " dB, low 2 vs high "
+                          << hfDb(o, 26400, 34800, 14400, 22800) << " dB");
+    CHECK(hfDb(o, 14400, 22800, 2400, 10800) >= 10.0);  // high after low
+    CHECK(hfDb(o, 14400, 22800, 26400, 34800) >= 10.0); // and low again
+
+    // Rendering again from the same position, on an engine that never played before, gives the same
+    // samples (once the jump's voice crossfade and the switch ramp are over).
+    dc::Engine fresh;
+    preparedHalfBeat(fresh);
+    fresh.setModel(lfoModel());
+    const Out f = run(fresh, 1.5, 4 * kHalfBeat, kHalfBeat);
+    CHECK(maxDiff(o, f, 4800, o.l.size()) <= 1e-4f);
+}
+
+TEST_CASE("Engine: the Filter LFO keeps going and stays finite while the host is stopped", "[Engine][fx][lfo]")
+{
+    dc::Engine e;
+    preparedHalfBeat(e);
+    e.setModel(lfoModel());
+    run(e, 0.0, 30000, kHalfBeat); // stops at beat 1.25
+    // While stopped the audition of the region is heard through its Filter; the LFO runs on from
+    // beat 1.25 at the last tempo (stopped hosts report ppq 0, which must not be taken as a position).
+    e.requestPreview(1, 0);
+    Out o;
+    const int frames = 4 * kHalfBeat;
+    o.l.assign(static_cast<size_t>(frames), 7.0f);
+    o.r.assign(static_cast<size_t>(frames), 7.0f);
+    for (int pos = 0; pos < frames; pos += kHalfBeat)
+        e.process(dc::TransportInfo { false, 0.0, kBpm, 4, 4 }, o.l.data() + pos, o.r.data() + pos, kHalfBeat);
+    CHECK(allFinite(o));
+    // Phase 0.25 at frame 0: high until 6000, low [6000, 18000), high [18000, 30000), low [30000, 42000).
+    INFO("high vs low 1 " << hfDb(o, 20400, 27600, 8400, 15600) << " dB, high vs low 2 "
+                          << hfDb(o, 20400, 27600, 32400, 39600) << " dB");
+    REQUIRE(hfEnergy(o.l, 20400, 27600) > 0.0);
+    CHECK(hfDb(o, 20400, 27600, 8400, 15600) >= 10.0);
+    CHECK(hfDb(o, 20400, 27600, 32400, 39600) >= 10.0);
+}
+
 // --- Mix between Loop 1 and the playing Loop-2 region --------------------------------------------
 
 namespace {

@@ -11,7 +11,8 @@ namespace dc::ui {
 
 // The effects in two parts: on the left the effect list (FxList: chain order, drag to reorder, the
 // on/off switches of the selected Loop-2 region), on the right the edit view of the effect selected
-// in the list: its knobs (name, value, slider; Filter Type as buttons, Delay Reverse as a toggle).
+// in the list: its knobs (name, value, slider; Filter Type and LFO Shape as buttons, Delay Reverse as
+// a toggle). The Filter's view has two columns: mode, Cutoff, Resonance; the LFO's Rate, Depth, Shape.
 // A double-click on a slider resets it to its default. The selection is UI state only: initially the
 // first effect in the order of the first setContext.
 //
@@ -61,6 +62,9 @@ public:
     FxList& list() { return list_; }
     const FxList& list() const { return list_; }
     juce::Button& reverseButton();
+    juce::Button& modeButton(int i);  // Filter Type 0..5: LP HP BP NOTCH PEAK LP24
+    juce::Button& shapeButton(int i); // Filter LFO Shape 0..3: SINE TRI SAW SQR
+    juce::Slider& slider(FxParam p);  // not used for button knobs
 
     void resized() override;
     void paint(juce::Graphics& g) override;
@@ -76,6 +80,8 @@ private:
     void updateList();
     void updateVisibility();
     void updateDimming();
+    void layoutFilter(juce::Rectangle<int> area);
+    void layoutKnob(FxParam p, juce::Rectangle<int> row);
 
     FxParams params_;
     FxOrder order_ = defaultFxOrder();
@@ -91,6 +97,7 @@ private:
 
     FxList list_;
     juce::Label listTitle_, regionTitle_, editTitle_;
+    juce::Label lfoTitle_; // caption of the Filter's LFO column
     std::array<std::unique_ptr<Knob>, kFxParamCount> knobs_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FxPanel)
