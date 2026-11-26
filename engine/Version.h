@@ -2,6 +2,6 @@
 
 namespace dc {
 
-inline const char* version() { return "0.5.0"; }
+inline const char* version() { return "0.6.0"; }
 
 }  // namespace dc
